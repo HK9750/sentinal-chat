@@ -1,0 +1,16 @@
+server:
+  port: 8080
+  environment: development
+
+database:
+  host: localhost
+  port: 5432
+  user: user
+  password: password
+  name: sentinal
+  ssl_mode: disable
+
+redis:
+  addr: localhost:6379
+  password: ""
+  db: 0
