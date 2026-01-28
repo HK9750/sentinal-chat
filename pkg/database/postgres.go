@@ -2,8 +2,8 @@ package database
 
 import (
 	"fmt"
-	"io/ioutil"
 	"log"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -44,7 +44,7 @@ func Connect(cfg *config.Config) {
 // ApplyRawMigrations reads .sql files from the migrations directory and executes them.
 // This is a simple implementation for executing extensions/types migrations.
 func ApplyRawMigrations(migrationsDir string) error {
-	files, err := ioutil.ReadDir(migrationsDir)
+	files, err := os.ReadDir(migrationsDir)
 	if err != nil {
 		return fmt.Errorf("failed to read migrations directory: %w", err)
 	}
@@ -52,7 +52,7 @@ func ApplyRawMigrations(migrationsDir string) error {
 	for _, file := range files {
 		if filepath.Ext(file.Name()) == ".sql" {
 			path := filepath.Join(migrationsDir, file.Name())
-			content, err := ioutil.ReadFile(path)
+			content, err := os.ReadFile(path)
 			if err != nil {
 				return fmt.Errorf("failed to read migration file %s: %w", file.Name(), err)
 			}
