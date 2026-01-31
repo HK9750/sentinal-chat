@@ -4,51 +4,72 @@
 
 ---
 
+## Architecture and Domain Model Overview
+
+Sentinal Chat is a monolithic Go service that exposes HTTP and WebSocket APIs. All state-changing operations are handled as commands in the application layer. Each command runs in a transaction that writes primary tables and an outbox event. Workers publish outbox events to Redis Pub/Sub, which powers WebSocket fan-out, notifications, and analytics. Redis also backs presence, session cache, rate limiting, and WebRTC signaling. PostgreSQL is the source of truth for durable state.
+
+**Domain model summary**
+- Identity and auth: users, user_settings, devices, push_tokens, user_sessions, user_contacts
+- Conversations: conversations, participants, conversation_sequences
+- Messages and content: messages, message_receipts, message_reactions, message_mentions, attachments, link_previews, polls, message_user_states, starred_messages
+- Calls: calls, call_participants, call_quality_metrics, turn_credentials, sfu_servers, call_server_assignments
+- Encryption: identity_keys, signed_prekeys, onetime_prekeys, encrypted_sessions, key_bundles
+- Eventing and governance: outbox_events, outbox_event_deliveries, command_log, access_policies, event_subscriptions
+
+**Model boundaries**
+- internal/domain: entities, value objects, repository interfaces
+- internal/application: command/query use cases and services
+- internal/infrastructure: persistence, Redis, messaging
+- internal/interfaces: HTTP and WebSocket handlers
+
+---
+
 ## Table of Contents
 
-1. [Executive Summary](#executive-summary)
-2. [Technology Stack](#technology-stack)
-3. [Architecture Overview](#architecture-overview)
-4. [Project Folder Structure](#project-folder-structure)
-5. [Event‑Driven Flow](#event-driven-flow)
-6. [PostgreSQL Extensions](#postgresql-extensions)
-7. [Custom Enums](#custom-enums)
-8. [Entity Relationship Diagrams](#entity-relationship-diagrams)
-9. [Core Tables — Users & Authentication](#core-tables--users--authentication)
-10. [End‑to‑End Encryption (Signal Protocol)](#end-to-end-encryption-signal-protocol)
-11. [Conversations & Participants](#conversations--participants)
-12. [Messages & Content](#messages--content)
-13. [Attachments & Media](#attachments--media)
-14. [Broadcast Lists](#broadcast-lists)
-15. [Voice/Video Calls (WebRTC)](#voicevideo-calls-webrtc)
-16. [Polls](#polls)
-17. [Chat Organization (Labels/Starred)](#chat-organization-labelsstarred)
-18. [Event‑Driven Architecture Tables](#event-driven-architecture-tables)
-19. [Database Triggers & Functions](#database-triggers--functions)
-20. [Indexes](#indexes)
-21. [Design Patterns](#design-patterns)
-22. [Redis Integration](#redis-integration)
-23. [Authentication Architecture](#authentication-architecture)
-24. [Scalability Notes](#scalability-notes)
-25. [SQL DDL Reference (Complete)](#sql-ddl-reference-complete)
-26. [Appendix A — Table‑by‑Table Query Playbook](#appendix-a--table-by-table-query-playbook)
-27. [Appendix B — Redis Pub/Sub Channel Taxonomy](#appendix-b--redis-pubsub-channel-taxonomy)
-28. [Appendix C — WebSocket Message Schema](#appendix-c--websocket-message-schema)
-29. [Appendix D — HTTP API Sketch](#appendix-d--http-api-sketch)
-30. [Appendix E — Seed Data Notes](#appendix-e--seed-data-notes)
-31. [Appendix F — Index Rationale & Query Cost Notes](#appendix-f--index-rationale--query-cost-notes)
-32. [Appendix G — Event Payload Reference (Selected)](#appendix-g--event-payload-reference-selected)
-33. [Appendix H — Redis TTL Strategy](#appendix-h--redis-ttl-strategy)
-34. [Appendix I — WebRTC Topology Notes](#appendix-i--webrtc-topology-notes)
-35. [Appendix J — Migration Sequencing (Recommended)](#appendix-j--migration-sequencing-recommended)
-36. [Appendix K — Observability & Metrics](#appendix-k--observability--metrics)
-37. [Appendix L — Example Data Lifecycle Policies](#appendix-l--example-data-lifecycle-policies)
-38. [Appendix M — Constraint & Edge‑Case Notes](#appendix-m--constraint--edge-case-notes)
-39. [Appendix N — Security Threat Model (Summary)](#appendix-n--security-threat-model-summary)
-40. [Appendix O — Complete Event Payload Catalog](#appendix-o--complete-event-payload-catalog)
-41. [Appendix P — Column‑Level Constraints (NULL/NOT NULL)](#appendix-p--column-level-constraints-nullnot-null)
-42. [Appendix Q — Event Emission Rules (HTTP vs WebSocket)](#appendix-q--event-emission-rules-http-vs-websocket)
-43. [Appendix R — E2E Key Rotation & Recovery Flows](#appendix-r--e2e-key-rotation--recovery-flows)
+- [Architecture and Domain Model Overview](#architecture-and-domain-model-overview)
+- [Executive Summary](#executive-summary)
+- [Technology Stack](#technology-stack)
+- [Runtime Architecture Diagram](#runtime-architecture-diagram)
+- [Project Folder Structure](#project-folder-structure)
+- [Event‑Driven Flow](#event-driven-flow)
+- [PostgreSQL Extensions](#postgresql-extensions)
+- [Custom Enums](#custom-enums)
+- [Entity Relationship Diagrams](#entity-relationship-diagrams)
+- [Core Tables — Users & Authentication](#core-tables--users--authentication)
+- [End‑to‑End Encryption (Signal Protocol)](#end-to-end-encryption-signal-protocol)
+- [Conversations & Participants](#conversations--participants)
+- [Messages & Content](#messages--content)
+- [Attachments & Media](#attachments--media)
+- [Broadcast Lists](#broadcast-lists)
+- [Voice/Video Calls (WebRTC)](#voicevideo-calls-webrtc)
+- [Polls](#polls)
+- [Chat Organization (Labels/Starred)](#chat-organization-labelsstarred)
+- [Event‑Driven Architecture Tables](#event-driven-architecture-tables)
+- [Database Triggers & Functions](#database-triggers--functions)
+- [Indexes](#indexes)
+- [Design Patterns](#design-patterns)
+- [Redis Integration](#redis-integration)
+- [Authentication Architecture](#authentication-architecture)
+- [Scalability Notes](#scalability-notes)
+- [SQL DDL Reference (Complete)](#sql-ddl-reference-complete)
+- [Appendix A — Table‑by‑Table Query Playbook](#appendix-a--table-by-table-query-playbook)
+- [Appendix B — Redis Pub/Sub Channel Taxonomy](#appendix-b--redis-pubsub-channel-taxonomy)
+- [Appendix C — WebSocket Message Schema](#appendix-c--websocket-message-schema)
+- [Appendix D — HTTP API Sketch](#appendix-d--http-api-sketch)
+- [Appendix E — Seed Data Notes](#appendix-e--seed-data-notes)
+- [Appendix F — Index Rationale & Query Cost Notes](#appendix-f--index-rationale--query-cost-notes)
+- [Appendix G — Event Payload Reference (Selected)](#appendix-g--event-payload-reference-selected)
+- [Appendix H — Redis TTL Strategy](#appendix-h--redis-ttl-strategy)
+- [Appendix I — WebRTC Topology Notes](#appendix-i--webrtc-topology-notes)
+- [Appendix J — Migration Sequencing (Recommended)](#appendix-j--migration-sequencing-recommended)
+- [Appendix K — Observability & Metrics](#appendix-k--observability--metrics)
+- [Appendix L — Example Data Lifecycle Policies](#appendix-l--example-data-lifecycle-policies)
+- [Appendix M — Constraint & Edge‑Case Notes](#appendix-m--constraint--edge-case-notes)
+- [Appendix N — Security Threat Model (Summary)](#appendix-n--security-threat-model-summary)
+- [Appendix O — Complete Event Payload Catalog](#appendix-o--complete-event-payload-catalog)
+- [Appendix P — Column‑Level Constraints (NULL/NOT NULL)](#appendix-p--column-level-constraints-nullnot-null)
+- [Appendix Q — Event Emission Rules (HTTP vs WebSocket)](#appendix-q--event-emission-rules-http-vs-websocket)
+- [Appendix R — E2E Key Rotation & Recovery Flows](#appendix-r--e2e-key-rotation--recovery-flows)
 
 ---
 
@@ -80,7 +101,7 @@ All critical domain events are published via the outbox pattern to Redis Pub/Sub
 
 ---
 
-## Architecture Overview
+## Runtime Architecture Diagram
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐

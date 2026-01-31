@@ -6,12 +6,6 @@ import (
 	"net/http"
 
 	"sentinal-chat/config"
-	"sentinal-chat/internal/domain/call"
-	"sentinal-chat/internal/domain/conversation"
-	"sentinal-chat/internal/domain/encryption"
-	"sentinal-chat/internal/domain/event"
-	"sentinal-chat/internal/domain/message"
-	"sentinal-chat/internal/domain/user"
 	"sentinal-chat/pkg/database"
 
 	"github.com/gin-gonic/gin"
@@ -23,46 +17,32 @@ func main() {
 	// Connect to Database
 	database.Connect(cfg)
 
-	// Run Raw Migrations (Extensions, Enums, Procedures)
-	if err := database.ApplyRawMigrations("migrations"); err != nil {
-		log.Fatalf("Failed to apply raw migrations: %v", err)
+	// Run full migration (raw SQL + GORM AutoMigrate for all entities)
+	if err := database.RunFullMigration("migrations"); err != nil {
+		log.Fatalf("Failed to run migrations: %v", err)
 	}
 
-	// Run GORM AutoMigrate for Tables
-	if err := database.DB.AutoMigrate(
-		&user.User{},
-		&user.UserSettings{},
-		&user.Device{},
-		&user.PushToken{},
-		&user.UserSession{},
-		&user.UserContact{},
-		&conversation.Conversation{},
-		&conversation.Participant{},
-		&conversation.ConversationSequence{},
-		&message.Message{},
-		&message.MessageReaction{},
-		&message.MessageReceipt{},
-		&message.MessageMention{},
-		&message.StarredMessage{},
-		&encryption.IdentityKey{},
-		&encryption.SignedPreKey{},
-		&encryption.OneTimePreKey{},
-		&encryption.EncryptedSession{},
-		&call.Call{},
-		&call.CallParticipant{},
-		&call.CallQualityMetric{},
-		&call.TurnCredential{},
-		&event.OutboxEvent{},
-		&event.CommandLog{},
-		&event.AccessPolicy{},
-	); err != nil {
-		log.Fatalf("Failed to apply GORM migrations: %v", err)
-	}
-
+	// Setup Gin router
 	r := gin.Default()
+
+	// Health check endpoint
 	r.GET("/ping", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"message": "pong",
+		})
+	})
+
+	// Database health endpoint
+	r.GET("/health", func(c *gin.Context) {
+		if err := database.HealthCheck(); err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"status": "unhealthy",
+				"error":  err.Error(),
+			})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"status": "healthy",
 		})
 	})
 

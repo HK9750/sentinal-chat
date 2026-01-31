@@ -10,6 +10,13 @@ EXCEPTION
     WHEN duplicate_object THEN null;
 END $$;
 
+-- System-wide user roles (different from participant_role which is for conversations)
+DO $$ BEGIN
+    CREATE TYPE user_role AS ENUM ('SUPER_ADMIN', 'ADMIN', 'MODERATOR', 'USER');
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+
 DO $$ BEGIN
     CREATE TYPE participant_role AS ENUM ('OWNER', 'ADMIN', 'MEMBER');
 EXCEPTION

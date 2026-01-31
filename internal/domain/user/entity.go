@@ -15,6 +15,7 @@ type User struct {
 	Email        sql.NullString `gorm:"type:citext;unique"`
 	PasswordHash string         `gorm:"not null"`
 	DisplayName  string         `gorm:"not null"`
+	Role         string         `gorm:"type:user_role;default:'USER'"` // SUPER_ADMIN, ADMIN, MODERATOR, USER
 	Bio          string
 	AvatarURL    string
 	IsOnline     bool `gorm:"default:false"`
@@ -44,8 +45,8 @@ type UserSettings struct {
 	Theme                   string    `gorm:"type:theme_mode;default:'SYSTEM'"`
 	Language                string    `gorm:"type:language_code;default:'en'"`
 	EnterToSend             bool      `gorm:"default:true"`
-	MediaAutoDownloadWiFi   bool      `gorm:"default:true"`
-	MediaAutoDownloadMobile bool      `gorm:"default:false"`
+	MediaAutoDownloadWiFi   bool      `gorm:"column:media_auto_download_wifi;default:true"`
+	MediaAutoDownloadMobile bool      `gorm:"column:media_auto_download_mobile;default:false"`
 	UpdatedAt               time.Time `gorm:"default:now()"`
 }
 

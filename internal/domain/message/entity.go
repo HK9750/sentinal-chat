@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 )
 
 // Message represents the messages table
@@ -27,18 +26,9 @@ type Message struct {
 	MentionCount       int           `gorm:"default:0"`
 	CreatedAt          time.Time     `gorm:"default:now()"`
 	EditedAt           sql.NullTime
-	DeletedAt          gorm.DeletedAt `gorm:"index"` // Using gorm.DeletedAt for soft delete if desired, OR manual sql.NullTime matching DB spec. DB spec says "deleted_at TIMESTAMP", so sql.NullTime is safer if we don't want GORM magic.
-	// Actually spec says "deleted_at TIMESTAMP", let's use sql.NullTime to be strict with schema.
-	// But wait, GORM `DeletedAt` is standard. Let's stick to sql.NullTime to match `database.md` exactly which might not imply GORM's specific soft delete behavior (though it likely does).
-	// Let's use sql.NullTime for explicit control as per spec.
-	ExpiresAt sql.NullTime
+	DeletedAt          sql.NullTime
+	ExpiresAt          sql.NullTime
 }
-
-// Special handling for DeletedAt if using sql.NullTime to avoid GORM auto-hook if not desired,
-// OR use gorm.DeletedAt if we WANT GORM soft deletes.
-// Impl plan says "GORM models", usually implies using GORM features. But for "deleted_at" column, the spec is clear.
-// I'll use `sql.NullTime` for `DeletedAt` field name, GORM might auto-detect it as soft delete if named `DeletedAt`.
-// To be safe and just map to DB, `DeletedAt` field is fine.
 
 // MessageReaction represents message_reactions
 type MessageReaction struct {
@@ -64,7 +54,7 @@ type MessageReceipt struct {
 type MessageMention struct {
 	MessageID uuid.UUID `gorm:"type:uuid;primaryKey"`
 	UserID    uuid.UUID `gorm:"type:uuid;primaryKey"`
-	Offset    int       `gorm:"primaryKey"` // Spec says PK is (message_id, user_id, offset)
+	Offset    int       `gorm:"column:offset;primaryKey"` // 'offset' is a reserved word in PostgreSQL
 	Length    int       `gorm:"not null"`
 }
 
