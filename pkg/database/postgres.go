@@ -289,6 +289,7 @@ type CreateAdminUserInput struct {
 	PhoneNumber string
 }
 
+
 // CreateAdminUser creates an admin user with the given credentials
 func CreateAdminUser(input CreateAdminUserInput) (*user.User, error) {
 	// Hash the password
