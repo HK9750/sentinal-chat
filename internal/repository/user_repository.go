@@ -448,6 +448,17 @@ func (r *PostgresUserRepository) GetUserSessions(ctx context.Context, userID uui
 	return sessions, nil
 }
 
+func (r *PostgresUserRepository) UpdateSession(ctx context.Context, s user.UserSession) error {
+	res := r.db.WithContext(ctx).Save(&s)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return sentinal_errors.ErrNotFound
+	}
+	return nil
+}
+
 func (r *PostgresUserRepository) RevokeSession(ctx context.Context, sessionID uuid.UUID) error {
 	res := r.db.WithContext(ctx).
 		Model(&user.UserSession{}).

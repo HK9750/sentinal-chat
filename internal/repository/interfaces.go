@@ -55,6 +55,7 @@ type UserRepository interface {
 	CreateSession(ctx context.Context, s *user.UserSession) error
 	GetSessionByID(ctx context.Context, sessionID uuid.UUID) (user.UserSession, error)
 	GetUserSessions(ctx context.Context, userID uuid.UUID) ([]user.UserSession, error)
+	UpdateSession(ctx context.Context, s user.UserSession) error
 	RevokeSession(ctx context.Context, sessionID uuid.UUID) error
 	RevokeAllUserSessions(ctx context.Context, userID uuid.UUID) error
 	CleanExpiredSessions(ctx context.Context) error

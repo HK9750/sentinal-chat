@@ -1,14 +1,16 @@
 package main
 
 import (
-	"fmt"
 	"log"
-	"net/http"
+	"time"
 
 	"sentinal-chat/config"
+	"sentinal-chat/internal/handler"
+	"sentinal-chat/internal/repository"
+	"sentinal-chat/internal/server"
+	"sentinal-chat/internal/services"
 	"sentinal-chat/pkg/database"
-
-	"github.com/gin-gonic/gin"
+	"sentinal-chat/pkg/logger"
 )
 
 func main() {
@@ -22,32 +24,26 @@ func main() {
 		log.Fatalf("Failed to run migrations: %v", err)
 	}
 
-	// Setup Gin router
-	r := gin.Default()
-
-	// Health check endpoint
-	r.GET("/ping", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
-			"message": "pong",
-		})
-	})
-
-	// Database health endpoint
-	r.GET("/health", func(c *gin.Context) {
-		if err := database.HealthCheck(); err != nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{
-				"status": "unhealthy",
-				"error":  err.Error(),
-			})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{
-			"status": "healthy",
-		})
-	})
-
 	log.Printf("Starting server on port %s", cfg.AppPort)
-	if err := r.Run(fmt.Sprintf(":%s", cfg.AppPort)); err != nil {
+	logInstance := logger.New(logger.DevelopmentMode)
+	logger.SetGlobalLogger(logInstance)
+	if cfg.AppMode == server.ReleaseMode {
+		logInstance = logger.New(logger.ProductionMode)
+		logger.SetGlobalLogger(logInstance)
+	}
+
+	userRepo := repository.NewUserRepository(database.GetDB())
+	authService := services.NewAuthService(
+		userRepo,
+		cfg.JWTSecret,
+		time.Duration(cfg.JWTExpiryMin)*time.Minute,
+		time.Duration(cfg.RefreshExpiry)*24*time.Hour,
+	)
+	authHandler := handler.NewAuthHandler(authService)
+	serverInstance := server.New(cfg, logInstance)
+	serverInstance.SetupRoutes(&server.Handlers{Auth: authHandler}, authService)
+
+	if err := serverInstance.Start(); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
 }

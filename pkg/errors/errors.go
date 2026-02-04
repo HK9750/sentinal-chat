@@ -5,7 +5,6 @@ import (
 	"time"
 )
 
-// Common errors
 var (
 	ErrInvalidTransition  = errors.New("invalid status transition")
 	ErrUnauthorized       = errors.New("unauthorized")
@@ -21,8 +20,6 @@ var (
 	ErrNotUploaded        = errors.New("file not uploaded")
 )
 
-
-// NowPtr returns a pointer to current time
 func NowPtr() *time.Time {
 	now := time.Now()
 	return &now
