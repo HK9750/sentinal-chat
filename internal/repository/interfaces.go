@@ -178,6 +178,7 @@ type CallRepository interface {
 	AddParticipant(ctx context.Context, p *call.CallParticipant) error
 	RemoveParticipant(ctx context.Context, callID, userID uuid.UUID) error
 	GetCallParticipants(ctx context.Context, callID uuid.UUID) ([]call.CallParticipant, error)
+	IsCallParticipant(ctx context.Context, callID, userID uuid.UUID) (bool, error)
 	UpdateParticipantStatus(ctx context.Context, callID, userID uuid.UUID, status string) error
 	UpdateParticipantMuteStatus(ctx context.Context, callID, userID uuid.UUID, audioMuted, videoMuted bool) error
 	GetActiveParticipantCount(ctx context.Context, callID uuid.UUID) (int64, error)

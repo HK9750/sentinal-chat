@@ -42,8 +42,10 @@ func main() {
 	messageRepo := repository.NewMessageRepository(database.GetDB())
 	conversationRepo := repository.NewConversationRepository(database.GetDB())
 	eventRepo := repository.NewEventRepository(database.GetDB())
-	accessProxy := proxy.NewAccessControl(eventRepo, conversationRepo)
-	commandBus := commands.NewBus()
+	uploadRepo := repository.NewUploadRepository(database.GetDB())
+	broadcastRepo := repository.NewBroadcastRepository(database.GetDB())
+	accessProxy := proxy.NewAccessControl(eventRepo, conversationRepo, broadcastRepo, uploadRepo)
+	commandBus := commands.NewBusWithProxy(accessProxy)
 	messageService := services.NewMessageService(database.GetDB(), messageRepo, eventRepo, accessProxy, commandBus)
 	messageHandler := handler.NewMessageHandler(messageService)
 	conversationService := services.NewConversationService(database.GetDB(), conversationRepo, eventRepo, accessProxy, commandBus)
@@ -52,11 +54,6 @@ func main() {
 	userHandler := handler.NewUserHandler(userService)
 	userService.RegisterHandlers()
 
-	callRepo := repository.NewCallRepository(database.GetDB())
-	callService := services.NewCallService(callRepo, eventRepo, commandBus)
-	callHandler := handler.NewCallHandler(callService)
-
-	uploadRepo := repository.NewUploadRepository(database.GetDB())
 	uploadService := services.NewUploadService(uploadRepo, eventRepo, commandBus)
 	uploadHandler := handler.NewUploadHandler(uploadService)
 
@@ -64,31 +61,43 @@ func main() {
 	encryptionService := services.NewEncryptionService(encryptionRepo, eventRepo, commandBus)
 	encryptionHandler := handler.NewEncryptionHandler(encryptionService)
 
-	broadcastRepo := repository.NewBroadcastRepository(database.GetDB())
 	broadcastService := services.NewBroadcastService(broadcastRepo, eventRepo, commandBus)
 	broadcastHandler := handler.NewBroadcastHandler(broadcastService)
 
-	wsHub := websocket.NewHub()
-	wsHandler := websocket.NewHandler(authService, wsHub)
-	go wsHub.Run(context.Background())
-
+	// Redis infrastructure - must be initialized before services that depend on it
 	redisClient := redis.NewClient(redis.Config{
 		Host:     cfg.RedisHost,
 		Port:     cfg.RedisPort,
 		Password: cfg.RedisPassword,
 		DB:       0,
 	})
-	_ = redis.NewPublisher(redisClient)
+	redisPublisher := redis.NewPublisher(redisClient)
+	signalingStore := redis.NewSignalingStore(redisClient, redisPublisher)
+	presenceStore := redis.NewPresenceStore(redisClient, redisPublisher, 5*time.Minute)
 	subscriber := redis.NewSubscriber(redisClient)
+
+	// Call service with signaling store for WebRTC
+	callRepo := repository.NewCallRepository(database.GetDB())
+	callService := services.NewCallService(callRepo, eventRepo, commandBus, signalingStore)
+	callHandler := handler.NewCallHandler(callService)
+
+	wsHub := websocket.NewHub()
+	wsAuthorizer := websocket.NewChannelAuthorizer(conversationRepo, callRepo, broadcastRepo)
+	wsHandler := websocket.NewHandler(authService, wsHub, commandBus, wsAuthorizer, presenceStore)
+	go wsHub.Run(context.Background())
+
 	bridge := websocket.NewRedisBridge(subscriber, wsHub)
 	go bridge.Run(context.Background(), []string{
 		"channel:user:*",
 		"channel:conversation:*",
 		"channel:call:*",
+		"channel:presence:*",
+		"channel:broadcast:*",
+		"channel:upload:*",
 		"channel:system:outbox",
 	})
 
-	processor := outbox.NewProcessor(eventRepo, redis.NewPublisher(redisClient), 100, time.Second*2, 5)
+	processor := outbox.NewProcessor(eventRepo, redisPublisher, 100, time.Second*2, 5)
 	go processor.Run(context.Background())
 
 	conversationService.RegisterHandlers(commandBus)

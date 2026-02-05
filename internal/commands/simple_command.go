@@ -1,10 +1,13 @@
 package commands
 
+import "github.com/google/uuid"
+
 type SimpleCommand struct {
 	Type                string
 	Payload             any
 	IdempotencyKeyValue string
 	ValidateFunc        func(any) error
+	ActorIDValue        uuid.UUID
 }
 
 func (c SimpleCommand) CommandType() string {
@@ -20,4 +23,8 @@ func (c SimpleCommand) Validate() error {
 
 func (c SimpleCommand) IdempotencyKey() string {
 	return c.IdempotencyKeyValue
+}
+
+func (c SimpleCommand) ActorID() uuid.UUID {
+	return c.ActorIDValue
 }

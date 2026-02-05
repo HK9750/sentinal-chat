@@ -231,6 +231,18 @@ func (r *PostgresCallRepository) GetCallParticipants(ctx context.Context, callID
 	return participants, nil
 }
 
+func (r *PostgresCallRepository) IsCallParticipant(ctx context.Context, callID, userID uuid.UUID) (bool, error) {
+	var count int64
+	err := r.db.WithContext(ctx).
+		Model(&call.CallParticipant{}).
+		Where("call_id = ? AND user_id = ?", callID, userID).
+		Count(&count).Error
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 var (
 	StatusJoined = "JOINED"
 	StatusLeft   = "LEFT"

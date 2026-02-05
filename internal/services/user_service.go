@@ -67,6 +67,8 @@ func (s *UserService) RegisterHandlers() {
 	if s.bus == nil {
 		return
 	}
+
+	// user.update - Update user profile (legacy handler)
 	s.bus.Register("user.update", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
 		c, ok := cmd.(commands.SimpleCommand)
 		if !ok {
@@ -81,6 +83,185 @@ func (s *UserService) RegisterHandlers() {
 			return commands.Result{}, err
 		}
 		return commands.Result{AggregateID: updated.ID.String(), Payload: updated}, nil
+	}))
+
+	// user.update_profile - Update user profile
+	s.bus.Register("user.update_profile", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
+		c, ok := cmd.(commands.UpdateProfileCommand)
+		if !ok {
+			return commands.Result{}, sentinal_errors.ErrInvalidInput
+		}
+		existing, err := s.repo.GetUserByID(ctx, c.UserID)
+		if err != nil {
+			return commands.Result{}, err
+		}
+		if c.DisplayName != "" {
+			existing.DisplayName = c.DisplayName
+		}
+		if c.Bio != "" {
+			existing.Bio = c.Bio
+		}
+		if c.AvatarURL != "" {
+			existing.AvatarURL = c.AvatarURL
+		}
+		existing.UpdatedAt = time.Now()
+		if err := s.repo.UpdateUser(ctx, existing); err != nil {
+			return commands.Result{}, err
+		}
+		_ = createOutboxEvent(ctx, s.eventRepo, "user", "user.updated", c.UserID, existing)
+		return commands.Result{AggregateID: c.UserID.String(), Payload: existing}, nil
+	}))
+
+	// user.block - Block a user
+	s.bus.Register("user.block", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
+		c, ok := cmd.(commands.BlockUserCommand)
+		if !ok {
+			return commands.Result{}, sentinal_errors.ErrInvalidInput
+		}
+		if err := s.repo.BlockContact(ctx, c.UserID, c.BlockedUserID); err != nil {
+			return commands.Result{}, err
+		}
+		_ = createOutboxEvent(ctx, s.eventRepo, "user", "user.blocked", c.UserID, map[string]any{
+			"user_id":         c.UserID,
+			"blocked_user_id": c.BlockedUserID,
+		})
+		return commands.Result{AggregateID: c.UserID.String()}, nil
+	}))
+
+	// user.unblock - Unblock a user
+	s.bus.Register("user.unblock", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
+		c, ok := cmd.(commands.UnblockUserCommand)
+		if !ok {
+			return commands.Result{}, sentinal_errors.ErrInvalidInput
+		}
+		if err := s.repo.UnblockContact(ctx, c.UserID, c.BlockedUserID); err != nil {
+			return commands.Result{}, err
+		}
+		_ = createOutboxEvent(ctx, s.eventRepo, "user", "user.unblocked", c.UserID, map[string]any{
+			"user_id":           c.UserID,
+			"unblocked_user_id": c.BlockedUserID,
+		})
+		return commands.Result{AggregateID: c.UserID.String()}, nil
+	}))
+
+	// user.update_settings - Update user settings
+	s.bus.Register("user.update_settings", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
+		c, ok := cmd.(commands.UpdateSettingsCommand)
+		if !ok {
+			return commands.Result{}, sentinal_errors.ErrInvalidInput
+		}
+		settings, err := s.repo.GetUserSettings(ctx, c.UserID)
+		if err != nil {
+			return commands.Result{}, err
+		}
+		if c.PrivacyLastSeen != "" {
+			settings.PrivacyLastSeen = c.PrivacyLastSeen
+		}
+		if c.PrivacyProfilePhoto != "" {
+			settings.PrivacyProfilePhoto = c.PrivacyProfilePhoto
+		}
+		if c.PrivacyAbout != "" {
+			settings.PrivacyAbout = c.PrivacyAbout
+		}
+		if c.PrivacyGroups != "" {
+			settings.PrivacyGroups = c.PrivacyGroups
+		}
+		if c.ReadReceipts != nil {
+			settings.ReadReceipts = *c.ReadReceipts
+		}
+		if c.NotificationsEnabled != nil {
+			settings.NotificationsEnabled = *c.NotificationsEnabled
+		}
+		if c.Theme != "" {
+			settings.Theme = c.Theme
+		}
+		if c.Language != "" {
+			settings.Language = c.Language
+		}
+		settings.UpdatedAt = time.Now()
+		if err := s.repo.UpdateUserSettings(ctx, settings); err != nil {
+			return commands.Result{}, err
+		}
+		_ = createOutboxEvent(ctx, s.eventRepo, "user", "user.settings_updated", c.UserID, settings)
+		return commands.Result{AggregateID: c.UserID.String(), Payload: settings}, nil
+	}))
+
+	// user.add_contact - Add a contact
+	s.bus.Register("user.add_contact", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
+		c, ok := cmd.(commands.AddContactCommand)
+		if !ok {
+			return commands.Result{}, sentinal_errors.ErrInvalidInput
+		}
+		contact := user.UserContact{
+			UserID:        c.UserID,
+			ContactUserID: c.ContactUserID,
+			Nickname:      c.Nickname,
+			CreatedAt:     time.Now(),
+		}
+		if err := s.repo.AddUserContact(ctx, &contact); err != nil {
+			return commands.Result{}, err
+		}
+		_ = createOutboxEvent(ctx, s.eventRepo, "user", "user.contact_added", c.UserID, contact)
+		return commands.Result{AggregateID: c.UserID.String(), Payload: contact}, nil
+	}))
+
+	// user.remove_contact - Remove a contact
+	s.bus.Register("user.remove_contact", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
+		c, ok := cmd.(commands.RemoveContactCommand)
+		if !ok {
+			return commands.Result{}, sentinal_errors.ErrInvalidInput
+		}
+		if err := s.repo.RemoveUserContact(ctx, c.UserID, c.ContactUserID); err != nil {
+			return commands.Result{}, err
+		}
+		_ = createOutboxEvent(ctx, s.eventRepo, "user", "user.contact_removed", c.UserID, map[string]any{
+			"user_id":         c.UserID,
+			"contact_user_id": c.ContactUserID,
+		})
+		return commands.Result{AggregateID: c.UserID.String()}, nil
+	}))
+
+	// user.register_device - Register a new device
+	s.bus.Register("user.register_device", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
+		c, ok := cmd.(commands.RegisterDeviceCommand)
+		if !ok {
+			return commands.Result{}, sentinal_errors.ErrInvalidInput
+		}
+		device := user.Device{
+			ID:           uuid.New(),
+			UserID:       c.UserID,
+			DeviceID:     c.DeviceID,
+			DeviceName:   c.DeviceName,
+			DeviceType:   c.DeviceType,
+			IsActive:     true,
+			RegisteredAt: time.Now(),
+		}
+		if err := s.repo.AddDevice(ctx, &device); err != nil {
+			return commands.Result{}, err
+		}
+		_ = createOutboxEvent(ctx, s.eventRepo, "user", "user.device_registered", c.UserID, device)
+		return commands.Result{AggregateID: device.ID.String(), Payload: device}, nil
+	}))
+
+	// user.update_presence - Update user presence
+	s.bus.Register("user.update_presence", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
+		c, ok := cmd.(commands.UpdatePresenceCommand)
+		if !ok {
+			return commands.Result{}, sentinal_errors.ErrInvalidInput
+		}
+		if err := s.repo.UpdateOnlineStatus(ctx, c.UserID, c.IsOnline); err != nil {
+			return commands.Result{}, err
+		}
+		eventType := "presence.online"
+		if !c.IsOnline {
+			eventType = "presence.offline"
+		}
+		_ = createOutboxEvent(ctx, s.eventRepo, "presence", eventType, c.UserID, map[string]any{
+			"user_id":      c.UserID,
+			"is_online":    c.IsOnline,
+			"last_seen_at": time.Now(),
+		})
+		return commands.Result{AggregateID: c.UserID.String()}, nil
 	}))
 }
 

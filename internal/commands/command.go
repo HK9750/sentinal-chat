@@ -1,11 +1,19 @@
 package commands
 
-import "context"
+import (
+	"context"
+
+	"github.com/google/uuid"
+)
 
 type Command interface {
 	CommandType() string
 	Validate() error
 	IdempotencyKey() string
+}
+
+type RequiresAuth interface {
+	ActorID() uuid.UUID
 }
 
 type Result struct {

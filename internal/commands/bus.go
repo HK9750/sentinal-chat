@@ -6,12 +6,17 @@ import (
 )
 
 type Bus struct {
-	mu       sync.RWMutex
-	handlers map[string]Handler
+	mu         sync.RWMutex
+	handlers   map[string]Handler
+	actorProxy Proxy
 }
 
 func NewBus() *Bus {
 	return &Bus{handlers: make(map[string]Handler)}
+}
+
+func NewBusWithProxy(proxy Proxy) *Bus {
+	return &Bus{handlers: make(map[string]Handler), actorProxy: proxy}
 }
 
 func (b *Bus) Register(commandType string, handler Handler) {
@@ -26,6 +31,11 @@ func (b *Bus) Execute(ctx context.Context, cmd Command) (Result, error) {
 	b.mu.RUnlock()
 	if !ok {
 		return Result{}, ErrHandlerNotFound
+	}
+	if b.actorProxy != nil {
+		if err := b.actorProxy.Authorize(ctx, cmd); err != nil {
+			return Result{}, err
+		}
 	}
 	return h.Handle(ctx, cmd)
 }

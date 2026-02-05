@@ -75,6 +75,258 @@ func (s *MessageService) RegisterHandlers() {
 		}
 		return commands.Result{AggregateID: msg.ID.String(), Payload: msg}, nil
 	}))
+
+	// message.edit - Edit an existing message
+	s.bus.Register("message.edit", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
+		c, ok := cmd.(commands.EditMessageCommand)
+		if !ok {
+			return commands.Result{}, sentinal_errors.ErrInvalidInput
+		}
+		msg, err := s.messageRepo.GetByID(ctx, c.MessageID)
+		if err != nil {
+			return commands.Result{}, err
+		}
+		if msg.SenderID != c.UserID {
+			return commands.Result{}, sentinal_errors.ErrForbidden
+		}
+		msg.Content = sql.NullString{String: c.NewContent, Valid: true}
+		msg.EditedAt = sql.NullTime{Time: time.Now(), Valid: true}
+		if err := s.messageRepo.Update(ctx, msg); err != nil {
+			return commands.Result{}, err
+		}
+		_ = createOutboxEvent(ctx, s.eventRepo, "message", "message.updated", msg.ID, msg)
+		return commands.Result{AggregateID: msg.ID.String(), Payload: msg}, nil
+	}))
+
+	// message.delete - Delete a message
+	s.bus.Register("message.delete", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
+		c, ok := cmd.(commands.DeleteMessageCommand)
+		if !ok {
+			return commands.Result{}, sentinal_errors.ErrInvalidInput
+		}
+		msg, err := s.messageRepo.GetByID(ctx, c.MessageID)
+		if err != nil {
+			return commands.Result{}, err
+		}
+		if msg.SenderID != c.UserID {
+			return commands.Result{}, sentinal_errors.ErrForbidden
+		}
+		if c.DeleteForEveryone {
+			if err := s.messageRepo.SoftDelete(ctx, c.MessageID); err != nil {
+				return commands.Result{}, err
+			}
+		}
+		_ = createOutboxEvent(ctx, s.eventRepo, "message", "message.deleted", c.MessageID, map[string]any{
+			"message_id":          c.MessageID,
+			"deleted_by":          c.UserID,
+			"delete_for_everyone": c.DeleteForEveryone,
+		})
+		return commands.Result{AggregateID: c.MessageID.String()}, nil
+	}))
+
+	// message.react - Add a reaction to a message
+	s.bus.Register("message.react", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
+		c, ok := cmd.(commands.ReactToMessageCommand)
+		if !ok {
+			return commands.Result{}, sentinal_errors.ErrInvalidInput
+		}
+		reaction := &message.MessageReaction{
+			MessageID:    c.MessageID,
+			UserID:       c.UserID,
+			ReactionCode: c.ReactionCode,
+			CreatedAt:    time.Now(),
+		}
+		if err := s.messageRepo.AddReaction(ctx, reaction); err != nil {
+			return commands.Result{}, err
+		}
+		_ = createOutboxEvent(ctx, s.eventRepo, "reaction", "reaction.added", c.MessageID, map[string]any{
+			"message_id":    c.MessageID,
+			"user_id":       c.UserID,
+			"reaction_code": c.ReactionCode,
+		})
+		return commands.Result{AggregateID: c.MessageID.String(), Payload: reaction}, nil
+	}))
+
+	// message.remove_reaction - Remove a reaction from a message
+	s.bus.Register("message.remove_reaction", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
+		c, ok := cmd.(commands.RemoveReactionCommand)
+		if !ok {
+			return commands.Result{}, sentinal_errors.ErrInvalidInput
+		}
+		if err := s.messageRepo.RemoveReaction(ctx, c.MessageID, c.UserID, c.ReactionCode); err != nil {
+			return commands.Result{}, err
+		}
+		_ = createOutboxEvent(ctx, s.eventRepo, "reaction", "reaction.removed", c.MessageID, map[string]any{
+			"message_id":    c.MessageID,
+			"user_id":       c.UserID,
+			"reaction_code": c.ReactionCode,
+		})
+		return commands.Result{AggregateID: c.MessageID.String()}, nil
+	}))
+
+	// message.star - Star a message
+	s.bus.Register("message.star", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
+		c, ok := cmd.(commands.StarMessageCommand)
+		if !ok {
+			return commands.Result{}, sentinal_errors.ErrInvalidInput
+		}
+		starred := &message.StarredMessage{
+			UserID:    c.UserID,
+			MessageID: c.MessageID,
+			StarredAt: time.Now(),
+		}
+		if err := s.messageRepo.StarMessage(ctx, starred); err != nil {
+			return commands.Result{}, err
+		}
+		_ = createOutboxEvent(ctx, s.eventRepo, "message", "message.starred", c.MessageID, map[string]any{
+			"message_id": c.MessageID,
+			"user_id":    c.UserID,
+		})
+		return commands.Result{AggregateID: c.MessageID.String(), Payload: starred}, nil
+	}))
+
+	// message.unstar - Unstar a message
+	s.bus.Register("message.unstar", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
+		c, ok := cmd.(commands.UnstarMessageCommand)
+		if !ok {
+			return commands.Result{}, sentinal_errors.ErrInvalidInput
+		}
+		if err := s.messageRepo.UnstarMessage(ctx, c.UserID, c.MessageID); err != nil {
+			return commands.Result{}, err
+		}
+		_ = createOutboxEvent(ctx, s.eventRepo, "message", "message.unstarred", c.MessageID, map[string]any{
+			"message_id": c.MessageID,
+			"user_id":    c.UserID,
+		})
+		return commands.Result{AggregateID: c.MessageID.String()}, nil
+	}))
+
+	// message.read - Mark a message as read
+	s.bus.Register("message.read", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
+		c, ok := cmd.(commands.MarkMessageReadCommand)
+		if !ok {
+			return commands.Result{}, sentinal_errors.ErrInvalidInput
+		}
+		if err := s.messageRepo.MarkAsRead(ctx, c.MessageID, c.UserID); err != nil {
+			return commands.Result{}, err
+		}
+		_ = createOutboxEvent(ctx, s.eventRepo, "message_receipt", "receipt.read", c.MessageID, map[string]any{
+			"message_id": c.MessageID,
+			"user_id":    c.UserID,
+			"read_at":    time.Now(),
+		})
+		return commands.Result{AggregateID: c.MessageID.String()}, nil
+	}))
+
+	// message.delivered - Mark a message as delivered
+	s.bus.Register("message.delivered", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
+		c, ok := cmd.(commands.MarkMessageDeliveredCommand)
+		if !ok {
+			return commands.Result{}, sentinal_errors.ErrInvalidInput
+		}
+		if err := s.messageRepo.MarkAsDelivered(ctx, c.MessageID, c.UserID); err != nil {
+			return commands.Result{}, err
+		}
+		_ = createOutboxEvent(ctx, s.eventRepo, "message_receipt", "receipt.delivered", c.MessageID, map[string]any{
+			"message_id":   c.MessageID,
+			"user_id":      c.UserID,
+			"delivered_at": time.Now(),
+		})
+		return commands.Result{AggregateID: c.MessageID.String()}, nil
+	}))
+
+	// message.typing - Typing indicator (ephemeral, no persistence)
+	s.bus.Register("message.typing", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
+		c, ok := cmd.(commands.TypingCommand)
+		if !ok {
+			return commands.Result{}, sentinal_errors.ErrInvalidInput
+		}
+		eventType := "typing.started"
+		if !c.IsTyping {
+			eventType = "typing.stopped"
+		}
+		_ = createOutboxEvent(ctx, s.eventRepo, "typing", eventType, c.ConversationID, map[string]any{
+			"conversation_id": c.ConversationID,
+			"user_id":         c.UserID,
+		})
+		return commands.Result{AggregateID: c.ConversationID.String()}, nil
+	}))
+
+	// message.create_poll - Create a poll
+	s.bus.Register("message.create_poll", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
+		c, ok := cmd.(commands.CreatePollCommand)
+		if !ok {
+			return commands.Result{}, sentinal_errors.ErrInvalidInput
+		}
+		poll := &message.Poll{
+			ID:             uuid.New(),
+			Question:       c.Question,
+			AllowsMultiple: c.AllowsMultiple,
+			CreatedAt:      time.Now(),
+		}
+		if err := s.messageRepo.CreatePoll(ctx, poll); err != nil {
+			return commands.Result{}, err
+		}
+		// Add poll options
+		for i, optionText := range c.Options {
+			opt := &message.PollOption{
+				ID:         uuid.New(),
+				PollID:     poll.ID,
+				OptionText: optionText,
+				Position:   i,
+			}
+			if err := s.messageRepo.AddPollOption(ctx, opt); err != nil {
+				return commands.Result{}, err
+			}
+		}
+		_ = createOutboxEvent(ctx, s.eventRepo, "poll", "poll.created", poll.ID, map[string]any{
+			"poll_id":  poll.ID,
+			"question": c.Question,
+		})
+		return commands.Result{AggregateID: poll.ID.String(), Payload: poll}, nil
+	}))
+
+	// message.vote_poll - Vote on a poll
+	s.bus.Register("message.vote_poll", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
+		c, ok := cmd.(commands.VotePollCommand)
+		if !ok {
+			return commands.Result{}, sentinal_errors.ErrInvalidInput
+		}
+		for _, optionID := range c.OptionIDs {
+			vote := &message.PollVote{
+				PollID:   c.PollID,
+				OptionID: optionID,
+				UserID:   c.UserID,
+				VotedAt:  time.Now(),
+			}
+			if err := s.messageRepo.VotePoll(ctx, vote); err != nil {
+				return commands.Result{}, err
+			}
+		}
+		_ = createOutboxEvent(ctx, s.eventRepo, "poll", "poll.voted", c.PollID, map[string]any{
+			"poll_id":    c.PollID,
+			"user_id":    c.UserID,
+			"option_ids": c.OptionIDs,
+		})
+		return commands.Result{AggregateID: c.PollID.String()}, nil
+	}))
+
+	// message.close_poll - Close a poll
+	s.bus.Register("message.close_poll", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
+		c, ok := cmd.(commands.ClosePollCommand)
+		if !ok {
+			return commands.Result{}, sentinal_errors.ErrInvalidInput
+		}
+		if err := s.messageRepo.ClosePoll(ctx, c.PollID); err != nil {
+			return commands.Result{}, err
+		}
+		_ = createOutboxEvent(ctx, s.eventRepo, "poll", "poll.closed", c.PollID, map[string]any{
+			"poll_id":   c.PollID,
+			"closed_by": c.UserID,
+			"closed_at": time.Now(),
+		})
+		return commands.Result{AggregateID: c.PollID.String()}, nil
+	}))
 }
 
 func (s *MessageService) Bus() *commands.Bus {

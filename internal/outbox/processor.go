@@ -93,15 +93,104 @@ func (p *Processor) processBatch(ctx context.Context) {
 	}
 }
 
+// routeChannel determines the Redis pub/sub channel based on event type.
+// See Appendix B of database.md for channel taxonomy.
 func routeChannel(env events.Envelope) string {
 	switch env.AggregateType {
-	case "message":
-		return "channel:conversation:" + env.AggregateID
-	case "call":
-		return "channel:call:" + env.AggregateID
-	case "presence":
-		return "channel:presence:" + env.AggregateID
+	// Message-related events route to conversation channel
+	// The aggregate_id for messages is the message_id, but we need conversation_id
+	// Try to extract conversation_id from payload, fallback to aggregate_id
+	case events.AggregateTypeMessage:
+		if convID := extractConversationID(env.Payload); convID != "" {
+			return events.ChannelPrefixConversation + convID
+		}
+		return events.ChannelPrefixConversation + env.AggregateID
+
+	case events.AggregateTypeMessageReceipt:
+		if convID := extractConversationID(env.Payload); convID != "" {
+			return events.ChannelPrefixConversation + convID
+		}
+		return events.ChannelPrefixConversation + env.AggregateID
+
+	case events.AggregateTypeReaction:
+		if convID := extractConversationID(env.Payload); convID != "" {
+			return events.ChannelPrefixConversation + convID
+		}
+		return events.ChannelPrefixConversation + env.AggregateID
+
+	case events.AggregateTypeTyping:
+		// For typing events, aggregate_id IS the conversation_id
+		return events.ChannelPrefixConversation + env.AggregateID
+
+	case events.AggregateTypePoll:
+		if convID := extractConversationID(env.Payload); convID != "" {
+			return events.ChannelPrefixConversation + convID
+		}
+		return events.ChannelPrefixConversation + env.AggregateID
+
+	// Conversation and participant events route to conversation channel
+	case events.AggregateTypeConversation, events.AggregateTypeParticipant:
+		return events.ChannelPrefixConversation + env.AggregateID
+
+	// Call events route to call channel
+	case events.AggregateTypeCall:
+		return events.ChannelPrefixCall + env.AggregateID
+
+	// Presence events route to presence channel (user-specific)
+	case events.AggregateTypePresence:
+		return events.ChannelPrefixPresence + env.AggregateID
+
+	// User and encryption events route to user channel
+	case events.AggregateTypeUser:
+		return events.ChannelPrefixUser + env.AggregateID
+
+	case events.AggregateTypeEncryption:
+		// For encryption, try to get user_id from payload
+		if userID := extractUserID(env.Payload); userID != "" {
+			return events.ChannelPrefixUser + userID
+		}
+		return events.ChannelPrefixUser + env.AggregateID
+
+	// Broadcast events route to broadcast channel
+	case events.AggregateTypeBroadcast:
+		return events.ChannelPrefixBroadcast + env.AggregateID
+
+	// Upload events route to user channel (uploader)
+	case events.AggregateTypeUpload:
+		if userID := extractUserID(env.Payload); userID != "" {
+			return events.ChannelPrefixUser + userID
+		}
+		return events.ChannelPrefixUpload + env.AggregateID
+
 	default:
-		return "channel:system:outbox"
+		return events.ChannelSystemOutbox
 	}
+}
+
+// extractConversationID attempts to extract conversation_id from the payload JSON
+func extractConversationID(payload json.RawMessage) string {
+	if len(payload) == 0 {
+		return ""
+	}
+	var data struct {
+		ConversationID string `json:"conversation_id"`
+	}
+	if err := json.Unmarshal(payload, &data); err != nil {
+		return ""
+	}
+	return data.ConversationID
+}
+
+// extractUserID attempts to extract user_id from the payload JSON
+func extractUserID(payload json.RawMessage) string {
+	if len(payload) == 0 {
+		return ""
+	}
+	var data struct {
+		UserID string `json:"user_id"`
+	}
+	if err := json.Unmarshal(payload, &data); err != nil {
+		return ""
+	}
+	return data.UserID
 }
