@@ -171,9 +171,7 @@ func (h *CallHandler) UpdateParticipantStatus(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid user_id", "INVALID_REQUEST"))
 		return
 	}
-	var req struct {
-		Status string `json:"status"`
-	}
+	var req httpdto.UpdateParticipantStatusRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid request", "INVALID_REQUEST"))
 		return
@@ -196,10 +194,7 @@ func (h *CallHandler) UpdateParticipantMute(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid user_id", "INVALID_REQUEST"))
 		return
 	}
-	var req struct {
-		AudioMuted bool `json:"audio_muted"`
-		VideoMuted bool `json:"video_muted"`
-	}
+	var req httpdto.UpdateParticipantMuteRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid request", "INVALID_REQUEST"))
 		return
@@ -243,9 +238,7 @@ func (h *CallHandler) EndCall(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid call id", "INVALID_REQUEST"))
 		return
 	}
-	var req struct {
-		Reason string `json:"reason"`
-	}
+	var req httpdto.EndCallRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid request", "INVALID_REQUEST"))
 		return
@@ -407,9 +400,7 @@ func (h *CallHandler) UpdateServerLoad(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid server id", "INVALID_REQUEST"))
 		return
 	}
-	var req struct {
-		Load int `json:"load"`
-	}
+	var req httpdto.UpdateServerLoadRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid request", "INVALID_REQUEST"))
 		return
@@ -427,9 +418,7 @@ func (h *CallHandler) UpdateServerHealth(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid server id", "INVALID_REQUEST"))
 		return
 	}
-	var req struct {
-		IsHealthy bool `json:"is_healthy"`
-	}
+	var req httpdto.UpdateServerHealthRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid request", "INVALID_REQUEST"))
 		return

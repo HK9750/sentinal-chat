@@ -198,10 +198,7 @@ func (h *ConversationHandler) AddParticipant(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid conversation id", "INVALID_REQUEST"))
 		return
 	}
-	var req struct {
-		UserID string `json:"user_id"`
-		Role   string `json:"role"`
-	}
+	var req httpdto.AddParticipantRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid request", "INVALID_REQUEST"))
 		return
@@ -267,9 +264,7 @@ func (h *ConversationHandler) UpdateParticipantRole(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid user_id", "INVALID_REQUEST"))
 		return
 	}
-	var req struct {
-		Role string `json:"role"`
-	}
+	var req httpdto.UpdateParticipantRoleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid request", "INVALID_REQUEST"))
 		return
@@ -292,9 +287,7 @@ func (h *ConversationHandler) Mute(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, httpdto.NewErrorResponse("unauthorized", "UNAUTHORIZED"))
 		return
 	}
-	var req struct {
-		Until string `json:"until"`
-	}
+	var req httpdto.MuteConversationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid request", "INVALID_REQUEST"))
 		return
@@ -412,9 +405,7 @@ func (h *ConversationHandler) UpdateLastReadSequence(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, httpdto.NewErrorResponse("unauthorized", "UNAUTHORIZED"))
 		return
 	}
-	var req struct {
-		SeqID int64 `json:"seq_id"`
-	}
+	var req httpdto.UpdateLastReadSequenceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid request", "INVALID_REQUEST"))
 		return

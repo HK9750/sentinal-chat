@@ -148,9 +148,7 @@ func (h *UserHandler) ListContacts(c *gin.Context) {
 }
 
 func (h *UserHandler) AddContact(c *gin.Context) {
-	var req struct {
-		ContactUserID string `json:"contact_user_id"`
-	}
+	var req httpdto.AddContactRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid request", "INVALID_REQUEST"))
 		return
@@ -174,7 +172,7 @@ func (h *UserHandler) AddContact(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse[any](nil))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.AddContactResponse{Success: true}))
 }
 
 func (h *UserHandler) RemoveContact(c *gin.Context) {

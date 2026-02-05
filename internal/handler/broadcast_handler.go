@@ -185,9 +185,7 @@ func (h *BroadcastHandler) BulkAddRecipients(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid broadcast id", "INVALID_REQUEST"))
 		return
 	}
-	var req struct {
-		UserIDs []string `json:"user_ids"`
-	}
+	var req httpdto.BulkRecipientsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid request", "INVALID_REQUEST"))
 		return
@@ -205,7 +203,7 @@ func (h *BroadcastHandler) BulkAddRecipients(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"added": len(ids)}))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.BulkRecipientsResponse{Count: len(ids)}))
 }
 
 func (h *BroadcastHandler) BulkRemoveRecipients(c *gin.Context) {
@@ -214,9 +212,7 @@ func (h *BroadcastHandler) BulkRemoveRecipients(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid broadcast id", "INVALID_REQUEST"))
 		return
 	}
-	var req struct {
-		UserIDs []string `json:"user_ids"`
-	}
+	var req httpdto.BulkRecipientsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid request", "INVALID_REQUEST"))
 		return
@@ -234,5 +230,5 @@ func (h *BroadcastHandler) BulkRemoveRecipients(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"removed": len(ids)}))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.BulkRecipientsResponse{Count: len(ids)}))
 }

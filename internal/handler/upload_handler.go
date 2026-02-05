@@ -110,9 +110,7 @@ func (h *UploadHandler) UpdateProgress(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid upload id", "INVALID_REQUEST"))
 		return
 	}
-	var req struct {
-		UploadedBytes int64 `json:"uploaded_bytes"`
-	}
+	var req httpdto.UpdateProgressRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid request", "INVALID_REQUEST"))
 		return
