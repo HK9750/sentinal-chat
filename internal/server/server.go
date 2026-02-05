@@ -14,6 +14,7 @@ import (
 	"sentinal-chat/internal/middleware"
 	"sentinal-chat/internal/services"
 	"sentinal-chat/internal/transport/httpdto"
+	"sentinal-chat/internal/websocket"
 	"sentinal-chat/pkg/database"
 	"sentinal-chat/pkg/logger"
 
@@ -34,7 +35,11 @@ var (
 )
 
 type Handlers struct {
-	Auth *handler.AuthHandler
+	Auth         *handler.AuthHandler
+	WebSocket    *websocket.Handler
+	Message      *handler.MessageHandler
+	Conversation *handler.ConversationHandler
+	User         *handler.UserHandler
 }
 
 func New(cfg *config.Config, l *logger.Logger) *Server {
@@ -88,6 +93,44 @@ func (s *Server) SetupRoutes(handlers *Handlers, authService *services.AuthServi
 		auth.GET("/sessions", middleware.AuthMiddleware(authService), handlers.Auth.Sessions)
 		auth.POST("/password/forgot", handlers.Auth.PasswordForgot)
 		auth.POST("/password/reset", handlers.Auth.PasswordReset)
+	}
+
+	if handlers.WebSocket != nil {
+		s.engine.GET("/v1/ws", handlers.WebSocket.Connect)
+	}
+
+	if handlers.Message != nil {
+		messages := s.engine.Group("/v1/messages")
+		messages.Use(middleware.AuthMiddleware(authService))
+		messages.POST("", handlers.Message.Send)
+		messages.GET("", handlers.Message.List)
+		messages.GET("/:id", handlers.Message.GetByID)
+		messages.DELETE("/:id", handlers.Message.Delete)
+		messages.POST("/:id/read", handlers.Message.MarkRead)
+	}
+
+	if handlers.Conversation != nil {
+		conversations := s.engine.Group("/v1/conversations")
+		conversations.Use(middleware.AuthMiddleware(authService))
+		conversations.POST("", handlers.Conversation.Create)
+		conversations.GET("", handlers.Conversation.List)
+	}
+
+	if handlers.User != nil {
+		users := s.engine.Group("/v1/users")
+		users.Use(middleware.AuthMiddleware(authService))
+		users.GET("", handlers.User.List)
+		users.GET("/me", handlers.User.GetProfile)
+		users.PUT("/me", handlers.User.UpdateProfile)
+		users.DELETE("/me", handlers.User.DeleteProfile)
+		users.GET("/me/settings", handlers.User.GetSettings)
+		users.PUT("/me/settings", handlers.User.UpdateSettings)
+		users.GET("/me/contacts", handlers.User.ListContacts)
+		users.POST("/me/contacts", handlers.User.AddContact)
+		users.DELETE("/me/contacts/:id", handlers.User.RemoveContact)
+		users.POST("/me/contacts/:id/block", handlers.User.BlockContact)
+		users.POST("/me/contacts/:id/unblock", handlers.User.UnblockContact)
+		users.GET("/me/contacts/blocked", handlers.User.BlockedContacts)
 	}
 }
 

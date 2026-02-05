@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"sentinal-chat/config"
 	"sentinal-chat/internal/domain/user"
 	"sentinal-chat/internal/repository"
 	sentinal_errors "sentinal-chat/pkg/errors"
@@ -27,12 +28,12 @@ type AuthService struct {
 	refreshTTL time.Duration
 }
 
-func NewAuthService(userRepo repository.UserRepository, jwtSecret string, accessTTL, refreshTTL time.Duration) *AuthService {
+func NewAuthService(userRepo repository.UserRepository, cfg *config.Config) *AuthService {
 	return &AuthService{
 		userRepo:   userRepo,
-		jwtSecret:  []byte(jwtSecret),
-		accessTTL:  accessTTL,
-		refreshTTL: refreshTTL,
+		jwtSecret:  []byte(cfg.JWTSecret),
+		accessTTL:  time.Duration(cfg.JWTExpiryHours) * time.Hour,
+		refreshTTL: time.Duration(cfg.RefreshExpiry) * 24 * time.Hour,
 	}
 }
 
