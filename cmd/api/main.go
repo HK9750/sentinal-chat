@@ -76,6 +76,10 @@ func main() {
 	presenceStore := redis.NewPresenceStore(redisClient, redisPublisher, 5*time.Minute)
 	subscriber := redis.NewSubscriber(redisClient)
 
+	// Rate limiter and cache store (per database.md Appendix H)
+	rateLimiter := redis.NewRateLimiter(redisClient, redis.DefaultRateLimitConfig())
+	cacheStore := redis.NewCacheStore(redisClient, redis.DefaultCacheConfig())
+
 	// Call service with signaling store for WebRTC
 	callRepo := repository.NewCallRepository(database.GetDB())
 	callService := services.NewCallService(callRepo, eventRepo, commandBus, signalingStore)
@@ -116,7 +120,7 @@ func main() {
 		WebSocket:    wsHandler,
 	}
 
-	serverInstance.SetupRoutes(handlers, authService)
+	serverInstance.SetupRoutes(handlers, authService, rateLimiter, cacheStore)
 
 	if err := serverInstance.Start(); err != nil {
 		log.Fatalf("Failed to start server: %v", err)

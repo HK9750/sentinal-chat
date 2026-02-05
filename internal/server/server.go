@@ -12,6 +12,7 @@ import (
 	"sentinal-chat/config"
 	"sentinal-chat/internal/handler"
 	"sentinal-chat/internal/middleware"
+	"sentinal-chat/internal/redis"
 	"sentinal-chat/internal/services"
 	"sentinal-chat/internal/transport/httpdto"
 	"sentinal-chat/internal/websocket"
@@ -69,11 +70,19 @@ func New(cfg *config.Config, l *logger.Logger) *Server {
 	}
 }
 
-func (s *Server) SetupRoutes(handlers *Handlers, authService *services.AuthService) {
+func (s *Server) SetupRoutes(handlers *Handlers, authService *services.AuthService, rateLimiter *redis.RateLimiter, cacheStore *redis.CacheStore) {
 	s.engine.Use(middleware.RequestIDMiddleware())
 	s.engine.Use(middleware.CORSMiddleware())
 	s.engine.Use(middleware.LoggingMiddleware(s.logger))
 	s.engine.Use(middleware.ErrorHandler(s.logger))
+
+	// Apply rate limiting middleware globally for auth endpoints
+	if rateLimiter != nil {
+		s.engine.Use(middleware.RateLimitMiddleware(rateLimiter))
+	}
+
+	// Store cacheStore reference for potential future use
+	_ = cacheStore
 
 	s.engine.GET("/ping", func(c *gin.Context) {
 		c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"message": "pong"}))
@@ -106,7 +115,11 @@ func (s *Server) SetupRoutes(handlers *Handlers, authService *services.AuthServi
 	if handlers.Message != nil {
 		messages := s.engine.Group("/v1/messages")
 		messages.Use(middleware.AuthMiddleware(authService))
-		messages.POST("", handlers.Message.Send)
+		if rateLimiter != nil {
+			messages.POST("", middleware.MessageRateLimitMiddleware(rateLimiter), handlers.Message.Send)
+		} else {
+			messages.POST("", handlers.Message.Send)
+		}
 		messages.GET("", handlers.Message.List)
 		messages.GET("/:id", handlers.Message.GetByID)
 		messages.PUT("/:id", handlers.Message.Update)
@@ -170,7 +183,11 @@ func (s *Server) SetupRoutes(handlers *Handlers, authService *services.AuthServi
 	if handlers.Call != nil {
 		calls := s.engine.Group("/v1/calls")
 		calls.Use(middleware.AuthMiddleware(authService))
-		calls.POST("", handlers.Call.Create)
+		if rateLimiter != nil {
+			calls.POST("", middleware.CallRateLimitMiddleware(rateLimiter), handlers.Call.Create)
+		} else {
+			calls.POST("", handlers.Call.Create)
+		}
 		calls.GET("/:id", handlers.Call.GetByID)
 		calls.GET("", handlers.Call.ListByConversation)
 		calls.GET("/user", handlers.Call.ListByUser)
