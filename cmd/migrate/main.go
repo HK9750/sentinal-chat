@@ -45,7 +45,7 @@ func main() {
 	adminPass := flag.String("admin-pass", "Admin@123!", "Admin password for seeding")
 
 	flag.Usage = func() {
-		fmt.Println(usage)
+		fmt.Print(usage)
 	}
 	flag.Parse()
 
