@@ -255,3 +255,99 @@ func (h *UserHandler) BlockedContacts(c *gin.Context) {
 
 	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"contacts": items}))
 }
+
+func (h *UserHandler) GetDevice(c *gin.Context) {
+	userID, ok := services.UserIDFromContext(c.Request.Context())
+	if !ok {
+		c.JSON(http.StatusUnauthorized, httpdto.NewErrorResponse("unauthorized", "UNAUTHORIZED"))
+		return
+	}
+	deviceID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid device id", "INVALID_REQUEST"))
+		return
+	}
+	item, err := h.service.GetDeviceByID(c.Request.Context(), userID, userID, deviceID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
+		return
+	}
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(item))
+}
+
+func (h *UserHandler) ListDevices(c *gin.Context) {
+	userID, ok := services.UserIDFromContext(c.Request.Context())
+	if !ok {
+		c.JSON(http.StatusUnauthorized, httpdto.NewErrorResponse("unauthorized", "UNAUTHORIZED"))
+		return
+	}
+	items, err := h.service.GetDevices(c.Request.Context(), userID, userID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
+		return
+	}
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"devices": items}))
+}
+
+func (h *UserHandler) DeactivateDevice(c *gin.Context) {
+	userID, ok := services.UserIDFromContext(c.Request.Context())
+	if !ok {
+		c.JSON(http.StatusUnauthorized, httpdto.NewErrorResponse("unauthorized", "UNAUTHORIZED"))
+		return
+	}
+	deviceID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid device id", "INVALID_REQUEST"))
+		return
+	}
+	if err := h.service.DeactivateDevice(c.Request.Context(), userID, userID, deviceID); err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
+		return
+	}
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse[any](nil))
+}
+
+func (h *UserHandler) ListPushTokens(c *gin.Context) {
+	userID, ok := services.UserIDFromContext(c.Request.Context())
+	if !ok {
+		c.JSON(http.StatusUnauthorized, httpdto.NewErrorResponse("unauthorized", "UNAUTHORIZED"))
+		return
+	}
+	items, err := h.service.GetPushTokens(c.Request.Context(), userID, userID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
+		return
+	}
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"tokens": items}))
+}
+
+func (h *UserHandler) RevokeSession(c *gin.Context) {
+	userID, ok := services.UserIDFromContext(c.Request.Context())
+	if !ok {
+		c.JSON(http.StatusUnauthorized, httpdto.NewErrorResponse("unauthorized", "UNAUTHORIZED"))
+		return
+	}
+	sessionID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid session id", "INVALID_REQUEST"))
+		return
+	}
+	if err := h.service.RevokeSession(c.Request.Context(), userID, userID, sessionID); err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
+		return
+	}
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse[any](nil))
+}
+
+func (h *UserHandler) RevokeAllSessions(c *gin.Context) {
+	userID, ok := services.UserIDFromContext(c.Request.Context())
+	if !ok {
+		c.JSON(http.StatusUnauthorized, httpdto.NewErrorResponse("unauthorized", "UNAUTHORIZED"))
+		return
+	}
+	if err := h.service.RevokeAllSessions(c.Request.Context(), userID, userID); err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
+		return
+	}
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse[any](nil))
+}

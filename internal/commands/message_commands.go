@@ -36,3 +36,4 @@ func (c SendMessageCommand) IdempotencyKey() string {
 }
 
 var ErrDuplicateCommand = errors.New("duplicate command")
+var ErrHandlerNotFound = errors.New("handler not found")

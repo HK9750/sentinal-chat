@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"sentinal-chat/internal/commands"
+	"sentinal-chat/internal/domain/message"
 	"sentinal-chat/internal/services"
 	"sentinal-chat/internal/transport/httpdto"
 
@@ -124,6 +125,32 @@ func (h *MessageHandler) Delete(c *gin.Context) {
 	c.JSON(http.StatusOK, httpdto.NewSuccessResponse[any](nil))
 }
 
+func (h *MessageHandler) Update(c *gin.Context) {
+	var req message.Message
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid request", "INVALID_REQUEST"))
+		return
+	}
+	if err := h.service.Update(c.Request.Context(), req); err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
+		return
+	}
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(req))
+}
+
+func (h *MessageHandler) HardDelete(c *gin.Context) {
+	messageID, err := parseUUID(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid message id", "INVALID_REQUEST"))
+		return
+	}
+	if err := h.service.HardDelete(c.Request.Context(), messageID); err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
+		return
+	}
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse[any](nil))
+}
+
 func (h *MessageHandler) MarkRead(c *gin.Context) {
 	messageID, err := parseUUID(c.Param("id"))
 	if err != nil {
@@ -136,6 +163,24 @@ func (h *MessageHandler) MarkRead(c *gin.Context) {
 		return
 	}
 	if err := h.service.MarkAsRead(c.Request.Context(), messageID, userID); err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
+		return
+	}
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse[any](nil))
+}
+
+func (h *MessageHandler) MarkDelivered(c *gin.Context) {
+	messageID, err := parseUUID(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid message id", "INVALID_REQUEST"))
+		return
+	}
+	userID, ok := services.UserIDFromContext(c.Request.Context())
+	if !ok {
+		c.JSON(http.StatusUnauthorized, httpdto.NewErrorResponse("unauthorized", "UNAUTHORIZED"))
+		return
+	}
+	if err := h.service.MarkAsDelivered(c.Request.Context(), messageID, userID); err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}

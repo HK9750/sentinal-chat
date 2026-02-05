@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"sentinal-chat/config"
+	"sentinal-chat/internal/commands"
 	"sentinal-chat/internal/handler"
 	"sentinal-chat/internal/outbox"
 	"sentinal-chat/internal/proxy"
@@ -35,21 +36,37 @@ func main() {
 		logger.SetGlobalLogger(logInstance)
 	}
 
-	// User repository, service, and handler
 	userRepo := repository.NewUserRepository(database.GetDB())
 	authService := services.NewAuthService(userRepo, cfg)
 	authHandler := handler.NewAuthHandler(authService)
-
 	messageRepo := repository.NewMessageRepository(database.GetDB())
 	conversationRepo := repository.NewConversationRepository(database.GetDB())
 	eventRepo := repository.NewEventRepository(database.GetDB())
 	accessProxy := proxy.NewAccessControl(eventRepo, conversationRepo)
-	messageService := services.NewMessageService(database.GetDB(), messageRepo, eventRepo, accessProxy)
+	commandBus := commands.NewBus()
+	messageService := services.NewMessageService(database.GetDB(), messageRepo, eventRepo, accessProxy, commandBus)
 	messageHandler := handler.NewMessageHandler(messageService)
-	conversationService := services.NewConversationService(database.GetDB(), conversationRepo, eventRepo, accessProxy)
+	conversationService := services.NewConversationService(database.GetDB(), conversationRepo, eventRepo, accessProxy, commandBus)
 	conversationHandler := handler.NewConversationHandler(conversationService)
-	userService := services.NewUserService(userRepo)
+	userService := services.NewUserService(userRepo, eventRepo, commandBus)
 	userHandler := handler.NewUserHandler(userService)
+	userService.RegisterHandlers()
+
+	callRepo := repository.NewCallRepository(database.GetDB())
+	callService := services.NewCallService(callRepo, eventRepo, commandBus)
+	callHandler := handler.NewCallHandler(callService)
+
+	uploadRepo := repository.NewUploadRepository(database.GetDB())
+	uploadService := services.NewUploadService(uploadRepo, eventRepo, commandBus)
+	uploadHandler := handler.NewUploadHandler(uploadService)
+
+	encryptionRepo := repository.NewEncryptionRepository(database.GetDB())
+	encryptionService := services.NewEncryptionService(encryptionRepo, eventRepo, commandBus)
+	encryptionHandler := handler.NewEncryptionHandler(encryptionService)
+
+	broadcastRepo := repository.NewBroadcastRepository(database.GetDB())
+	broadcastService := services.NewBroadcastService(broadcastRepo, eventRepo, commandBus)
+	broadcastHandler := handler.NewBroadcastHandler(broadcastService)
 
 	wsHub := websocket.NewHub()
 	wsHandler := websocket.NewHandler(authService, wsHub)
@@ -74,6 +91,8 @@ func main() {
 	processor := outbox.NewProcessor(eventRepo, redis.NewPublisher(redisClient), 100, time.Second*2, 5)
 	go processor.Run(context.Background())
 
+	conversationService.RegisterHandlers(commandBus)
+
 	serverInstance := server.New(cfg, logInstance)
 
 	handlers := &server.Handlers{
@@ -81,6 +100,10 @@ func main() {
 		Message:      messageHandler,
 		Conversation: conversationHandler,
 		User:         userHandler,
+		Call:         callHandler,
+		Upload:       uploadHandler,
+		Encryption:   encryptionHandler,
+		Broadcast:    broadcastHandler,
 		WebSocket:    wsHandler,
 	}
 

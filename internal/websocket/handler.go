@@ -45,7 +45,8 @@ func (h *Handler) Connect(c *gin.Context) {
 	}
 
 	userID := strings.TrimSpace(claims.UserID)
-	client := NewClient(conn, "channel:user:"+userID)
+	channel := c.DefaultQuery("channel", "channel:user:"+userID)
+	client := NewClient(conn, channel)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
