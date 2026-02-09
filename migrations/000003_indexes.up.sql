@@ -15,8 +15,8 @@ CREATE INDEX IF NOT EXISTS idx_participants_role ON participants (conversation_i
 -- Messages
 CREATE INDEX IF NOT EXISTS idx_messages_conv_seq ON messages (conversation_id, seq_id DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages (sender_id);
-CREATE INDEX IF NOT EXISTS idx_messages_content_gin ON messages USING gin(to_tsvector('english', content))
-  WHERE content IS NOT NULL AND deleted_at IS NULL;
+-- CREATE INDEX IF NOT EXISTS idx_messages_content_gin ON messages USING gin(to_tsvector('english', content))
+--   WHERE content IS NOT NULL AND deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_messages_expires ON messages (expires_at) WHERE expires_at IS NOT NULL;
 
 -- Receipts & reactions
