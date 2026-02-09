@@ -10,7 +10,6 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 type PostgresEncryptionRepository struct {
@@ -19,6 +18,18 @@ type PostgresEncryptionRepository struct {
 
 func NewEncryptionRepository(db *gorm.DB) EncryptionRepository {
 	return &PostgresEncryptionRepository{db: db}
+}
+
+func (r *PostgresEncryptionRepository) IsDeviceOwnedByUser(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID) (bool, error) {
+	var count int64
+	err := r.db.WithContext(ctx).
+		Table("devices").
+		Where("id = ? AND user_id = ? AND is_active = true", deviceID, userID).
+		Count(&count).Error
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 func (r *PostgresEncryptionRepository) CreateIdentityKey(ctx context.Context, k *encryption.IdentityKey) error {
@@ -32,7 +43,7 @@ func (r *PostgresEncryptionRepository) CreateIdentityKey(ctx context.Context, k 
 	return nil
 }
 
-func (r *PostgresEncryptionRepository) GetIdentityKey(ctx context.Context, userID uuid.UUID, deviceID string) (encryption.IdentityKey, error) {
+func (r *PostgresEncryptionRepository) GetIdentityKey(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID) (encryption.IdentityKey, error) {
 	var k encryption.IdentityKey
 	err := r.db.WithContext(ctx).
 		Where("user_id = ? AND device_id = ? AND is_active = true", userID, deviceID).
@@ -93,7 +104,7 @@ func (r *PostgresEncryptionRepository) CreateSignedPreKey(ctx context.Context, k
 	return nil
 }
 
-func (r *PostgresEncryptionRepository) GetSignedPreKey(ctx context.Context, userID uuid.UUID, deviceID string, keyID int) (encryption.SignedPreKey, error) {
+func (r *PostgresEncryptionRepository) GetSignedPreKey(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID, keyID int) (encryption.SignedPreKey, error) {
 	var k encryption.SignedPreKey
 	err := r.db.WithContext(ctx).
 		Where("user_id = ? AND device_id = ? AND key_id = ?", userID, deviceID, keyID).
@@ -107,7 +118,7 @@ func (r *PostgresEncryptionRepository) GetSignedPreKey(ctx context.Context, user
 	return k, nil
 }
 
-func (r *PostgresEncryptionRepository) GetActiveSignedPreKey(ctx context.Context, userID uuid.UUID, deviceID string) (encryption.SignedPreKey, error) {
+func (r *PostgresEncryptionRepository) GetActiveSignedPreKey(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID) (encryption.SignedPreKey, error) {
 	var k encryption.SignedPreKey
 	err := r.db.WithContext(ctx).
 		Where("user_id = ? AND device_id = ? AND is_active = true", userID, deviceID).
@@ -122,7 +133,7 @@ func (r *PostgresEncryptionRepository) GetActiveSignedPreKey(ctx context.Context
 	return k, nil
 }
 
-func (r *PostgresEncryptionRepository) RotateSignedPreKey(ctx context.Context, userID uuid.UUID, deviceID string, newKey *encryption.SignedPreKey) error {
+func (r *PostgresEncryptionRepository) RotateSignedPreKey(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID, newKey *encryption.SignedPreKey) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Deactivate old keys
 		if err := tx.Model(&encryption.SignedPreKey{}).
@@ -161,7 +172,7 @@ func (r *PostgresEncryptionRepository) UploadOneTimePreKeys(ctx context.Context,
 	return nil
 }
 
-func (r *PostgresEncryptionRepository) ConsumeOneTimePreKey(ctx context.Context, userID uuid.UUID, deviceID string, consumedBy uuid.UUID) (encryption.OneTimePreKey, error) {
+func (r *PostgresEncryptionRepository) ConsumeOneTimePreKey(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID, consumedBy uuid.UUID, consumedByDeviceID uuid.UUID) (encryption.OneTimePreKey, error) {
 	var key encryption.OneTimePreKey
 
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -181,8 +192,9 @@ func (r *PostgresEncryptionRepository) ConsumeOneTimePreKey(ctx context.Context,
 		return tx.Model(&encryption.OneTimePreKey{}).
 			Where("id = ?", key.ID).
 			Updates(map[string]interface{}{
-				"consumed_at": now,
-				"consumed_by": consumedBy,
+				"consumed_at":           now,
+				"consumed_by":           consumedBy,
+				"consumed_by_device_id": consumedByDeviceID,
 			}).Error
 	})
 
@@ -192,7 +204,7 @@ func (r *PostgresEncryptionRepository) ConsumeOneTimePreKey(ctx context.Context,
 	return key, nil
 }
 
-func (r *PostgresEncryptionRepository) GetAvailablePreKeyCount(ctx context.Context, userID uuid.UUID, deviceID string) (int64, error) {
+func (r *PostgresEncryptionRepository) GetAvailablePreKeyCount(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID) (int64, error) {
 	var count int64
 	err := r.db.WithContext(ctx).
 		Model(&encryption.OneTimePreKey{}).
@@ -213,127 +225,7 @@ func (r *PostgresEncryptionRepository) DeleteConsumedPreKeys(ctx context.Context
 	return res.RowsAffected, nil
 }
 
-func (r *PostgresEncryptionRepository) CreateSession(ctx context.Context, s *encryption.EncryptedSession) error {
-	res := r.db.WithContext(ctx).Create(s)
-	if res.Error != nil {
-		if errors.Is(res.Error, gorm.ErrDuplicatedKey) {
-			return sentinal_errors.ErrAlreadyExists
-		}
-		return res.Error
-	}
-	return nil
-}
-
-func (r *PostgresEncryptionRepository) GetSession(ctx context.Context, localUserID uuid.UUID, localDeviceID string, remoteUserID uuid.UUID, remoteDeviceID string) (encryption.EncryptedSession, error) {
-	var s encryption.EncryptedSession
-	err := r.db.WithContext(ctx).
-		Where("local_user_id = ? AND local_device_id = ? AND remote_user_id = ? AND remote_device_id = ?",
-			localUserID, localDeviceID, remoteUserID, remoteDeviceID).
-		First(&s).Error
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return encryption.EncryptedSession{}, sentinal_errors.ErrNotFound
-		}
-		return encryption.EncryptedSession{}, err
-	}
-	return s, nil
-}
-
-func (r *PostgresEncryptionRepository) UpdateSession(ctx context.Context, s encryption.EncryptedSession) error {
-	s.UpdatedAt = time.Now()
-	res := r.db.WithContext(ctx).Save(&s)
-	if res.Error != nil {
-		return res.Error
-	}
-	if res.RowsAffected == 0 {
-		return sentinal_errors.ErrNotFound
-	}
-	return nil
-}
-
-func (r *PostgresEncryptionRepository) DeleteSession(ctx context.Context, id uuid.UUID) error {
-	res := r.db.WithContext(ctx).Delete(&encryption.EncryptedSession{}, "id = ?", id)
-	if res.Error != nil {
-		return res.Error
-	}
-	if res.RowsAffected == 0 {
-		return sentinal_errors.ErrNotFound
-	}
-	return nil
-}
-
-func (r *PostgresEncryptionRepository) GetUserSessions(ctx context.Context, userID uuid.UUID, deviceID string) ([]encryption.EncryptedSession, error) {
-	var sessions []encryption.EncryptedSession
-	err := r.db.WithContext(ctx).
-		Where("local_user_id = ? AND local_device_id = ?", userID, deviceID).
-		Find(&sessions).Error
-	if err != nil {
-		return nil, err
-	}
-	return sessions, nil
-}
-
-func (r *PostgresEncryptionRepository) DeleteAllUserSessions(ctx context.Context, userID uuid.UUID, deviceID string) error {
-	res := r.db.WithContext(ctx).
-		Delete(&encryption.EncryptedSession{}, "local_user_id = ? AND local_device_id = ?", userID, deviceID)
-	if res.Error != nil {
-		return res.Error
-	}
-	return nil
-}
-
-func (r *PostgresEncryptionRepository) UpsertKeyBundle(ctx context.Context, b *encryption.KeyBundle) error {
-	b.UpdatedAt = time.Now()
-	res := r.db.WithContext(ctx).
-		Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "user_id"}, {Name: "device_id"}},
-			UpdateAll: true,
-		}).
-		Create(b)
-	if res.Error != nil {
-		return res.Error
-	}
-	return nil
-}
-
-func (r *PostgresEncryptionRepository) GetKeyBundle(ctx context.Context, userID uuid.UUID, deviceID string) (encryption.KeyBundle, error) {
-	var b encryption.KeyBundle
-	err := r.db.WithContext(ctx).
-		Where("user_id = ? AND device_id = ?", userID, deviceID).
-		First(&b).Error
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return encryption.KeyBundle{}, sentinal_errors.ErrNotFound
-		}
-		return encryption.KeyBundle{}, err
-	}
-	return b, nil
-}
-
-func (r *PostgresEncryptionRepository) GetUserKeyBundles(ctx context.Context, userID uuid.UUID) ([]encryption.KeyBundle, error) {
-	var bundles []encryption.KeyBundle
-	err := r.db.WithContext(ctx).
-		Where("user_id = ?", userID).
-		Find(&bundles).Error
-	if err != nil {
-		return nil, err
-	}
-	return bundles, nil
-}
-
-func (r *PostgresEncryptionRepository) DeleteKeyBundle(ctx context.Context, userID uuid.UUID, deviceID string) error {
-	res := r.db.WithContext(ctx).
-		Delete(&encryption.KeyBundle{}, "user_id = ? AND device_id = ?", userID, deviceID)
-	if res.Error != nil {
-		return res.Error
-	}
-	if res.RowsAffected == 0 {
-		return sentinal_errors.ErrNotFound
-	}
-	return nil
-}
-
-func (r *PostgresEncryptionRepository) HasActiveKeys(ctx context.Context, userID uuid.UUID, deviceID string) (bool, error) {
+func (r *PostgresEncryptionRepository) HasActiveKeys(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID) (bool, error) {
 	var count int64
 	err := r.db.WithContext(ctx).
 		Model(&encryption.IdentityKey{}).

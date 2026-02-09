@@ -2,7 +2,6 @@ package services
 
 import (
 	"context"
-	"database/sql"
 	"time"
 
 	"sentinal-chat/internal/commands"
@@ -17,6 +16,17 @@ type EncryptionService struct {
 	repo      repository.EncryptionRepository
 	bus       *commands.Bus
 	eventRepo repository.EventRepository
+}
+
+type KeyBundle struct {
+	UserID                uuid.UUID `json:"user_id"`
+	DeviceID              uuid.UUID `json:"device_id"`
+	IdentityKey           []byte    `json:"identity_key"`
+	SignedPreKeyID        int       `json:"signed_prekey_id"`
+	SignedPreKey          []byte    `json:"signed_prekey"`
+	SignedPreKeySignature []byte    `json:"signed_prekey_signature"`
+	OneTimePreKeyID       *int      `json:"one_time_prekey_id,omitempty"`
+	OneTimePreKey         []byte    `json:"one_time_prekey,omitempty"`
 }
 
 func NewEncryptionService(repo repository.EncryptionRepository, eventRepo repository.EventRepository, bus *commands.Bus) *EncryptionService {
@@ -39,6 +49,13 @@ func (s *EncryptionService) RegisterHandlers(bus *commands.Bus) {
 		if !ok {
 			return commands.Result{}, sentinal_errors.ErrInvalidInput
 		}
+		owned, err := s.repo.IsDeviceOwnedByUser(ctx, c.UserID, c.DeviceID)
+		if err != nil {
+			return commands.Result{}, err
+		}
+		if !owned {
+			return commands.Result{}, sentinal_errors.ErrForbidden
+		}
 		k := &encryption.IdentityKey{
 			ID:        uuid.New(),
 			UserID:    c.UserID,
@@ -58,6 +75,13 @@ func (s *EncryptionService) RegisterHandlers(bus *commands.Bus) {
 		c, ok := cmd.(commands.UploadSignedPreKeyCommand)
 		if !ok {
 			return commands.Result{}, sentinal_errors.ErrInvalidInput
+		}
+		owned, err := s.repo.IsDeviceOwnedByUser(ctx, c.UserID, c.DeviceID)
+		if err != nil {
+			return commands.Result{}, err
+		}
+		if !owned {
+			return commands.Result{}, sentinal_errors.ErrForbidden
 		}
 		k := &encryption.SignedPreKey{
 			ID:        uuid.New(),
@@ -80,6 +104,13 @@ func (s *EncryptionService) RegisterHandlers(bus *commands.Bus) {
 		c, ok := cmd.(commands.UploadOneTimePreKeysCommand)
 		if !ok {
 			return commands.Result{}, sentinal_errors.ErrInvalidInput
+		}
+		owned, err := s.repo.IsDeviceOwnedByUser(ctx, c.UserID, c.DeviceID)
+		if err != nil {
+			return commands.Result{}, err
+		}
+		if !owned {
+			return commands.Result{}, sentinal_errors.ErrForbidden
 		}
 		keys := make([]encryption.OneTimePreKey, 0, len(c.Keys))
 		for _, k := range c.Keys {
@@ -104,7 +135,12 @@ func (s *EncryptionService) RegisterHandlers(bus *commands.Bus) {
 		if !ok {
 			return commands.Result{}, sentinal_errors.ErrInvalidInput
 		}
-		key, err := s.ConsumeOneTimePreKey(ctx, c.TargetUserID, c.TargetDeviceID, c.ConsumerID)
+		if owned, err := s.repo.IsDeviceOwnedByUser(ctx, c.ConsumerID, c.ConsumerDeviceID); err != nil {
+			return commands.Result{}, err
+		} else if !owned {
+			return commands.Result{}, sentinal_errors.ErrForbidden
+		}
+		key, err := s.ConsumeOneTimePreKey(ctx, c.TargetUserID, c.TargetDeviceID, c.ConsumerID, c.ConsumerDeviceID)
 		if err != nil {
 			return commands.Result{}, err
 		}
@@ -116,6 +152,13 @@ func (s *EncryptionService) RegisterHandlers(bus *commands.Bus) {
 		c, ok := cmd.(commands.RotateSignedPreKeyCommand)
 		if !ok {
 			return commands.Result{}, sentinal_errors.ErrInvalidInput
+		}
+		owned, err := s.repo.IsDeviceOwnedByUser(ctx, c.UserID, c.DeviceID)
+		if err != nil {
+			return commands.Result{}, err
+		}
+		if !owned {
+			return commands.Result{}, sentinal_errors.ErrForbidden
 		}
 		newKey := &encryption.SignedPreKey{
 			ID:        uuid.New(),
@@ -133,69 +176,6 @@ func (s *EncryptionService) RegisterHandlers(bus *commands.Bus) {
 		return commands.Result{AggregateID: newKey.ID.String(), Payload: newKey}, nil
 	}))
 
-	// encryption.create_session - Create an encrypted session
-	bus.Register("encryption.create_session", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
-		c, ok := cmd.(commands.CreateSessionCommand)
-		if !ok {
-			return commands.Result{}, sentinal_errors.ErrInvalidInput
-		}
-		sess := &encryption.EncryptedSession{
-			ID:             uuid.New(),
-			LocalUserID:    c.LocalUserID,
-			LocalDeviceID:  c.LocalDeviceID,
-			RemoteUserID:   c.RemoteUserID,
-			RemoteDeviceID: c.RemoteDeviceID,
-			EncryptedState: c.EncryptedState,
-			CreatedAt:      time.Now(),
-			UpdatedAt:      time.Now(),
-		}
-		if err := s.CreateSession(ctx, sess); err != nil {
-			return commands.Result{}, err
-		}
-		return commands.Result{AggregateID: sess.ID.String(), Payload: sess}, nil
-	}))
-
-	// encryption.update_session - Update an encrypted session
-	bus.Register("encryption.update_session", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
-		c, ok := cmd.(commands.UpdateSessionCommand)
-		if !ok {
-			return commands.Result{}, sentinal_errors.ErrInvalidInput
-		}
-		sess := encryption.EncryptedSession{
-			ID:             c.SessionID,
-			EncryptedState: c.EncryptedState,
-			UpdatedAt:      time.Now(),
-		}
-		if err := s.UpdateSession(ctx, sess); err != nil {
-			return commands.Result{}, err
-		}
-		return commands.Result{AggregateID: c.SessionID.String(), Payload: sess}, nil
-	}))
-
-	// encryption.upsert_key_bundle - Upsert a key bundle
-	bus.Register("encryption.upsert_key_bundle", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
-		c, ok := cmd.(commands.UpsertKeyBundleCommand)
-		if !ok {
-			return commands.Result{}, sentinal_errors.ErrInvalidInput
-		}
-		bundle := &encryption.KeyBundle{
-			UserID:                c.UserID,
-			DeviceID:              c.DeviceID,
-			IdentityKey:           c.IdentityKey,
-			SignedPreKeyID:        c.SignedPreKeyID,
-			SignedPreKey:          c.SignedPreKey,
-			SignedPreKeySignature: c.SignedPreKeySignature,
-			UpdatedAt:             time.Now(),
-		}
-		if c.OneTimePreKeyID != nil {
-			bundle.OneTimePreKeyID = sql.NullInt32{Int32: int32(*c.OneTimePreKeyID), Valid: true}
-			bundle.OneTimePreKey = c.OneTimePreKey
-		}
-		if err := s.UpsertKeyBundle(ctx, bundle); err != nil {
-			return commands.Result{}, err
-		}
-		return commands.Result{AggregateID: c.UserID.String(), Payload: bundle}, nil
-	}))
 }
 
 func (s *EncryptionService) CreateIdentityKey(ctx context.Context, k *encryption.IdentityKey) error {
@@ -205,7 +185,7 @@ func (s *EncryptionService) CreateIdentityKey(ctx context.Context, k *encryption
 	return createOutboxEvent(ctx, s.eventRepo, "encryption", "identity_key.created", k.ID, k)
 }
 
-func (s *EncryptionService) GetIdentityKey(ctx context.Context, userID uuid.UUID, deviceID string) (encryption.IdentityKey, error) {
+func (s *EncryptionService) GetIdentityKey(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID) (encryption.IdentityKey, error) {
 	return s.repo.GetIdentityKey(ctx, userID, deviceID)
 }
 
@@ -228,15 +208,15 @@ func (s *EncryptionService) CreateSignedPreKey(ctx context.Context, k *encryptio
 	return createOutboxEvent(ctx, s.eventRepo, "encryption", "signed_prekey.created", k.ID, k)
 }
 
-func (s *EncryptionService) GetSignedPreKey(ctx context.Context, userID uuid.UUID, deviceID string, keyID int) (encryption.SignedPreKey, error) {
+func (s *EncryptionService) GetSignedPreKey(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID, keyID int) (encryption.SignedPreKey, error) {
 	return s.repo.GetSignedPreKey(ctx, userID, deviceID, keyID)
 }
 
-func (s *EncryptionService) GetActiveSignedPreKey(ctx context.Context, userID uuid.UUID, deviceID string) (encryption.SignedPreKey, error) {
+func (s *EncryptionService) GetActiveSignedPreKey(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID) (encryption.SignedPreKey, error) {
 	return s.repo.GetActiveSignedPreKey(ctx, userID, deviceID)
 }
 
-func (s *EncryptionService) RotateSignedPreKey(ctx context.Context, userID uuid.UUID, deviceID string, newKey *encryption.SignedPreKey) error {
+func (s *EncryptionService) RotateSignedPreKey(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID, newKey *encryption.SignedPreKey) error {
 	return s.repo.RotateSignedPreKey(ctx, userID, deviceID, newKey)
 }
 
@@ -254,11 +234,11 @@ func (s *EncryptionService) UploadOneTimePreKeys(ctx context.Context, keys []enc
 	return nil
 }
 
-func (s *EncryptionService) ConsumeOneTimePreKey(ctx context.Context, userID uuid.UUID, deviceID string, consumedBy uuid.UUID) (encryption.OneTimePreKey, error) {
-	return s.repo.ConsumeOneTimePreKey(ctx, userID, deviceID, consumedBy)
+func (s *EncryptionService) ConsumeOneTimePreKey(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID, consumedBy uuid.UUID, consumedByDeviceID uuid.UUID) (encryption.OneTimePreKey, error) {
+	return s.repo.ConsumeOneTimePreKey(ctx, userID, deviceID, consumedBy, consumedByDeviceID)
 }
 
-func (s *EncryptionService) GetAvailablePreKeyCount(ctx context.Context, userID uuid.UUID, deviceID string) (int64, error) {
+func (s *EncryptionService) GetAvailablePreKeyCount(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID) (int64, error) {
 	return s.repo.GetAvailablePreKeyCount(ctx, userID, deviceID)
 }
 
@@ -266,55 +246,55 @@ func (s *EncryptionService) DeleteConsumedPreKeys(ctx context.Context, olderThan
 	return s.repo.DeleteConsumedPreKeys(ctx, olderThan)
 }
 
-func (s *EncryptionService) CreateSession(ctx context.Context, sess *encryption.EncryptedSession) error {
-	if err := s.repo.CreateSession(ctx, sess); err != nil {
-		return err
-	}
-	return createOutboxEvent(ctx, s.eventRepo, "encryption", "session.created", sess.ID, sess)
-}
-
-func (s *EncryptionService) GetSession(ctx context.Context, localUserID uuid.UUID, localDeviceID string, remoteUserID uuid.UUID, remoteDeviceID string) (encryption.EncryptedSession, error) {
-	return s.repo.GetSession(ctx, localUserID, localDeviceID, remoteUserID, remoteDeviceID)
-}
-
-func (s *EncryptionService) UpdateSession(ctx context.Context, sess encryption.EncryptedSession) error {
-	if err := s.repo.UpdateSession(ctx, sess); err != nil {
-		return err
-	}
-	return createOutboxEvent(ctx, s.eventRepo, "encryption", "session.updated", sess.ID, sess)
-}
-
-func (s *EncryptionService) DeleteSession(ctx context.Context, id uuid.UUID) error {
-	return s.repo.DeleteSession(ctx, id)
-}
-
-func (s *EncryptionService) GetUserSessions(ctx context.Context, userID uuid.UUID, deviceID string) ([]encryption.EncryptedSession, error) {
-	return s.repo.GetUserSessions(ctx, userID, deviceID)
-}
-
-func (s *EncryptionService) DeleteAllUserSessions(ctx context.Context, userID uuid.UUID, deviceID string) error {
-	return s.repo.DeleteAllUserSessions(ctx, userID, deviceID)
-}
-
-func (s *EncryptionService) UpsertKeyBundle(ctx context.Context, b *encryption.KeyBundle) error {
-	if err := s.repo.UpsertKeyBundle(ctx, b); err != nil {
-		return err
-	}
-	return createOutboxEvent(ctx, s.eventRepo, "encryption", "key_bundle.upserted", uuid.New(), b)
-}
-
-func (s *EncryptionService) GetKeyBundle(ctx context.Context, userID uuid.UUID, deviceID string) (encryption.KeyBundle, error) {
-	return s.repo.GetKeyBundle(ctx, userID, deviceID)
-}
-
-func (s *EncryptionService) GetUserKeyBundles(ctx context.Context, userID uuid.UUID) ([]encryption.KeyBundle, error) {
-	return s.repo.GetUserKeyBundles(ctx, userID)
-}
-
-func (s *EncryptionService) DeleteKeyBundle(ctx context.Context, userID uuid.UUID, deviceID string) error {
-	return s.repo.DeleteKeyBundle(ctx, userID, deviceID)
-}
-
-func (s *EncryptionService) HasActiveKeys(ctx context.Context, userID uuid.UUID, deviceID string) (bool, error) {
+func (s *EncryptionService) HasActiveKeys(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID) (bool, error) {
 	return s.repo.HasActiveKeys(ctx, userID, deviceID)
+}
+
+func (s *EncryptionService) GetKeyBundle(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID, consumerID uuid.UUID, consumerDeviceID uuid.UUID) (KeyBundle, error) {
+	if owned, err := s.repo.IsDeviceOwnedByUser(ctx, consumerID, consumerDeviceID); err != nil {
+		return KeyBundle{}, err
+	} else if !owned {
+		return KeyBundle{}, sentinal_errors.ErrForbidden
+	}
+	if userID == consumerID {
+		return KeyBundle{}, sentinal_errors.ErrInvalidInput
+	}
+	identity, err := s.repo.GetIdentityKey(ctx, userID, deviceID)
+	if err != nil {
+		return KeyBundle{}, err
+	}
+
+	signed, err := s.repo.GetActiveSignedPreKey(ctx, userID, deviceID)
+	if err != nil {
+		return KeyBundle{}, err
+	}
+
+	var bundle KeyBundle
+	bundle.UserID = userID
+	bundle.DeviceID = deviceID
+	bundle.IdentityKey = identity.PublicKey
+	bundle.SignedPreKeyID = signed.KeyID
+	bundle.SignedPreKey = signed.PublicKey
+	bundle.SignedPreKeySignature = signed.Signature
+
+	prekey, prekeyErr := s.repo.ConsumeOneTimePreKey(ctx, userID, deviceID, consumerID, consumerDeviceID)
+	if prekeyErr == nil {
+		bundle.OneTimePreKeyID = &prekey.KeyID
+		bundle.OneTimePreKey = prekey.PublicKey
+	}
+	if prekeyErr != nil && prekeyErr != sentinal_errors.ErrNotFound {
+		return KeyBundle{}, prekeyErr
+	}
+
+	if err := createOutboxEvent(ctx, s.eventRepo, "encryption", "key_bundle.fetched", uuid.New(), map[string]any{
+		"user_id":             userID,
+		"device_id":           deviceID,
+		"consumer_id":         consumerID,
+		"consumer_device_id":  consumerDeviceID,
+		"has_one_time_prekey": prekeyErr == nil,
+	}); err != nil {
+		return KeyBundle{}, err
+	}
+
+	return bundle, nil
 }

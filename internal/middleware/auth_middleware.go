@@ -48,7 +48,7 @@ func AuthMiddleware(service *services.AuthService) gin.HandlerFunc {
 			return
 		}
 
-		ctx := services.WithUserSessionContext(c.Request.Context(), userID, sessionID)
+		ctx := services.WithUserSessionContext(c.Request.Context(), userID, sessionID, session.DeviceID)
 		c.Request = c.Request.WithContext(ctx)
 		c.Next()
 	}

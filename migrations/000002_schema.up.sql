@@ -125,7 +125,6 @@ CREATE TABLE IF NOT EXISTS messages (
   idempotency_key TEXT,
   seq_id BIGINT,
   type message_type DEFAULT 'TEXT',
-  content TEXT,
   metadata JSONB,
   is_forwarded BOOLEAN DEFAULT FALSE,
   forwarded_from_msg_id UUID REFERENCES messages(id),
@@ -138,6 +137,18 @@ CREATE TABLE IF NOT EXISTS messages (
   deleted_at TIMESTAMP,
   expires_at TIMESTAMP,
   UNIQUE (conversation_id, client_message_id)
+);
+
+CREATE TABLE IF NOT EXISTS message_ciphertexts (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  message_id UUID NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  recipient_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  recipient_device_id UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+  sender_device_id UUID REFERENCES devices(id) ON DELETE SET NULL,
+  ciphertext BYTEA NOT NULL,
+  header JSONB NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW(),
+  UNIQUE (message_id, recipient_device_id)
 );
 
 CREATE TABLE IF NOT EXISTS message_reactions (
@@ -334,47 +345,36 @@ CREATE TABLE IF NOT EXISTS turn_credentials (
 CREATE TABLE IF NOT EXISTS identity_keys (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  device_id TEXT NOT NULL,
+  device_id UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
   public_key BYTEA NOT NULL,
   is_active BOOLEAN DEFAULT TRUE,
   created_at TIMESTAMP DEFAULT NOW(),
-  UNIQUE (user_id, device_id)
+  UNIQUE (device_id)
 );
 
 CREATE TABLE IF NOT EXISTS signed_prekeys (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  device_id TEXT NOT NULL,
+  device_id UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
   key_id INTEGER NOT NULL,
   public_key BYTEA NOT NULL,
   signature BYTEA NOT NULL,
   created_at TIMESTAMP DEFAULT NOW(),
   is_active BOOLEAN DEFAULT TRUE,
-  UNIQUE (user_id, device_id, key_id)
+  UNIQUE (device_id, key_id)
 );
 
 CREATE TABLE IF NOT EXISTS onetime_prekeys (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  device_id TEXT NOT NULL,
+  device_id UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
   key_id INTEGER NOT NULL,
   public_key BYTEA NOT NULL,
   uploaded_at TIMESTAMP DEFAULT NOW(),
   consumed_at TIMESTAMP,
   consumed_by UUID REFERENCES users(id),
-  UNIQUE (user_id, device_id, key_id)
-);
-
-CREATE TABLE IF NOT EXISTS encrypted_sessions (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  local_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  local_device_id TEXT NOT NULL,
-  remote_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  remote_device_id TEXT NOT NULL,
-  encrypted_state BYTEA NOT NULL,
-  created_at TIMESTAMP DEFAULT NOW(),
-  updated_at TIMESTAMP DEFAULT NOW(),
-  UNIQUE (local_user_id, local_device_id, remote_user_id, remote_device_id)
+  consumed_by_device_id UUID REFERENCES devices(id),
+  UNIQUE (device_id, key_id)
 );
 
 -- Event-Driven Tables
@@ -467,18 +467,6 @@ CREATE TABLE IF NOT EXISTS call_server_assignments (
   PRIMARY KEY (call_id, sfu_server_id)
 );
 
-CREATE TABLE IF NOT EXISTS key_bundles (
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  device_id TEXT NOT NULL,
-  identity_key BYTEA NOT NULL,
-  signed_prekey_id INTEGER NOT NULL,
-  signed_prekey BYTEA NOT NULL,
-  signed_prekey_signature BYTEA NOT NULL,
-  onetime_prekey_id INTEGER,
-  onetime_prekey BYTEA,
-  updated_at TIMESTAMP DEFAULT NOW(),
-  PRIMARY KEY (user_id, device_id)
-);
 
 CREATE TABLE IF NOT EXISTS event_subscriptions (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

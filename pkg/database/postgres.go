@@ -224,8 +224,6 @@ func MigrateDB(db *gorm.DB) error {
 		&encryption.IdentityKey{},
 		&encryption.SignedPreKey{},
 		&encryption.OneTimePreKey{},
-		&encryption.EncryptedSession{},
-		&encryption.KeyBundle{},
 
 		// Event domain
 		&event.OutboxEvent{},

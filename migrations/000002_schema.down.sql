@@ -1,6 +1,5 @@
 DROP TABLE IF EXISTS outbox_event_deliveries;
 DROP TABLE IF EXISTS event_subscriptions;
-DROP TABLE IF EXISTS key_bundles;
 DROP TABLE IF EXISTS call_server_assignments;
 DROP TABLE IF EXISTS sfu_servers;
 DROP TABLE IF EXISTS upload_sessions;
@@ -9,7 +8,7 @@ DROP TABLE IF EXISTS message_user_states;
 DROP TABLE IF EXISTS access_policies;
 DROP TABLE IF EXISTS command_log;
 DROP TABLE IF EXISTS outbox_events;
-DROP TABLE IF EXISTS encrypted_sessions;
+DROP TABLE IF EXISTS message_ciphertexts;
 DROP TABLE IF EXISTS onetime_prekeys;
 DROP TABLE IF EXISTS signed_prekeys;
 DROP TABLE IF EXISTS identity_keys;

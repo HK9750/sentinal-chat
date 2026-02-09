@@ -98,10 +98,10 @@ func (s *Server) SetupRoutes(handlers *Handlers, authService *services.AuthServi
 	})
 
 	s.engine.GET("/goroutines", func(c *gin.Context) {
-        c.JSON(http.StatusOK, gin.H{
-            "goroutines": runtime.NumGoroutine(),
-        })
-    })
+		c.JSON(http.StatusOK, gin.H{
+			"goroutines": runtime.NumGoroutine(),
+		})
+	})
 
 	auth := s.engine.Group("/v1/auth")
 	{
@@ -259,14 +259,7 @@ func (s *Server) SetupRoutes(handlers *Handlers, authService *services.AuthServi
 		enc.POST("/onetime-prekeys", handlers.Encryption.UploadOneTimePreKeys)
 		enc.POST("/onetime-prekeys/consume", handlers.Encryption.ConsumeOneTimePreKey)
 		enc.GET("/onetime-prekeys/count", handlers.Encryption.GetPreKeyCount)
-		enc.POST("/sessions", handlers.Encryption.CreateSession)
-		enc.GET("/sessions", handlers.Encryption.GetSession)
-		enc.PUT("/sessions", handlers.Encryption.UpdateSession)
-		enc.DELETE("/sessions/:id", handlers.Encryption.DeleteSession)
-		enc.POST("/bundles", handlers.Encryption.UpsertKeyBundle)
 		enc.GET("/bundles", handlers.Encryption.GetKeyBundle)
-		enc.GET("/bundles/user", handlers.Encryption.GetUserKeyBundles)
-		enc.DELETE("/bundles", handlers.Encryption.DeleteKeyBundle)
 		enc.GET("/keys/active", handlers.Encryption.HasActiveKeys)
 	}
 

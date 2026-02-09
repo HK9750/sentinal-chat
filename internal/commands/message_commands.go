@@ -13,8 +13,10 @@ import (
 type SendMessageCommand struct {
 	ConversationID      uuid.UUID
 	SenderID            uuid.UUID
-	Content             string
+	Ciphertext          []byte
+	Header              map[string]interface{}
 	MessageType         string // TEXT, IMAGE, VIDEO, AUDIO, FILE, LOCATION, CONTACT, STICKER, GIF, POLL
+	RecipientDeviceIDs  []uuid.UUID
 	ReplyToMessageID    uuid.UUID
 	ForwardedFromMsgID  uuid.UUID
 	AttachmentIDs       []uuid.UUID
@@ -31,7 +33,7 @@ func (c SendMessageCommand) Validate() error {
 	if c.ConversationID == uuid.Nil || c.SenderID == uuid.Nil {
 		return sentinal_errors.ErrInvalidInput
 	}
-	if strings.TrimSpace(c.Content) == "" && len(c.AttachmentIDs) == 0 {
+	if len(c.Ciphertext) == 0 || len(c.RecipientDeviceIDs) != 1 {
 		return sentinal_errors.ErrInvalidInput
 	}
 	return nil

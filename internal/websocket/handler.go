@@ -2,6 +2,7 @@ package websocket
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"sentinal-chat/internal/redis"
 	"sentinal-chat/internal/services"
 	"sentinal-chat/internal/transport/httpdto"
+	sentinal_errors "sentinal-chat/pkg/errors"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -187,7 +189,7 @@ func (h *Handler) handleMessage(ctx context.Context, client *Client, userID stri
 		h.sendResponse(client, WSResponse{Type: "pong", RequestID: msg.RequestID, Success: true})
 
 	// Message actions (routed to command bus)
-	case "message.send", "message.edit", "message.delete", "message.react",
+	case "message.send", "message.delete", "message.react",
 		"message.read", "message.typing", "message.star", "message.unstar":
 		h.handleCommand(ctx, client, userID, msg)
 
@@ -334,6 +336,44 @@ func (h *Handler) parseCommand(userID string, msg WSMessage) (commands.Command, 
 			ConversationID: convID,
 			UserID:         userUUID,
 			IsTyping:       p.IsTyping,
+		}, nil
+
+	case "message.send":
+		var p struct {
+			ConversationID string `json:"conversation_id"`
+			Ciphertexts    []struct {
+				RecipientDeviceID string                 `json:"recipient_device_id"`
+				Ciphertext        string                 `json:"ciphertext"`
+				Header            map[string]interface{} `json:"header"`
+			} `json:"ciphertexts"`
+			MessageType    string `json:"message_type"`
+			ClientMsgID    string `json:"client_message_id"`
+			IdempotencyKey string `json:"idempotency_key"`
+		}
+		if err := json.Unmarshal(msg.Payload, &p); err != nil {
+			return nil, err
+		}
+		convID, _ := uuid.Parse(p.ConversationID)
+		if len(p.Ciphertexts) != 1 {
+			return nil, sentinal_errors.ErrInvalidInput
+		}
+		deviceID, err := uuid.Parse(p.Ciphertexts[0].RecipientDeviceID)
+		if err != nil {
+			return nil, err
+		}
+		ciphertext, err := base64.StdEncoding.DecodeString(p.Ciphertexts[0].Ciphertext)
+		if err != nil {
+			return nil, sentinal_errors.ErrInvalidInput
+		}
+		return commands.SendMessageCommand{
+			ConversationID:      convID,
+			SenderID:            userUUID,
+			Ciphertext:          ciphertext,
+			RecipientDeviceIDs:  []uuid.UUID{deviceID},
+			Header:              p.Ciphertexts[0].Header,
+			MessageType:         p.MessageType,
+			ClientMsgID:         p.ClientMsgID,
+			IdempotencyKeyValue: p.IdempotencyKey,
 		}, nil
 
 	case "message.read":

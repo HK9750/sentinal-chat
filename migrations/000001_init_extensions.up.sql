@@ -138,12 +138,3 @@ BEGIN
   RETURN NEW;
 END;
 $$;
-
--- Consume One-Time Prekey
-CREATE OR REPLACE FUNCTION fn_consume_prekey() RETURNS TRIGGER LANGUAGE plpgsql AS $$
-BEGIN
-  UPDATE onetime_prekeys SET consumed_at = NOW(), consumed_by = NEW.sender_id
-  WHERE id = (NEW.metadata->>'prekey_id')::uuid;
-  RETURN NEW;
-END;
-$$;

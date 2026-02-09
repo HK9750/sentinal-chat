@@ -1,11 +1,12 @@
 package handler
 
 import (
+	"encoding/base64"
 	"net/http"
 	"strconv"
+	"time"
 
 	"sentinal-chat/internal/commands"
-	"sentinal-chat/internal/domain/message"
 	"sentinal-chat/internal/services"
 	"sentinal-chat/internal/transport/httpdto"
 
@@ -40,23 +41,44 @@ func (h *MessageHandler) Send(c *gin.Context) {
 		return
 	}
 
-	result, err := h.service.HandleSendMessage(c.Request.Context(), commands.SendMessageCommand{
-		ConversationID:      conversationID,
-		SenderID:            userID,
-		Content:             req.Content,
-		ClientMsgID:         req.ClientMsgID,
-		IdempotencyKeyValue: req.IdempotencyKey,
-	})
-	if err != nil {
-		if err == commands.ErrDuplicateCommand {
-			c.JSON(http.StatusConflict, httpdto.NewErrorResponse(err.Error(), "DUPLICATE_COMMAND"))
+	results := make([]commands.Result, 0, len(req.Ciphertexts))
+	for _, payload := range req.Ciphertexts {
+		recipientDeviceID, err := parseUUID(payload.RecipientDeviceID)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid recipient_device_id", "INVALID_REQUEST"))
 			return
 		}
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
-		return
+		if payload.Ciphertext == "" {
+			c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("ciphertext required", "INVALID_REQUEST"))
+			return
+		}
+		ciphertext, err := base64.StdEncoding.DecodeString(payload.Ciphertext)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("ciphertext must be base64", "INVALID_REQUEST"))
+			return
+		}
+		result, err := h.service.HandleSendMessage(c.Request.Context(), commands.SendMessageCommand{
+			ConversationID:      conversationID,
+			SenderID:            userID,
+			Ciphertext:          ciphertext,
+			RecipientDeviceIDs:  []uuid.UUID{recipientDeviceID},
+			Header:              payload.Header,
+			MessageType:         req.MessageType,
+			ClientMsgID:         req.ClientMsgID,
+			IdempotencyKeyValue: req.IdempotencyKey,
+		})
+		if err != nil {
+			if err == commands.ErrDuplicateCommand {
+				c.JSON(http.StatusConflict, httpdto.NewErrorResponse(err.Error(), "DUPLICATE_COMMAND"))
+				return
+			}
+			c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
+			return
+		}
+		results = append(results, result)
 	}
 
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(result))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"messages": results}))
 }
 
 func (h *MessageHandler) List(c *gin.Context) {
@@ -90,26 +112,36 @@ func (h *MessageHandler) List(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"messages": items}))
+	response := make([]httpdto.MessageDTO, 0, len(items))
+	for _, item := range items {
+		dto := httpdto.MessageDTO{
+			ID:                item.ID.String(),
+			ConversationID:    item.ConversationID.String(),
+			SenderID:          item.SenderID.String(),
+			ClientMsgID:       item.ClientMessageID.String,
+			SequenceNumber:    item.SeqID.Int64,
+			IsDeleted:         item.DeletedAt.Valid,
+			IsEdited:          item.EditedAt.Valid,
+			Ciphertext:        base64.StdEncoding.EncodeToString(item.Ciphertext),
+			Header:            item.Header,
+			RecipientDeviceID: nullUUIDString(item.RecipientDeviceID),
+			CreatedAt:         item.CreatedAt.Format(time.RFC3339),
+		}
+		response = append(response, dto)
+	}
+
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"messages": response}))
+}
+
+func nullUUIDString(value uuid.NullUUID) string {
+	if value.Valid {
+		return value.UUID.String()
+	}
+	return ""
 }
 
 func (h *MessageHandler) GetByID(c *gin.Context) {
-	messageID, err := parseUUID(c.Param("id"))
-	if err != nil {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid message id", "INVALID_REQUEST"))
-		return
-	}
-	userID, ok := services.UserIDFromContext(c.Request.Context())
-	if !ok {
-		c.JSON(http.StatusUnauthorized, httpdto.NewErrorResponse("unauthorized", "UNAUTHORIZED"))
-		return
-	}
-	msg, err := h.service.GetByID(c.Request.Context(), messageID, userID)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
-		return
-	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(msg))
+	c.JSON(http.StatusNotImplemented, httpdto.NewErrorResponse("message detail not supported for e2e", "NOT_SUPPORTED"))
 }
 
 func (h *MessageHandler) Delete(c *gin.Context) {
@@ -126,16 +158,12 @@ func (h *MessageHandler) Delete(c *gin.Context) {
 }
 
 func (h *MessageHandler) Update(c *gin.Context) {
-	var req message.Message
+	var req httpdto.UpdateMessageRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid request", "INVALID_REQUEST"))
 		return
 	}
-	if err := h.service.Update(c.Request.Context(), req); err != nil {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
-		return
-	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(req))
+	c.JSON(http.StatusNotImplemented, httpdto.NewErrorResponse("message updates not supported for e2e", "NOT_SUPPORTED"))
 }
 
 func (h *MessageHandler) HardDelete(c *gin.Context) {

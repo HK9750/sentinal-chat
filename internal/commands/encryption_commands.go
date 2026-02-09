@@ -9,7 +9,7 @@ import (
 // RegisterIdentityKeyCommand registers an identity key
 type RegisterIdentityKeyCommand struct {
 	UserID              uuid.UUID
-	DeviceID            string
+	DeviceID            uuid.UUID
 	PublicKey           []byte
 	IdempotencyKeyValue string
 }
@@ -17,7 +17,7 @@ type RegisterIdentityKeyCommand struct {
 func (RegisterIdentityKeyCommand) CommandType() string { return "encryption.register_identity_key" }
 
 func (c RegisterIdentityKeyCommand) Validate() error {
-	if c.UserID == uuid.Nil || c.DeviceID == "" || len(c.PublicKey) == 0 {
+	if c.UserID == uuid.Nil || c.DeviceID == uuid.Nil || len(c.PublicKey) == 0 {
 		return sentinal_errors.ErrInvalidInput
 	}
 	return nil
@@ -30,7 +30,7 @@ func (c RegisterIdentityKeyCommand) ActorID() uuid.UUID { return c.UserID }
 // UploadSignedPreKeyCommand uploads a signed pre-key
 type UploadSignedPreKeyCommand struct {
 	UserID              uuid.UUID
-	DeviceID            string
+	DeviceID            uuid.UUID
 	KeyID               int
 	PublicKey           []byte
 	Signature           []byte
@@ -40,7 +40,7 @@ type UploadSignedPreKeyCommand struct {
 func (UploadSignedPreKeyCommand) CommandType() string { return "encryption.upload_signed_prekey" }
 
 func (c UploadSignedPreKeyCommand) Validate() error {
-	if c.UserID == uuid.Nil || c.DeviceID == "" || len(c.PublicKey) == 0 || len(c.Signature) == 0 {
+	if c.UserID == uuid.Nil || c.DeviceID == uuid.Nil || len(c.PublicKey) == 0 || len(c.Signature) == 0 {
 		return sentinal_errors.ErrInvalidInput
 	}
 	return nil
@@ -53,7 +53,7 @@ func (c UploadSignedPreKeyCommand) ActorID() uuid.UUID { return c.UserID }
 // UploadOneTimePreKeysCommand uploads one-time pre-keys
 type UploadOneTimePreKeysCommand struct {
 	UserID   uuid.UUID
-	DeviceID string
+	DeviceID uuid.UUID
 	Keys     []OneTimePreKeyInput
 }
 
@@ -65,7 +65,7 @@ type OneTimePreKeyInput struct {
 func (UploadOneTimePreKeysCommand) CommandType() string { return "encryption.upload_onetime_prekeys" }
 
 func (c UploadOneTimePreKeysCommand) Validate() error {
-	if c.UserID == uuid.Nil || c.DeviceID == "" || len(c.Keys) == 0 {
+	if c.UserID == uuid.Nil || c.DeviceID == uuid.Nil || len(c.Keys) == 0 {
 		return sentinal_errors.ErrInvalidInput
 	}
 	for _, k := range c.Keys {
@@ -83,15 +83,16 @@ func (c UploadOneTimePreKeysCommand) ActorID() uuid.UUID { return c.UserID }
 // ConsumePreKeyCommand consumes a one-time pre-key
 type ConsumePreKeyCommand struct {
 	TargetUserID        uuid.UUID
-	TargetDeviceID      string
+	TargetDeviceID      uuid.UUID
 	ConsumerID          uuid.UUID
+	ConsumerDeviceID    uuid.UUID
 	IdempotencyKeyValue string
 }
 
 func (ConsumePreKeyCommand) CommandType() string { return "encryption.consume_prekey" }
 
 func (c ConsumePreKeyCommand) Validate() error {
-	if c.TargetUserID == uuid.Nil || c.TargetDeviceID == "" || c.ConsumerID == uuid.Nil {
+	if c.TargetUserID == uuid.Nil || c.TargetDeviceID == uuid.Nil || c.ConsumerID == uuid.Nil || c.ConsumerDeviceID == uuid.Nil {
 		return sentinal_errors.ErrInvalidInput
 	}
 	return nil
@@ -104,7 +105,7 @@ func (c ConsumePreKeyCommand) ActorID() uuid.UUID { return c.ConsumerID }
 // RotateSignedPreKeyCommand rotates the signed pre-key
 type RotateSignedPreKeyCommand struct {
 	UserID              uuid.UUID
-	DeviceID            string
+	DeviceID            uuid.UUID
 	NewKeyID            int
 	NewPublicKey        []byte
 	NewSignature        []byte
@@ -114,7 +115,7 @@ type RotateSignedPreKeyCommand struct {
 func (RotateSignedPreKeyCommand) CommandType() string { return "encryption.rotate_signed_prekey" }
 
 func (c RotateSignedPreKeyCommand) Validate() error {
-	if c.UserID == uuid.Nil || c.DeviceID == "" || len(c.NewPublicKey) == 0 || len(c.NewSignature) == 0 {
+	if c.UserID == uuid.Nil || c.DeviceID == uuid.Nil || len(c.NewPublicKey) == 0 || len(c.NewSignature) == 0 {
 		return sentinal_errors.ErrInvalidInput
 	}
 	return nil
@@ -124,75 +125,6 @@ func (c RotateSignedPreKeyCommand) IdempotencyKey() string { return c.Idempotenc
 
 func (c RotateSignedPreKeyCommand) ActorID() uuid.UUID { return c.UserID }
 
-// CreateSessionCommand creates an encrypted session
-type CreateSessionCommand struct {
-	LocalUserID         uuid.UUID
-	LocalDeviceID       string
-	RemoteUserID        uuid.UUID
-	RemoteDeviceID      string
-	EncryptedState      []byte
-	IdempotencyKeyValue string
-}
+// CreateSessionCommand and UpdateSessionCommand removed; sessions are handled client-side.
 
-func (CreateSessionCommand) CommandType() string { return "encryption.create_session" }
-
-func (c CreateSessionCommand) Validate() error {
-	if c.LocalUserID == uuid.Nil || c.LocalDeviceID == "" ||
-		c.RemoteUserID == uuid.Nil || c.RemoteDeviceID == "" ||
-		len(c.EncryptedState) == 0 {
-		return sentinal_errors.ErrInvalidInput
-	}
-	return nil
-}
-
-func (c CreateSessionCommand) IdempotencyKey() string { return c.IdempotencyKeyValue }
-
-func (c CreateSessionCommand) ActorID() uuid.UUID { return c.LocalUserID }
-
-// UpdateSessionCommand updates an encrypted session
-type UpdateSessionCommand struct {
-	SessionID           uuid.UUID
-	LocalUserID         uuid.UUID
-	EncryptedState      []byte
-	IdempotencyKeyValue string
-}
-
-func (UpdateSessionCommand) CommandType() string { return "encryption.update_session" }
-
-func (c UpdateSessionCommand) Validate() error {
-	if c.SessionID == uuid.Nil || c.LocalUserID == uuid.Nil || len(c.EncryptedState) == 0 {
-		return sentinal_errors.ErrInvalidInput
-	}
-	return nil
-}
-
-func (c UpdateSessionCommand) IdempotencyKey() string { return c.IdempotencyKeyValue }
-
-func (c UpdateSessionCommand) ActorID() uuid.UUID { return c.LocalUserID }
-
-// UpsertKeyBundleCommand upserts a key bundle
-type UpsertKeyBundleCommand struct {
-	UserID                uuid.UUID
-	DeviceID              string
-	IdentityKey           []byte
-	SignedPreKeyID        int
-	SignedPreKey          []byte
-	SignedPreKeySignature []byte
-	OneTimePreKeyID       *int
-	OneTimePreKey         []byte
-	IdempotencyKeyValue   string
-}
-
-func (UpsertKeyBundleCommand) CommandType() string { return "encryption.upsert_key_bundle" }
-
-func (c UpsertKeyBundleCommand) Validate() error {
-	if c.UserID == uuid.Nil || c.DeviceID == "" || len(c.IdentityKey) == 0 ||
-		len(c.SignedPreKey) == 0 || len(c.SignedPreKeySignature) == 0 {
-		return sentinal_errors.ErrInvalidInput
-	}
-	return nil
-}
-
-func (c UpsertKeyBundleCommand) IdempotencyKey() string { return c.IdempotencyKeyValue }
-
-func (c UpsertKeyBundleCommand) ActorID() uuid.UUID { return c.UserID }
+// UpsertKeyBundleCommand removed; server derives bundles from stored keys.

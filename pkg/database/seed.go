@@ -1,6 +1,7 @@
 package database
 
 import (
+	"crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -56,6 +57,7 @@ func Seed(cfg *SeedConfig) (*SeedResult, error) {
 	}
 
 	result := &SeedResult{}
+	deviceMap := make(map[uuid.UUID][]user.Device)
 
 	log.Println("Starting database seeding...")
 
@@ -65,6 +67,14 @@ func Seed(cfg *SeedConfig) (*SeedResult, error) {
 		return nil, fmt.Errorf("failed to seed admin user: %w", err)
 	}
 	result.AdminUser = adminUser
+
+	adminDevices, err := seedDevices([]*user.User{adminUser})
+	if err != nil {
+		return nil, fmt.Errorf("failed to seed admin devices: %w", err)
+	}
+	for userID, list := range adminDevices {
+		deviceMap[userID] = append(deviceMap[userID], list...)
+	}
 
 	if cfg.CreateTestUsers {
 		// Create test users
@@ -76,6 +86,17 @@ func Seed(cfg *SeedConfig) (*SeedResult, error) {
 
 		// Create sample conversations
 		if len(testUsers) >= 2 {
+			devices, err := seedDevices(testUsers)
+			if err != nil {
+				return nil, fmt.Errorf("failed to seed test devices: %w", err)
+			}
+			for userID, list := range devices {
+				deviceMap[userID] = append(deviceMap[userID], list...)
+			}
+			if err := seedEncryptionKeys(deviceMap); err != nil {
+				return nil, fmt.Errorf("failed to seed encryption keys: %w", err)
+			}
+
 			convs, err := seedConversations(testUsers)
 			if err != nil {
 				return nil, fmt.Errorf("failed to seed conversations: %w", err)
@@ -83,7 +104,7 @@ func Seed(cfg *SeedConfig) (*SeedResult, error) {
 			result.Conversations = convs
 
 			// Create sample messages
-			msgs, err := seedMessages(convs, testUsers)
+			msgs, err := seedMessages(convs, testUsers, deviceMap)
 			if err != nil {
 				return nil, fmt.Errorf("failed to seed messages: %w", err)
 			}
@@ -388,7 +409,7 @@ func seedConversations(users []*user.User) ([]*conversation.Conversation, error)
 }
 
 // seedMessages creates sample messages in conversations
-func seedMessages(convs []*conversation.Conversation, users []*user.User) ([]*message.Message, error) {
+func seedMessages(convs []*conversation.Conversation, users []*user.User, deviceMap map[uuid.UUID][]user.Device) ([]*message.Message, error) {
 	messages := make([]*message.Message, 0)
 
 	sampleMessages := []struct {
@@ -396,11 +417,11 @@ func seedMessages(convs []*conversation.Conversation, users []*user.User) ([]*me
 		msgType  string
 		metadata map[string]interface{}
 	}{
-		{"Hello everyone! 👋", "TEXT", nil},
-		{"Welcome to Sentinal Chat!", "TEXT", nil},
+		{"Hello everyone", "TEXT", nil},
+		{"Welcome to Sentinal Chat", "TEXT", nil},
 		{"This is a test message", "TEXT", nil},
 		{"How is everyone doing today?", "TEXT", nil},
-		{"Great to be here!", "TEXT", nil},
+		{"Great to be here", "TEXT", nil},
 		{"Check out this cool feature", "TEXT", nil},
 		{"Looking forward to our collaboration", "TEXT", nil},
 		{"Let me know if you need anything", "TEXT", nil},
@@ -422,15 +443,20 @@ func seedMessages(convs []*conversation.Conversation, users []*user.User) ([]*me
 				ConversationID: conv.ID,
 				SenderID:       users[i%len(users)].ID,
 				Type:           msgData.msgType,
-				Content:        sql.NullString{String: msgData.content, Valid: true},
 				Metadata:       string(metadata),
 				IsForwarded:    false,
 				MentionCount:   0,
 				CreatedAt:      time.Now().Add(time.Duration(i) * time.Minute),
 			}
 
+			msg.Metadata = string(mustJSON(map[string]interface{}{"e2ee": true, "sample": true}))
+
 			if err := DB.Create(msg).Error; err != nil {
 				return nil, fmt.Errorf("failed to create message: %w", err)
+			}
+
+			if err := seedMessageCiphertexts(msg, deviceMap); err != nil {
+				return nil, fmt.Errorf("failed to seed message ciphertexts: %w", err)
 			}
 			messages = append(messages, msg)
 		}
@@ -438,6 +464,177 @@ func seedMessages(convs []*conversation.Conversation, users []*user.User) ([]*me
 
 	log.Printf("Seeded %d messages", len(messages))
 	return messages, nil
+}
+
+type identityKeySeed struct {
+	ID        uuid.UUID `gorm:"type:uuid;primaryKey"`
+	UserID    uuid.UUID `gorm:"type:uuid;not null"`
+	DeviceID  uuid.UUID `gorm:"type:uuid;not null"`
+	PublicKey []byte    `gorm:"not null"`
+	IsActive  bool      `gorm:"default:true"`
+	CreatedAt time.Time
+}
+
+func (identityKeySeed) TableName() string { return "identity_keys" }
+
+type signedPreKeySeed struct {
+	ID        uuid.UUID `gorm:"type:uuid;primaryKey"`
+	UserID    uuid.UUID `gorm:"type:uuid;not null"`
+	DeviceID  uuid.UUID `gorm:"type:uuid;not null"`
+	KeyID     int       `gorm:"not null"`
+	PublicKey []byte    `gorm:"not null"`
+	Signature []byte    `gorm:"not null"`
+	CreatedAt time.Time
+	IsActive  bool `gorm:"default:true"`
+}
+
+func (signedPreKeySeed) TableName() string { return "signed_prekeys" }
+
+type oneTimePreKeySeed struct {
+	ID                 uuid.UUID `gorm:"type:uuid;primaryKey"`
+	UserID             uuid.UUID `gorm:"type:uuid;not null"`
+	DeviceID           uuid.UUID `gorm:"type:uuid;not null"`
+	KeyID              int       `gorm:"not null"`
+	PublicKey          []byte    `gorm:"not null"`
+	UploadedAt         time.Time
+	ConsumedAt         sql.NullTime
+	ConsumedBy         uuid.NullUUID
+	ConsumedByDeviceID uuid.NullUUID `gorm:"type:uuid"`
+}
+
+func (oneTimePreKeySeed) TableName() string { return "onetime_prekeys" }
+
+type messageCiphertextSeed struct {
+	ID                uuid.UUID     `gorm:"type:uuid;primaryKey"`
+	MessageID         uuid.UUID     `gorm:"type:uuid;not null"`
+	RecipientUserID   uuid.UUID     `gorm:"type:uuid;not null"`
+	RecipientDeviceID uuid.UUID     `gorm:"type:uuid;not null"`
+	SenderDeviceID    uuid.NullUUID `gorm:"type:uuid"`
+	Ciphertext        []byte        `gorm:"not null"`
+	Header            string        `gorm:"type:jsonb"`
+	CreatedAt         time.Time
+}
+
+func (messageCiphertextSeed) TableName() string { return "message_ciphertexts" }
+
+func seedDevices(users []*user.User) (map[uuid.UUID][]user.Device, error) {
+	deviceMap := make(map[uuid.UUID][]user.Device)
+	for i, u := range users {
+		for d := 0; d < 2; d++ {
+			device := user.Device{
+				ID:           uuid.New(),
+				UserID:       u.ID,
+				DeviceID:     fmt.Sprintf("device-%d-%d", i+1, d+1),
+				DeviceName:   fmt.Sprintf("Device %d", d+1),
+				DeviceType:   "MOBILE",
+				IsActive:     true,
+				RegisteredAt: time.Now(),
+				LastSeenAt:   sql.NullTime{Time: time.Now(), Valid: true},
+			}
+			if err := DB.Create(&device).Error; err != nil {
+				return nil, err
+			}
+			deviceMap[u.ID] = append(deviceMap[u.ID], device)
+		}
+	}
+	return deviceMap, nil
+}
+
+func seedEncryptionKeys(deviceMap map[uuid.UUID][]user.Device) error {
+	for userID, devices := range deviceMap {
+		for _, device := range devices {
+			identity := identityKeySeed{
+				ID:        uuid.New(),
+				UserID:    userID,
+				DeviceID:  device.ID,
+				PublicKey: randomBytes(32),
+				IsActive:  true,
+				CreatedAt: time.Now(),
+			}
+			if err := DB.Create(&identity).Error; err != nil {
+				return err
+			}
+
+			signed := signedPreKeySeed{
+				ID:        uuid.New(),
+				UserID:    userID,
+				DeviceID:  device.ID,
+				KeyID:     1,
+				PublicKey: randomBytes(32),
+				Signature: randomBytes(64),
+				IsActive:  true,
+				CreatedAt: time.Now(),
+			}
+			if err := DB.Create(&signed).Error; err != nil {
+				return err
+			}
+
+			for k := 0; k < 5; k++ {
+				prekey := oneTimePreKeySeed{
+					ID:         uuid.New(),
+					UserID:     userID,
+					DeviceID:   device.ID,
+					KeyID:      100 + k,
+					PublicKey:  randomBytes(32),
+					UploadedAt: time.Now(),
+				}
+				if err := DB.Create(&prekey).Error; err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func seedMessageCiphertexts(msg *message.Message, deviceMap map[uuid.UUID][]user.Device) error {
+	var participants []conversation.Participant
+	if err := DB.Where("conversation_id = ?", msg.ConversationID).Find(&participants).Error; err != nil {
+		return err
+	}
+
+	senderDevices := deviceMap[msg.SenderID]
+	var senderDeviceID uuid.NullUUID
+	if len(senderDevices) > 0 {
+		senderDeviceID = uuid.NullUUID{UUID: senderDevices[0].ID, Valid: true}
+	}
+
+	header := string(mustJSON(map[string]interface{}{
+		"version": 1,
+		"cipher":  "signal",
+	}))
+
+	for _, p := range participants {
+		devices := deviceMap[p.UserID]
+		for _, device := range devices {
+			ciphertext := messageCiphertextSeed{
+				ID:                uuid.New(),
+				MessageID:         msg.ID,
+				RecipientUserID:   p.UserID,
+				RecipientDeviceID: device.ID,
+				SenderDeviceID:    senderDeviceID,
+				Ciphertext:        randomBytes(64),
+				Header:            header,
+				CreatedAt:         time.Now(),
+			}
+			if err := DB.Create(&ciphertext).Error; err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func randomBytes(size int) []byte {
+	buf := make([]byte, size)
+	_, _ = rand.Read(buf)
+	return buf
+}
+
+func mustJSON(data map[string]interface{}) []byte {
+	raw, _ := json.Marshal(data)
+	return raw
 }
 
 // seedBroadcasts creates sample broadcast lists

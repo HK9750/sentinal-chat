@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"sentinal-chat/internal/commands"
@@ -59,40 +60,16 @@ func (s *MessageService) RegisterHandlers() {
 		return s.executeSendMessage(ctx, typed)
 	}))
 	s.bus.Register("message.update", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
-		c, ok := cmd.(commands.SimpleCommand)
-		if !ok {
-			return commands.Result{}, sentinal_errors.ErrInvalidInput
-		}
-		msg, ok := c.Payload.(message.Message)
-		if !ok {
-			return commands.Result{}, sentinal_errors.ErrInvalidInput
-		}
-		if err := s.Update(ctx, msg); err != nil {
-			return commands.Result{}, err
-		}
-		return commands.Result{AggregateID: msg.ID.String(), Payload: msg}, nil
+		return commands.Result{}, sentinal_errors.ErrForbidden
 	}))
 
 	// message.edit - Edit an existing message
 	s.bus.Register("message.edit", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
-		c, ok := cmd.(commands.EditMessageCommand)
+		_, ok := cmd.(commands.EditMessageCommand)
 		if !ok {
 			return commands.Result{}, sentinal_errors.ErrInvalidInput
 		}
-		msg, err := s.messageRepo.GetByID(ctx, c.MessageID)
-		if err != nil {
-			return commands.Result{}, err
-		}
-		if msg.SenderID != c.UserID {
-			return commands.Result{}, sentinal_errors.ErrForbidden
-		}
-		msg.Content = sql.NullString{String: c.NewContent, Valid: true}
-		msg.EditedAt = sql.NullTime{Time: time.Now(), Valid: true}
-		if err := s.messageRepo.Update(ctx, msg); err != nil {
-			return commands.Result{}, err
-		}
-		_ = createOutboxEvent(ctx, s.eventRepo, "message", "message.updated", msg.ID, msg)
-		return commands.Result{AggregateID: msg.ID.String(), Payload: msg}, nil
+		return commands.Result{}, sentinal_errors.ErrForbidden
 	}))
 
 	// message.delete - Delete a message
@@ -339,7 +316,11 @@ func (s *MessageService) GetConversationMessages(ctx context.Context, conversati
 	if limit <= 0 {
 		limit = 50
 	}
-	return s.messageRepo.GetConversationMessages(ctx, conversationID, beforeSeq, limit)
+	deviceID, ok := DeviceIDFromContext(ctx)
+	if !ok || !deviceID.Valid {
+		return nil, sentinal_errors.ErrInvalidInput
+	}
+	return s.messageRepo.GetConversationMessages(ctx, conversationID, beforeSeq, limit, deviceID.UUID)
 }
 
 func (s *MessageService) GetByID(ctx context.Context, messageID uuid.UUID, userID uuid.UUID) (message.Message, error) {
@@ -584,7 +565,11 @@ func (s *MessageService) executeSendMessage(ctx context.Context, cmd commands.Se
 
 func (s *MessageService) executeSendMessageDirect(ctx context.Context, cmd commands.SendMessageCommand) (commands.Result, error) {
 	if cmd.IdempotencyKey() != "" {
-		if _, err := s.eventRepo.GetCommandLogByIdempotencyKey(ctx, cmd.IdempotencyKey()); err == nil {
+		key := cmd.IdempotencyKey()
+		if len(cmd.RecipientDeviceIDs) > 0 {
+			key = key + ":" + cmd.RecipientDeviceIDs[0].String()
+		}
+		if _, err := s.eventRepo.GetCommandLogByIdempotencyKey(ctx, key); err == nil {
 			return commands.Result{}, commands.ErrDuplicateCommand
 		} else if err != nil && err != sentinal_errors.ErrNotFound {
 			return commands.Result{}, err
@@ -601,47 +586,80 @@ func (s *MessageService) executeSendMessageDirect(ctx context.Context, cmd comma
 		ID:             uuid.New(),
 		ConversationID: cmd.ConversationID,
 		SenderID:       cmd.SenderID,
-		Content:        msgNullString(cmd.Content),
-		Type:           "TEXT",
+		Type:           msgTypeOrDefault(cmd.MessageType),
 		CreatedAt:      time.Now(),
 	}
 	if cmd.ClientMsgID != "" {
 		msg.ClientMessageID = msgNullString(cmd.ClientMsgID)
 	}
 	if cmd.IdempotencyKey() != "" {
-		msg.IdempotencyKey = msgNullString(cmd.IdempotencyKey())
+		idempotencyKey := cmd.IdempotencyKey()
+		if len(cmd.RecipientDeviceIDs) > 0 {
+			idempotencyKey = idempotencyKey + ":" + cmd.RecipientDeviceIDs[0].String()
+		}
+		msg.IdempotencyKey = msgNullString(idempotencyKey)
 	}
+
+	if cmd.Header == nil {
+		cmd.Header = map[string]interface{}{"version": 1, "cipher": "signal"}
+	}
+	if cmd.Metadata == nil {
+		cmd.Metadata = map[string]interface{}{}
+	}
+	cmd.Metadata["e2ee"] = true
 
 	if err := s.messageRepo.Create(ctx, &msg); err != nil {
 		return commands.Result{}, err
 	}
 
-	payload, err := json.Marshal(msg)
+	deviceID, ok := DeviceIDFromContext(ctx)
+	if !ok || !deviceID.Valid {
+		return commands.Result{}, sentinal_errors.ErrInvalidInput
+	}
+
+	recipientDeviceID := cmd.RecipientDeviceIDs[0]
+	cmd.Metadata["sender_device_id"] = deviceID.UUID.String()
+	cmd.Metadata["recipient_device_id"] = recipientDeviceID.String()
+	raw, err := json.Marshal(cmd.Metadata)
 	if err != nil {
 		return commands.Result{}, err
 	}
-
-	outbox := &event.OutboxEvent{
-		ID:            uuid.New(),
-		AggregateType: "message",
-		AggregateID:   msg.ID,
-		EventType:     "message.created",
-		Payload:       string(payload),
-		CreatedAt:     time.Now(),
+	msg.Metadata = string(raw)
+	if err := s.messageRepo.Update(ctx, msg); err != nil {
+		return commands.Result{}, err
 	}
-	if err := s.eventRepo.CreateOutboxEvent(ctx, outbox); err != nil {
+	recipientUserID, err := s.lookupUserIDByDevice(ctx, recipientDeviceID)
+	if err != nil {
+		return commands.Result{}, err
+	}
+	header, _ := json.Marshal(cmd.Header)
+	cipher := &message.MessageCiphertext{
+		ID:                uuid.New(),
+		MessageID:         msg.ID,
+		RecipientUserID:   recipientUserID,
+		RecipientDeviceID: recipientDeviceID,
+		SenderDeviceID:    deviceID,
+		Ciphertext:        cmd.Ciphertext,
+		Header:            string(header),
+		CreatedAt:         time.Now(),
+	}
+	if err := s.messageRepo.CreateCiphertext(ctx, cipher); err != nil {
 		return commands.Result{}, err
 	}
 
 	if cmd.IdempotencyKey() != "" {
+		idempotencyKey := cmd.IdempotencyKey()
+		if len(cmd.RecipientDeviceIDs) > 0 {
+			idempotencyKey = idempotencyKey + ":" + cmd.RecipientDeviceIDs[0].String()
+		}
 		log := &event.CommandLog{
 			ID:             uuid.New(),
 			CommandType:    cmd.CommandType(),
 			ActorID:        uuid.NullUUID{UUID: cmd.SenderID, Valid: true},
 			AggregateType:  "message",
 			AggregateID:    uuid.NullUUID{UUID: msg.ID, Valid: true},
-			Payload:        string(payload),
-			IdempotencyKey: msgNullString(cmd.IdempotencyKey()),
+			Payload:        msg.Metadata,
+			IdempotencyKey: msgNullString(idempotencyKey),
 			Status:         "EXECUTED",
 			CreatedAt:      time.Now(),
 			ExecutedAt:     msgNullTime(time.Now()),
@@ -650,6 +668,29 @@ func (s *MessageService) executeSendMessageDirect(ctx context.Context, cmd comma
 	}
 
 	return commands.Result{AggregateID: msg.ID.String(), Payload: msg}, nil
+}
+
+func (s *MessageService) lookupUserIDByDevice(ctx context.Context, deviceID uuid.UUID) (uuid.UUID, error) {
+	if s.db == nil {
+		return uuid.Nil, sentinal_errors.ErrInvalidInput
+	}
+	var row struct {
+		UserID uuid.UUID
+	}
+	if err := s.db.WithContext(ctx).Table("devices").Select("user_id").Where("id = ?", deviceID).Scan(&row).Error; err != nil {
+		return uuid.Nil, err
+	}
+	if row.UserID == uuid.Nil {
+		return uuid.Nil, sentinal_errors.ErrNotFound
+	}
+	return row.UserID, nil
+}
+
+func msgTypeOrDefault(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "TEXT"
+	}
+	return value
 }
 
 func msgNullString(value string) sql.NullString {

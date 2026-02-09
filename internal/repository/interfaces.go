@@ -101,8 +101,9 @@ type MessageRepository interface {
 	Update(ctx context.Context, m message.Message) error
 	SoftDelete(ctx context.Context, id uuid.UUID) error
 	HardDelete(ctx context.Context, id uuid.UUID) error
+	CreateCiphertext(ctx context.Context, c *message.MessageCiphertext) error
 
-	GetConversationMessages(ctx context.Context, conversationID uuid.UUID, beforeSeq int64, limit int) ([]message.Message, error)
+	GetConversationMessages(ctx context.Context, conversationID uuid.UUID, beforeSeq int64, limit int, recipientDeviceID uuid.UUID) ([]message.Message, error)
 	GetMessagesBySeqRange(ctx context.Context, conversationID uuid.UUID, startSeq, endSeq int64) ([]message.Message, error)
 	GetUnreadMessages(ctx context.Context, conversationID, userID uuid.UUID) ([]message.Message, error)
 	SearchMessages(ctx context.Context, conversationID uuid.UUID, query string, page, limit int) ([]message.Message, int64, error)
@@ -224,36 +225,25 @@ type BroadcastRepository interface {
 }
 
 type EncryptionRepository interface {
+	IsDeviceOwnedByUser(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID) (bool, error)
 	CreateIdentityKey(ctx context.Context, k *encryption.IdentityKey) error
-	GetIdentityKey(ctx context.Context, userID uuid.UUID, deviceID string) (encryption.IdentityKey, error)
+	GetIdentityKey(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID) (encryption.IdentityKey, error)
 	GetUserIdentityKeys(ctx context.Context, userID uuid.UUID) ([]encryption.IdentityKey, error)
 	DeactivateIdentityKey(ctx context.Context, id uuid.UUID) error
 	DeleteIdentityKey(ctx context.Context, id uuid.UUID) error
 
 	CreateSignedPreKey(ctx context.Context, k *encryption.SignedPreKey) error
-	GetSignedPreKey(ctx context.Context, userID uuid.UUID, deviceID string, keyID int) (encryption.SignedPreKey, error)
-	GetActiveSignedPreKey(ctx context.Context, userID uuid.UUID, deviceID string) (encryption.SignedPreKey, error)
-	RotateSignedPreKey(ctx context.Context, userID uuid.UUID, deviceID string, newKey *encryption.SignedPreKey) error
+	GetSignedPreKey(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID, keyID int) (encryption.SignedPreKey, error)
+	GetActiveSignedPreKey(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID) (encryption.SignedPreKey, error)
+	RotateSignedPreKey(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID, newKey *encryption.SignedPreKey) error
 	DeactivateSignedPreKey(ctx context.Context, id uuid.UUID) error
 
 	UploadOneTimePreKeys(ctx context.Context, keys []encryption.OneTimePreKey) error
-	ConsumeOneTimePreKey(ctx context.Context, userID uuid.UUID, deviceID string, consumedBy uuid.UUID) (encryption.OneTimePreKey, error)
-	GetAvailablePreKeyCount(ctx context.Context, userID uuid.UUID, deviceID string) (int64, error)
+	ConsumeOneTimePreKey(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID, consumedBy uuid.UUID, consumedByDeviceID uuid.UUID) (encryption.OneTimePreKey, error)
+	GetAvailablePreKeyCount(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID) (int64, error)
 	DeleteConsumedPreKeys(ctx context.Context, olderThan time.Time) (int64, error)
 
-	CreateSession(ctx context.Context, s *encryption.EncryptedSession) error
-	GetSession(ctx context.Context, localUserID uuid.UUID, localDeviceID string, remoteUserID uuid.UUID, remoteDeviceID string) (encryption.EncryptedSession, error)
-	UpdateSession(ctx context.Context, s encryption.EncryptedSession) error
-	DeleteSession(ctx context.Context, id uuid.UUID) error
-	GetUserSessions(ctx context.Context, userID uuid.UUID, deviceID string) ([]encryption.EncryptedSession, error)
-	DeleteAllUserSessions(ctx context.Context, userID uuid.UUID, deviceID string) error
-
-	UpsertKeyBundle(ctx context.Context, b *encryption.KeyBundle) error
-	GetKeyBundle(ctx context.Context, userID uuid.UUID, deviceID string) (encryption.KeyBundle, error)
-	GetUserKeyBundles(ctx context.Context, userID uuid.UUID) ([]encryption.KeyBundle, error)
-	DeleteKeyBundle(ctx context.Context, userID uuid.UUID, deviceID string) error
-
-	HasActiveKeys(ctx context.Context, userID uuid.UUID, deviceID string) (bool, error)
+	HasActiveKeys(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID) (bool, error)
 }
 
 type UploadRepository interface {

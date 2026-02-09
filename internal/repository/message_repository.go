@@ -32,6 +32,17 @@ func (r *PostgresMessageRepository) Create(ctx context.Context, m *message.Messa
 	return nil
 }
 
+func (r *PostgresMessageRepository) CreateCiphertext(ctx context.Context, c *message.MessageCiphertext) error {
+	res := r.db.WithContext(ctx).Create(c)
+	if res.Error != nil {
+		if errors.Is(res.Error, gorm.ErrDuplicatedKey) {
+			return sentinal_errors.ErrAlreadyExists
+		}
+		return res.Error
+	}
+	return nil
+}
+
 func (r *PostgresMessageRepository) GetByID(ctx context.Context, id uuid.UUID) (message.Message, error) {
 	var m message.Message
 	err := r.db.WithContext(ctx).Where("id = ?", id).First(&m).Error
@@ -80,16 +91,19 @@ func (r *PostgresMessageRepository) HardDelete(ctx context.Context, id uuid.UUID
 	return nil
 }
 
-func (r *PostgresMessageRepository) GetConversationMessages(ctx context.Context, conversationID uuid.UUID, beforeSeq int64, limit int) ([]message.Message, error) {
+func (r *PostgresMessageRepository) GetConversationMessages(ctx context.Context, conversationID uuid.UUID, beforeSeq int64, limit int, recipientDeviceID uuid.UUID) ([]message.Message, error) {
 	var messages []message.Message
 	q := r.db.WithContext(ctx).
-		Where("conversation_id = ? AND deleted_at IS NULL", conversationID)
+		Table("messages").
+		Select("messages.*, message_ciphertexts.ciphertext, message_ciphertexts.header, message_ciphertexts.recipient_device_id, message_ciphertexts.recipient_user_id, message_ciphertexts.sender_device_id").
+		Joins("JOIN message_ciphertexts ON message_ciphertexts.message_id = messages.id").
+		Where("messages.conversation_id = ? AND messages.deleted_at IS NULL AND message_ciphertexts.recipient_device_id = ?", conversationID, recipientDeviceID)
 
 	if beforeSeq > 0 {
-		q = q.Where("seq_id < ?", beforeSeq)
+		q = q.Where("messages.seq_id < ?", beforeSeq)
 	}
 
-	err := q.Order("seq_id DESC").Limit(limit).Find(&messages).Error
+	err := q.Order("messages.seq_id DESC").Limit(limit).Find(&messages).Error
 	if err != nil {
 		return nil, err
 	}
@@ -129,23 +143,7 @@ func (r *PostgresMessageRepository) GetUnreadMessages(ctx context.Context, conve
 }
 
 func (r *PostgresMessageRepository) SearchMessages(ctx context.Context, conversationID uuid.UUID, query string, page, limit int) ([]message.Message, int64, error) {
-	var messages []message.Message
-	var total int64
-
-	q := r.db.WithContext(ctx).
-		Model(&message.Message{}).
-		Where("conversation_id = ? AND content ILIKE ? AND deleted_at IS NULL", conversationID, "%"+query+"%")
-
-	if err := q.Count(&total).Error; err != nil {
-		return nil, 0, err
-	}
-
-	offset := (page - 1) * limit
-	if err := q.Order("created_at DESC").Offset(offset).Limit(limit).Find(&messages).Error; err != nil {
-		return nil, 0, err
-	}
-
-	return messages, total, nil
+	return nil, 0, sentinal_errors.ErrForbidden
 }
 
 func (r *PostgresMessageRepository) GetMessagesByType(ctx context.Context, conversationID uuid.UUID, msgType string, limit int) ([]message.Message, error) {

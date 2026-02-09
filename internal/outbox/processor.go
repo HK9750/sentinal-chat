@@ -101,6 +101,11 @@ func routeChannel(env events.Envelope) string {
 	// The aggregate_id for messages is the message_id, but we need conversation_id
 	// Try to extract conversation_id from payload, fallback to aggregate_id
 	case events.AggregateTypeMessage:
+		if env.EventType == events.EventTypeMessageCreated {
+			if recipientID := extractRecipientUserID(env.Payload); recipientID != "" {
+				return events.ChannelPrefixUser + recipientID
+			}
+		}
 		if convID := extractConversationID(env.Payload); convID != "" {
 			return events.ChannelPrefixConversation + convID
 		}
@@ -193,4 +198,17 @@ func extractUserID(payload json.RawMessage) string {
 		return ""
 	}
 	return data.UserID
+}
+
+func extractRecipientUserID(payload json.RawMessage) string {
+	if len(payload) == 0 {
+		return ""
+	}
+	var data struct {
+		RecipientUserID string `json:"recipient_user_id"`
+	}
+	if err := json.Unmarshal(payload, &data); err != nil {
+		return ""
+	}
+	return data.RecipientUserID
 }

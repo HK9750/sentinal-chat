@@ -316,14 +316,13 @@ func (a *AccessControl) Authorize(ctx context.Context, cmd commands.Command) err
 		if !ok {
 			return sentinal_errors.ErrInvalidInput
 		}
+		if len(c.RecipientDeviceIDs) != 1 {
+			return sentinal_errors.ErrInvalidInput
+		}
 		return a.CanSendMessage(ctx, actorID, c.ConversationID)
 
 	case "message.edit":
-		c, ok := cmd.(commands.EditMessageCommand)
-		if !ok {
-			return sentinal_errors.ErrInvalidInput
-		}
-		return a.CanEditMessage(ctx, actorID, c.MessageID)
+		return sentinal_errors.ErrForbidden
 
 	case "message.delete":
 		c, ok := cmd.(commands.DeleteMessageCommand)
@@ -506,7 +505,7 @@ func (a *AccessControl) Authorize(ctx context.Context, cmd commands.Command) err
 		return sentinal_errors.ErrInvalidInput
 
 	// Encryption commands - user can only manage their own keys
-	case "encryption.register_identity_key", "encryption.upload_signed_prekey", "encryption.upload_onetime_prekeys", "encryption.rotate_signed_prekey", "encryption.create_session", "encryption.update_session", "encryption.upsert_key_bundle":
+	case "encryption.register_identity_key", "encryption.upload_signed_prekey", "encryption.upload_onetime_prekeys", "encryption.rotate_signed_prekey":
 		return nil // Self-service
 
 	case "encryption.consume_prekey":

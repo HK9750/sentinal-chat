@@ -437,10 +437,14 @@ type ctxKey string
 
 var userIDKey ctxKey = "user_id"
 var sessionIDKey ctxKey = "session_id"
+var deviceIDKey ctxKey = "device_id"
 
-func WithUserSessionContext(ctx context.Context, userID, sessionID uuid.UUID) context.Context {
+func WithUserSessionContext(ctx context.Context, userID, sessionID uuid.UUID, deviceID uuid.NullUUID) context.Context {
 	ctx = context.WithValue(ctx, userIDKey, userID)
 	ctx = context.WithValue(ctx, sessionIDKey, sessionID)
+	if deviceID.Valid {
+		ctx = context.WithValue(ctx, deviceIDKey, deviceID)
+	}
 	return ctx
 }
 
@@ -460,6 +464,15 @@ func SessionIDFromContext(ctx context.Context) (uuid.UUID, bool) {
 	}
 	sessionID, ok := value.(uuid.UUID)
 	return sessionID, ok
+}
+
+func DeviceIDFromContext(ctx context.Context) (uuid.NullUUID, bool) {
+	value := ctx.Value(deviceIDKey)
+	if value == nil {
+		return uuid.NullUUID{}, false
+	}
+	deviceID, ok := value.(uuid.NullUUID)
+	return deviceID, ok
 }
 
 func (s *AuthService) ensureIdentityAvailable(ctx context.Context, in RegisterInput) error {

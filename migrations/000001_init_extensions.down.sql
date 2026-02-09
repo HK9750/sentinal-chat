@@ -1,4 +1,3 @@
-DROP FUNCTION IF EXISTS fn_consume_prekey();
 DROP FUNCTION IF EXISTS fn_mark_view_once();
 DROP FUNCTION IF EXISTS fn_update_timestamp();
 DROP FUNCTION IF EXISTS fn_assign_message_sequence();
