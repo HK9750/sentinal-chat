@@ -384,9 +384,6 @@ func (s *ConversationService) RegisterHandlers(bus *commands.Bus) {
 }
 
 func (s *ConversationService) Create(ctx context.Context, cmd commands.CreateConversationCommand) (commands.Result, error) {
-	if err := cmd.Validate(); err != nil {
-		return commands.Result{}, err
-	}
 	if s.bus != nil {
 		return s.bus.Execute(ctx, cmd)
 	}

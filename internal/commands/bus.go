@@ -3,6 +3,8 @@ package commands
 import (
 	"context"
 	"sync"
+
+	sentinal_errors "sentinal-chat/pkg/errors"
 )
 
 type Bus struct {
@@ -19,6 +21,10 @@ func NewBusWithProxy(proxy Proxy) *Bus {
 	return &Bus{handlers: make(map[string]Handler), actorProxy: proxy}
 }
 
+func (b *Bus) SetProxy(proxy Proxy) {
+	b.actorProxy = proxy
+}
+
 func (b *Bus) Register(commandType string, handler Handler) {
 	b.mu.Lock()
 	b.handlers[commandType] = handler
@@ -26,6 +32,12 @@ func (b *Bus) Register(commandType string, handler Handler) {
 }
 
 func (b *Bus) Execute(ctx context.Context, cmd Command) (Result, error) {
+	if cmd == nil {
+		return Result{}, sentinal_errors.ErrInvalidInput
+	}
+	if err := cmd.Validate(); err != nil {
+		return Result{}, err
+	}
 	b.mu.RLock()
 	h, ok := b.handlers[cmd.CommandType()]
 	b.mu.RUnlock()

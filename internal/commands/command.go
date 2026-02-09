@@ -18,7 +18,7 @@ type RequiresAuth interface {
 
 type Result struct {
 	AggregateID string
-	Payload     interface{}
+	Payload     any
 }
 
 type Handler interface {

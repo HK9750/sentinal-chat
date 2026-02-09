@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -95,6 +96,12 @@ func (s *Server) SetupRoutes(handlers *Handlers, authService *services.AuthServi
 		}
 		c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"status": "healthy"}))
 	})
+
+	s.engine.GET("/goroutines", func(c *gin.Context) {
+        c.JSON(http.StatusOK, gin.H{
+            "goroutines": runtime.NumGoroutine(),
+        })
+    })
 
 	auth := s.engine.Group("/v1/auth")
 	{

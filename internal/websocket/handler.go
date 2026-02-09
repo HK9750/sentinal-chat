@@ -424,10 +424,7 @@ func (h *Handler) parseCommand(userID string, msg WSMessage) (commands.Command, 
 
 	default:
 		// For other commands, use SimpleCommand with raw payload
-		return commands.SimpleCommand{
-			Type:    msg.Type,
-			Payload: msg.Payload,
-		}, nil
+		return commands.SimpleCommand{Type: msg.Type, Payload: []byte(msg.Payload)}, nil
 	}
 }
 

@@ -312,15 +312,24 @@ func (a *AccessControl) Authorize(ctx context.Context, cmd commands.Command) err
 	switch cmd.CommandType() {
 	// Message commands
 	case "message.send":
-		c := cmd.(commands.SendMessageCommand)
+		c, ok := cmd.(commands.SendMessageCommand)
+		if !ok {
+			return sentinal_errors.ErrInvalidInput
+		}
 		return a.CanSendMessage(ctx, actorID, c.ConversationID)
 
 	case "message.edit":
-		c := cmd.(commands.EditMessageCommand)
+		c, ok := cmd.(commands.EditMessageCommand)
+		if !ok {
+			return sentinal_errors.ErrInvalidInput
+		}
 		return a.CanEditMessage(ctx, actorID, c.MessageID)
 
 	case "message.delete":
-		c := cmd.(commands.DeleteMessageCommand)
+		c, ok := cmd.(commands.DeleteMessageCommand)
+		if !ok {
+			return sentinal_errors.ErrInvalidInput
+		}
 		return a.CanDeleteMessage(ctx, actorID, c.MessageID, c.DeleteForEveryone)
 
 	case "message.react", "message.remove_reaction":
@@ -330,6 +339,7 @@ func (a *AccessControl) Authorize(ctx context.Context, cmd commands.Command) err
 		if c, ok := cmd.(commands.RemoveReactionCommand); ok {
 			return a.CanReactToMessage(ctx, actorID, c.MessageID)
 		}
+		return sentinal_errors.ErrInvalidInput
 
 	case "message.read", "message.delivered":
 		if c, ok := cmd.(commands.MarkMessageReadCommand); ok {
@@ -338,9 +348,13 @@ func (a *AccessControl) Authorize(ctx context.Context, cmd commands.Command) err
 		if c, ok := cmd.(commands.MarkMessageDeliveredCommand); ok {
 			return a.CanViewConversation(ctx, actorID, c.ConversationID)
 		}
+		return sentinal_errors.ErrInvalidInput
 
 	case "message.typing":
-		c := cmd.(commands.TypingCommand)
+		c, ok := cmd.(commands.TypingCommand)
+		if !ok {
+			return sentinal_errors.ErrInvalidInput
+		}
 		return a.CanViewConversation(ctx, actorID, c.ConversationID)
 
 	// Conversation commands
@@ -348,23 +362,38 @@ func (a *AccessControl) Authorize(ctx context.Context, cmd commands.Command) err
 		return nil // Anyone can create
 
 	case "conversation.update_group":
-		c := cmd.(commands.UpdateGroupCommand)
+		c, ok := cmd.(commands.UpdateGroupCommand)
+		if !ok {
+			return sentinal_errors.ErrInvalidInput
+		}
 		return a.CanManageGroup(ctx, actorID, c.ConversationID)
 
 	case "conversation.add_member":
-		c := cmd.(commands.AddMemberCommand)
+		c, ok := cmd.(commands.AddMemberCommand)
+		if !ok {
+			return sentinal_errors.ErrInvalidInput
+		}
 		return a.CanManageGroup(ctx, actorID, c.ConversationID)
 
 	case "conversation.remove_member":
-		c := cmd.(commands.RemoveMemberCommand)
+		c, ok := cmd.(commands.RemoveMemberCommand)
+		if !ok {
+			return sentinal_errors.ErrInvalidInput
+		}
 		return a.CanRemoveMember(ctx, actorID, c.ConversationID, c.MemberID)
 
 	case "conversation.leave":
-		c := cmd.(commands.LeaveGroupCommand)
+		c, ok := cmd.(commands.LeaveGroupCommand)
+		if !ok {
+			return sentinal_errors.ErrInvalidInput
+		}
 		return a.ensureParticipant(ctx, c.ConversationID, actorID)
 
 	case "conversation.change_role":
-		c := cmd.(commands.ChangeRoleCommand)
+		c, ok := cmd.(commands.ChangeRoleCommand)
+		if !ok {
+			return sentinal_errors.ErrInvalidInput
+		}
 		return a.CanChangeRole(ctx, actorID, c.ConversationID, c.NewRole)
 
 	case "conversation.mute", "conversation.unmute", "conversation.archive", "conversation.unarchive", "conversation.pin", "conversation.unpin", "conversation.clear", "conversation.update_read_position":
@@ -387,6 +416,7 @@ func (a *AccessControl) Authorize(ctx context.Context, cmd commands.Command) err
 		case commands.UpdateReadPositionCommand:
 			return a.ensureParticipant(ctx, c.ConversationID, actorID)
 		}
+		return sentinal_errors.ErrInvalidInput
 
 	case "conversation.generate_invite_link", "conversation.revoke_invite_link":
 		switch c := cmd.(type) {
@@ -395,10 +425,14 @@ func (a *AccessControl) Authorize(ctx context.Context, cmd commands.Command) err
 		case commands.RevokeInviteLinkCommand:
 			return a.CanGenerateInviteLink(ctx, actorID, c.ConversationID)
 		}
+		return sentinal_errors.ErrInvalidInput
 
 	// Call commands
 	case "call.initiate":
-		c := cmd.(commands.InitiateCallCommand)
+		c, ok := cmd.(commands.InitiateCallCommand)
+		if !ok {
+			return sentinal_errors.ErrInvalidInput
+		}
 		return a.CanInitiateCall(ctx, actorID, c.ConversationID)
 
 	case "call.accept", "call.reject", "call.join", "call.leave", "call.toggle_mute":
@@ -414,9 +448,13 @@ func (a *AccessControl) Authorize(ctx context.Context, cmd commands.Command) err
 		case commands.ToggleMuteCommand:
 			return a.CanManageCall(ctx, actorID, c.CallID)
 		}
+		return sentinal_errors.ErrInvalidInput
 
 	case "call.end":
-		c := cmd.(commands.EndCallCommand)
+		c, ok := cmd.(commands.EndCallCommand)
+		if !ok {
+			return sentinal_errors.ErrInvalidInput
+		}
 		return a.CanManageCall(ctx, actorID, c.CallID)
 
 	case "call.offer", "call.answer", "call.ice":
@@ -429,6 +467,7 @@ func (a *AccessControl) Authorize(ctx context.Context, cmd commands.Command) err
 		case commands.SendICECandidateCommand:
 			return a.CanJoinCall(ctx, actorID, c.CallID)
 		}
+		return sentinal_errors.ErrInvalidInput
 
 	// Broadcast commands
 	case "broadcast.create":
@@ -447,6 +486,7 @@ func (a *AccessControl) Authorize(ctx context.Context, cmd commands.Command) err
 		case commands.SendBroadcastMessageCommand:
 			return a.CanManageBroadcast(ctx, actorID, c.BroadcastID)
 		}
+		return sentinal_errors.ErrInvalidInput
 
 	// Upload commands
 	case "upload.create":
@@ -463,6 +503,7 @@ func (a *AccessControl) Authorize(ctx context.Context, cmd commands.Command) err
 		case commands.DeleteUploadCommand:
 			return a.CanAccessUpload(ctx, actorID, c.SessionID)
 		}
+		return sentinal_errors.ErrInvalidInput
 
 	// Encryption commands - user can only manage their own keys
 	case "encryption.register_identity_key", "encryption.upload_signed_prekey", "encryption.upload_onetime_prekeys", "encryption.rotate_signed_prekey", "encryption.create_session", "encryption.update_session", "encryption.upsert_key_bundle":
@@ -483,6 +524,7 @@ func (a *AccessControl) Authorize(ctx context.Context, cmd commands.Command) err
 		if c, ok := cmd.(commands.SimpleCommand); ok {
 			return a.authorizeSimpleCommand(ctx, actorID, c)
 		}
+		return sentinal_errors.ErrInvalidInput
 	}
 
 	return nil
@@ -490,19 +532,30 @@ func (a *AccessControl) Authorize(ctx context.Context, cmd commands.Command) err
 
 // authorizeSimpleCommand handles SimpleCommand authorization
 func (a *AccessControl) authorizeSimpleCommand(ctx context.Context, actorID uuid.UUID, c commands.SimpleCommand) error {
+	payloadID, ok := parsePayloadUUID(c.Payload)
+	if !ok {
+		return sentinal_errors.ErrInvalidInput
+	}
+
 	switch c.Type {
 	case "broadcast.update":
-		id, ok := c.Payload.(uuid.UUID)
-		if !ok {
-			return sentinal_errors.ErrInvalidInput
-		}
-		return a.CanManageBroadcast(ctx, actorID, id)
+		return a.CanManageBroadcast(ctx, actorID, payloadID)
 	case "upload.update":
-		id, ok := c.Payload.(uuid.UUID)
-		if !ok {
-			return sentinal_errors.ErrInvalidInput
-		}
-		return a.CanAccessUpload(ctx, actorID, id)
+		return a.CanAccessUpload(ctx, actorID, payloadID)
 	}
 	return nil
+}
+
+func parsePayloadUUID(payload any) (uuid.UUID, bool) {
+	if id, ok := payload.(uuid.UUID); ok {
+		return id, true
+	}
+	if raw, ok := payload.([]byte); ok {
+		id, err := uuid.Parse(string(raw))
+		if err != nil {
+			return uuid.UUID{}, false
+		}
+		return id, true
+	}
+	return uuid.UUID{}, false
 }

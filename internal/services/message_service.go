@@ -41,9 +41,6 @@ func NewMessageService(db *gorm.DB, messageRepo repository.MessageRepository, ev
 }
 
 func (s *MessageService) HandleSendMessage(ctx context.Context, cmd commands.SendMessageCommand) (commands.Result, error) {
-	if err := cmd.Validate(); err != nil {
-		return commands.Result{}, err
-	}
 	if s.bus != nil {
 		return s.bus.Execute(ctx, cmd)
 	}

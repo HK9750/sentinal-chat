@@ -8,7 +8,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// The purpose of this middleware is to log details about each HTTP request processed by the server, including the method, path, status code, and latency.
 func LoggingMiddleware(l *logger.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()

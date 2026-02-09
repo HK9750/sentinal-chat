@@ -28,3 +28,8 @@ func (c SimpleCommand) IdempotencyKey() string {
 func (c SimpleCommand) ActorID() uuid.UUID {
 	return c.ActorIDValue
 }
+
+func (c SimpleCommand) PayloadBytes() ([]byte, bool) {
+	payload, ok := c.Payload.([]byte)
+	return payload, ok
+}
