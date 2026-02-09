@@ -41,7 +41,12 @@ func (h *MessageHandler) Send(c *gin.Context) {
 		return
 	}
 
-	results := make([]commands.Result, 0, len(req.Ciphertexts))
+	if len(req.Ciphertexts) == 0 {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("ciphertexts required", "INVALID_REQUEST"))
+		return
+	}
+
+	items := make([]commands.CiphertextPayload, 0, len(req.Ciphertexts))
 	for _, payload := range req.Ciphertexts {
 		recipientDeviceID, err := parseUUID(payload.RecipientDeviceID)
 		if err != nil {
@@ -57,28 +62,31 @@ func (h *MessageHandler) Send(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("ciphertext must be base64", "INVALID_REQUEST"))
 			return
 		}
-		result, err := h.service.HandleSendMessage(c.Request.Context(), commands.SendMessageCommand{
-			ConversationID:      conversationID,
-			SenderID:            userID,
-			Ciphertext:          ciphertext,
-			RecipientDeviceIDs:  []uuid.UUID{recipientDeviceID},
-			Header:              payload.Header,
-			MessageType:         req.MessageType,
-			ClientMsgID:         req.ClientMsgID,
-			IdempotencyKeyValue: req.IdempotencyKey,
+		items = append(items, commands.CiphertextPayload{
+			RecipientDeviceID: recipientDeviceID,
+			Ciphertext:        ciphertext,
+			Header:            payload.Header,
 		})
-		if err != nil {
-			if err == commands.ErrDuplicateCommand {
-				c.JSON(http.StatusConflict, httpdto.NewErrorResponse(err.Error(), "DUPLICATE_COMMAND"))
-				return
-			}
-			c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
-			return
-		}
-		results = append(results, result)
 	}
 
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"messages": results}))
+	result, err := h.service.HandleSendMessage(c.Request.Context(), commands.SendMessageCommand{
+		ConversationID:      conversationID,
+		SenderID:            userID,
+		Ciphertexts:         items,
+		MessageType:         req.MessageType,
+		ClientMsgID:         req.ClientMsgID,
+		IdempotencyKeyValue: req.IdempotencyKey,
+	})
+	if err != nil {
+		if err == commands.ErrDuplicateCommand {
+			c.JSON(http.StatusConflict, httpdto.NewErrorResponse(err.Error(), "DUPLICATE_COMMAND"))
+			return
+		}
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
+		return
+	}
+
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"message": result}))
 }
 
 func (h *MessageHandler) List(c *gin.Context) {

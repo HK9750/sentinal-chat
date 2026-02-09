@@ -354,23 +354,32 @@ func (h *Handler) parseCommand(userID string, msg WSMessage) (commands.Command, 
 			return nil, err
 		}
 		convID, _ := uuid.Parse(p.ConversationID)
-		if len(p.Ciphertexts) != 1 {
+		if len(p.Ciphertexts) == 0 {
 			return nil, sentinal_errors.ErrInvalidInput
 		}
-		deviceID, err := uuid.Parse(p.Ciphertexts[0].RecipientDeviceID)
-		if err != nil {
-			return nil, err
-		}
-		ciphertext, err := base64.StdEncoding.DecodeString(p.Ciphertexts[0].Ciphertext)
-		if err != nil {
-			return nil, sentinal_errors.ErrInvalidInput
+		ciphertexts := make([]commands.CiphertextPayload, 0, len(p.Ciphertexts))
+		for _, item := range p.Ciphertexts {
+			deviceID, err := uuid.Parse(item.RecipientDeviceID)
+			if err != nil {
+				return nil, err
+			}
+			if item.Ciphertext == "" {
+				return nil, sentinal_errors.ErrInvalidInput
+			}
+			ciphertext, err := base64.StdEncoding.DecodeString(item.Ciphertext)
+			if err != nil {
+				return nil, sentinal_errors.ErrInvalidInput
+			}
+			ciphertexts = append(ciphertexts, commands.CiphertextPayload{
+				RecipientDeviceID: deviceID,
+				Ciphertext:        ciphertext,
+				Header:            item.Header,
+			})
 		}
 		return commands.SendMessageCommand{
 			ConversationID:      convID,
 			SenderID:            userUUID,
-			Ciphertext:          ciphertext,
-			RecipientDeviceIDs:  []uuid.UUID{deviceID},
-			Header:              p.Ciphertexts[0].Header,
+			Ciphertexts:         ciphertexts,
 			MessageType:         p.MessageType,
 			ClientMsgID:         p.ClientMsgID,
 			IdempotencyKeyValue: p.IdempotencyKey,

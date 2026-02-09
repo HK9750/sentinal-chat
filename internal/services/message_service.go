@@ -566,9 +566,7 @@ func (s *MessageService) executeSendMessage(ctx context.Context, cmd commands.Se
 func (s *MessageService) executeSendMessageDirect(ctx context.Context, cmd commands.SendMessageCommand) (commands.Result, error) {
 	if cmd.IdempotencyKey() != "" {
 		key := cmd.IdempotencyKey()
-		if len(cmd.RecipientDeviceIDs) > 0 {
-			key = key + ":" + cmd.RecipientDeviceIDs[0].String()
-		}
+		key = key + ":" + cmd.ConversationID.String()
 		if _, err := s.eventRepo.GetCommandLogByIdempotencyKey(ctx, key); err == nil {
 			return commands.Result{}, commands.ErrDuplicateCommand
 		} else if err != nil && err != sentinal_errors.ErrNotFound {
@@ -594,15 +592,10 @@ func (s *MessageService) executeSendMessageDirect(ctx context.Context, cmd comma
 	}
 	if cmd.IdempotencyKey() != "" {
 		idempotencyKey := cmd.IdempotencyKey()
-		if len(cmd.RecipientDeviceIDs) > 0 {
-			idempotencyKey = idempotencyKey + ":" + cmd.RecipientDeviceIDs[0].String()
-		}
+		idempotencyKey = idempotencyKey + ":" + cmd.ConversationID.String()
 		msg.IdempotencyKey = msgNullString(idempotencyKey)
 	}
 
-	if cmd.Header == nil {
-		cmd.Header = map[string]interface{}{"version": 1, "cipher": "signal"}
-	}
 	if cmd.Metadata == nil {
 		cmd.Metadata = map[string]interface{}{}
 	}
@@ -617,9 +610,7 @@ func (s *MessageService) executeSendMessageDirect(ctx context.Context, cmd comma
 		return commands.Result{}, sentinal_errors.ErrInvalidInput
 	}
 
-	recipientDeviceID := cmd.RecipientDeviceIDs[0]
 	cmd.Metadata["sender_device_id"] = deviceID.UUID.String()
-	cmd.Metadata["recipient_device_id"] = recipientDeviceID.String()
 	raw, err := json.Marshal(cmd.Metadata)
 	if err != nil {
 		return commands.Result{}, err
@@ -628,30 +619,34 @@ func (s *MessageService) executeSendMessageDirect(ctx context.Context, cmd comma
 	if err := s.messageRepo.Update(ctx, msg); err != nil {
 		return commands.Result{}, err
 	}
-	recipientUserID, err := s.lookupUserIDByDevice(ctx, recipientDeviceID)
-	if err != nil {
-		return commands.Result{}, err
-	}
-	header, _ := json.Marshal(cmd.Header)
-	cipher := &message.MessageCiphertext{
-		ID:                uuid.New(),
-		MessageID:         msg.ID,
-		RecipientUserID:   recipientUserID,
-		RecipientDeviceID: recipientDeviceID,
-		SenderDeviceID:    deviceID,
-		Ciphertext:        cmd.Ciphertext,
-		Header:            string(header),
-		CreatedAt:         time.Now(),
-	}
-	if err := s.messageRepo.CreateCiphertext(ctx, cipher); err != nil {
-		return commands.Result{}, err
+	for _, payload := range cmd.Ciphertexts {
+		recipientUserID, err := s.lookupUserIDByDevice(ctx, payload.RecipientDeviceID)
+		if err != nil {
+			return commands.Result{}, err
+		}
+		header := payload.Header
+		if header == nil {
+			header = map[string]interface{}{"version": 1, "cipher": "signal"}
+		}
+		headerRaw, _ := json.Marshal(header)
+		cipher := &message.MessageCiphertext{
+			ID:                uuid.New(),
+			MessageID:         msg.ID,
+			RecipientUserID:   recipientUserID,
+			RecipientDeviceID: payload.RecipientDeviceID,
+			SenderDeviceID:    deviceID,
+			Ciphertext:        payload.Ciphertext,
+			Header:            string(headerRaw),
+			CreatedAt:         time.Now(),
+		}
+		if err := s.messageRepo.CreateCiphertext(ctx, cipher); err != nil {
+			return commands.Result{}, err
+		}
 	}
 
 	if cmd.IdempotencyKey() != "" {
 		idempotencyKey := cmd.IdempotencyKey()
-		if len(cmd.RecipientDeviceIDs) > 0 {
-			idempotencyKey = idempotencyKey + ":" + cmd.RecipientDeviceIDs[0].String()
-		}
+		idempotencyKey = idempotencyKey + ":" + cmd.ConversationID.String()
 		log := &event.CommandLog{
 			ID:             uuid.New(),
 			CommandType:    cmd.CommandType(),

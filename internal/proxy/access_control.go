@@ -316,7 +316,7 @@ func (a *AccessControl) Authorize(ctx context.Context, cmd commands.Command) err
 		if !ok {
 			return sentinal_errors.ErrInvalidInput
 		}
-		if len(c.RecipientDeviceIDs) != 1 {
+		if len(c.Ciphertexts) == 0 {
 			return sentinal_errors.ErrInvalidInput
 		}
 		return a.CanSendMessage(ctx, actorID, c.ConversationID)

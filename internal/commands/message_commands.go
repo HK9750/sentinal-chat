@@ -13,16 +13,20 @@ import (
 type SendMessageCommand struct {
 	ConversationID      uuid.UUID
 	SenderID            uuid.UUID
-	Ciphertext          []byte
-	Header              map[string]interface{}
+	Ciphertexts         []CiphertextPayload
 	MessageType         string // TEXT, IMAGE, VIDEO, AUDIO, FILE, LOCATION, CONTACT, STICKER, GIF, POLL
-	RecipientDeviceIDs  []uuid.UUID
 	ReplyToMessageID    uuid.UUID
 	ForwardedFromMsgID  uuid.UUID
 	AttachmentIDs       []uuid.UUID
 	Metadata            map[string]interface{}
 	IdempotencyKeyValue string
 	ClientMsgID         string
+}
+
+type CiphertextPayload struct {
+	RecipientDeviceID uuid.UUID
+	Ciphertext        []byte
+	Header            map[string]interface{}
 }
 
 func (SendMessageCommand) CommandType() string {
@@ -33,8 +37,13 @@ func (c SendMessageCommand) Validate() error {
 	if c.ConversationID == uuid.Nil || c.SenderID == uuid.Nil {
 		return sentinal_errors.ErrInvalidInput
 	}
-	if len(c.Ciphertext) == 0 || len(c.RecipientDeviceIDs) != 1 {
+	if len(c.Ciphertexts) == 0 {
 		return sentinal_errors.ErrInvalidInput
+	}
+	for _, payload := range c.Ciphertexts {
+		if payload.RecipientDeviceID == uuid.Nil || len(payload.Ciphertext) == 0 {
+			return sentinal_errors.ErrInvalidInput
+		}
 	}
 	return nil
 }
