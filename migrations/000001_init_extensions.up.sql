@@ -63,13 +63,13 @@ EXCEPTION
 END $$;
 
 DO $$ BEGIN
-    CREATE TYPE call_type AS ENUM ('AUDIO', 'VIDEO', 'SCREEN_SHARE');
+    CREATE TYPE call_type AS ENUM ('AUDIO', 'VIDEO');
 EXCEPTION
     WHEN duplicate_object THEN null;
 END $$;
 
 DO $$ BEGIN
-    CREATE TYPE call_topology AS ENUM ('P2P', 'MESH', 'SFU');
+    CREATE TYPE call_topology AS ENUM ('P2P');
 EXCEPTION
     WHEN duplicate_object THEN null;
 END $$;

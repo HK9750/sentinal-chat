@@ -47,6 +47,3 @@ CREATE INDEX IF NOT EXISTS idx_conversation_clears_user ON conversation_clears (
 
 -- Upload Sessions
 CREATE INDEX IF NOT EXISTS idx_upload_sessions_uploader ON upload_sessions (uploader_id);
-
--- Call Server Assignments
-CREATE INDEX IF NOT EXISTS idx_call_assignments_server ON call_server_assignments (sfu_server_id);

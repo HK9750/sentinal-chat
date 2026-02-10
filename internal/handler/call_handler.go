@@ -1,13 +1,17 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"time"
 
 	"sentinal-chat/internal/domain/call"
+	"sentinal-chat/internal/repository"
 	"sentinal-chat/internal/services"
 	"sentinal-chat/internal/transport/httpdto"
+	"sentinal-chat/pkg/database"
+	sentinal_errors "sentinal-chat/pkg/errors"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -25,6 +29,20 @@ func (h *CallHandler) Create(c *gin.Context) {
 	var req call.Call
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid request", "INVALID_REQUEST"))
+		return
+	}
+	if req.Topology != "" && req.Topology != "P2P" {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("unsupported call topology", "INVALID_REQUEST"))
+		return
+	}
+	if req.Type != "AUDIO" && req.Type != "VIDEO" {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("unsupported call type", "INVALID_REQUEST"))
+		return
+	}
+	req.Topology = "P2P"
+	req.IsGroupCall = false
+	if err := h.ensureDMCall(c.Request.Context(), req.ConversationID); err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
 	if err := h.service.Create(c.Request.Context(), &req); err != nil {
@@ -121,6 +139,24 @@ func (h *CallHandler) AddParticipant(c *gin.Context) {
 		return
 	}
 	req.CallID = callID
+	callItem, err := h.service.GetByID(c.Request.Context(), callID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
+		return
+	}
+	if err := h.ensureDMCall(c.Request.Context(), callItem.ConversationID); err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
+		return
+	}
+	activeCount, err := h.service.GetActiveParticipantCount(c.Request.Context(), callID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
+		return
+	}
+	if activeCount >= 2 {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("dm calls are limited to two participants", "REQUEST_FAILED"))
+		return
+	}
 	if err := h.service.AddParticipant(c.Request.Context(), &req); err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
@@ -137,6 +173,15 @@ func (h *CallHandler) RemoveParticipant(c *gin.Context) {
 	userID, err := uuid.Parse(c.Param("user_id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid user_id", "INVALID_REQUEST"))
+		return
+	}
+	callItem, err := h.service.GetByID(c.Request.Context(), callID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
+		return
+	}
+	if err := h.ensureDMCall(c.Request.Context(), callItem.ConversationID); err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
 	if err := h.service.RemoveParticipant(c.Request.Context(), callID, userID); err != nil {
@@ -176,6 +221,15 @@ func (h *CallHandler) UpdateParticipantStatus(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid request", "INVALID_REQUEST"))
 		return
 	}
+	callItem, err := h.service.GetByID(c.Request.Context(), callID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
+		return
+	}
+	if err := h.ensureDMCall(c.Request.Context(), callItem.ConversationID); err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
+		return
+	}
 	if err := h.service.UpdateParticipantStatus(c.Request.Context(), callID, userID, req.Status); err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
@@ -199,6 +253,15 @@ func (h *CallHandler) UpdateParticipantMute(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid request", "INVALID_REQUEST"))
 		return
 	}
+	callItem, err := h.service.GetByID(c.Request.Context(), callID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
+		return
+	}
+	if err := h.ensureDMCall(c.Request.Context(), callItem.ConversationID); err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
+		return
+	}
 	if err := h.service.UpdateParticipantMuteStatus(c.Request.Context(), callID, userID, req.AudioMuted, req.VideoMuted); err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
@@ -212,6 +275,15 @@ func (h *CallHandler) RecordQualityMetric(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid request", "INVALID_REQUEST"))
 		return
 	}
+	callItem, err := h.service.GetByID(c.Request.Context(), req.CallID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
+		return
+	}
+	if err := h.ensureDMCall(c.Request.Context(), callItem.ConversationID); err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
+		return
+	}
 	if err := h.service.RecordQualityMetric(c.Request.Context(), &req); err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
@@ -223,6 +295,15 @@ func (h *CallHandler) MarkConnected(c *gin.Context) {
 	callID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid call id", "INVALID_REQUEST"))
+		return
+	}
+	callItem, err := h.service.GetByID(c.Request.Context(), callID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
+		return
+	}
+	if err := h.ensureDMCall(c.Request.Context(), callItem.ConversationID); err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
 	if err := h.service.MarkConnected(c.Request.Context(), callID); err != nil {
@@ -241,6 +322,15 @@ func (h *CallHandler) EndCall(c *gin.Context) {
 	var req httpdto.EndCallRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid request", "INVALID_REQUEST"))
+		return
+	}
+	callItem, err := h.service.GetByID(c.Request.Context(), callID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
+		return
+	}
+	if err := h.ensureDMCall(c.Request.Context(), callItem.ConversationID); err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
 	if err := h.service.EndCall(c.Request.Context(), callID, req.Reason); err != nil {
@@ -270,6 +360,15 @@ func (h *CallHandler) GetCallQualityMetrics(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid call_id", "INVALID_REQUEST"))
 		return
 	}
+	callItem, err := h.service.GetByID(c.Request.Context(), callID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
+		return
+	}
+	if err := h.ensureDMCall(c.Request.Context(), callItem.ConversationID); err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
+		return
+	}
 	items, err := h.service.GetCallQualityMetrics(c.Request.Context(), callID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
@@ -289,6 +388,15 @@ func (h *CallHandler) GetUserCallQualityMetrics(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid user_id", "INVALID_REQUEST"))
 		return
 	}
+	callItem, err := h.service.GetByID(c.Request.Context(), callID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
+		return
+	}
+	if err := h.ensureDMCall(c.Request.Context(), callItem.ConversationID); err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
+		return
+	}
 	items, err := h.service.GetUserCallQualityMetrics(c.Request.Context(), callID, userID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
@@ -303,6 +411,15 @@ func (h *CallHandler) GetAverageCallQuality(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid call_id", "INVALID_REQUEST"))
 		return
 	}
+	callItem, err := h.service.GetByID(c.Request.Context(), callID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
+		return
+	}
+	if err := h.ensureDMCall(c.Request.Context(), callItem.ConversationID); err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
+		return
+	}
 	avg, err := h.service.GetAverageCallQuality(c.Request.Context(), callID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
@@ -311,179 +428,17 @@ func (h *CallHandler) GetAverageCallQuality(c *gin.Context) {
 	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"average": avg}))
 }
 
-func (h *CallHandler) CreateTurnCredential(c *gin.Context) {
-	var req call.TurnCredential
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid request", "INVALID_REQUEST"))
-		return
+func (h *CallHandler) ensureDMCall(ctx context.Context, conversationID uuid.UUID) error {
+	if conversationID == uuid.Nil {
+		return sentinal_errors.ErrInvalidInput
 	}
-	if err := h.service.CreateTurnCredential(c.Request.Context(), &req); err != nil {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
-		return
-	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(req))
-}
-
-func (h *CallHandler) GetActiveTurnCredentials(c *gin.Context) {
-	userID, err := uuid.Parse(c.Query("user_id"))
+	conv := repository.NewConversationRepository(database.GetDB())
+	item, err := conv.GetByID(ctx, conversationID)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid user_id", "INVALID_REQUEST"))
-		return
+		return err
 	}
-	items, err := h.service.GetActiveTurnCredentials(c.Request.Context(), userID)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
-		return
+	if item.Type != "DM" {
+		return sentinal_errors.ErrForbidden
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"credentials": items}))
-}
-
-func (h *CallHandler) DeleteExpiredTurnCredentials(c *gin.Context) {
-	count, err := h.service.DeleteExpiredTurnCredentials(c.Request.Context())
-	if err != nil {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
-		return
-	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"deleted": count}))
-}
-
-func (h *CallHandler) CreateSFUServer(c *gin.Context) {
-	var req call.SFUServer
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid request", "INVALID_REQUEST"))
-		return
-	}
-	if err := h.service.CreateSFUServer(c.Request.Context(), &req); err != nil {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
-		return
-	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(req))
-}
-
-func (h *CallHandler) GetSFUServerByID(c *gin.Context) {
-	serverID, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid server id", "INVALID_REQUEST"))
-		return
-	}
-	item, err := h.service.GetSFUServerByID(c.Request.Context(), serverID)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
-		return
-	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(item))
-}
-
-func (h *CallHandler) GetHealthySFUServers(c *gin.Context) {
-	region := c.Query("region")
-	items, err := h.service.GetHealthySFUServers(c.Request.Context(), region)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
-		return
-	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"servers": items}))
-}
-
-func (h *CallHandler) GetLeastLoadedServer(c *gin.Context) {
-	region := c.Query("region")
-	item, err := h.service.GetLeastLoadedServer(c.Request.Context(), region)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
-		return
-	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(item))
-}
-
-func (h *CallHandler) UpdateServerLoad(c *gin.Context) {
-	serverID, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid server id", "INVALID_REQUEST"))
-		return
-	}
-	var req httpdto.UpdateServerLoadRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid request", "INVALID_REQUEST"))
-		return
-	}
-	if err := h.service.UpdateServerLoad(c.Request.Context(), serverID, req.Load); err != nil {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
-		return
-	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse[any](nil))
-}
-
-func (h *CallHandler) UpdateServerHealth(c *gin.Context) {
-	serverID, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid server id", "INVALID_REQUEST"))
-		return
-	}
-	var req httpdto.UpdateServerHealthRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid request", "INVALID_REQUEST"))
-		return
-	}
-	if err := h.service.UpdateServerHealth(c.Request.Context(), serverID, req.IsHealthy); err != nil {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
-		return
-	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse[any](nil))
-}
-
-func (h *CallHandler) UpdateServerHeartbeat(c *gin.Context) {
-	serverID, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid server id", "INVALID_REQUEST"))
-		return
-	}
-	if err := h.service.UpdateServerHeartbeat(c.Request.Context(), serverID); err != nil {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
-		return
-	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse[any](nil))
-}
-
-func (h *CallHandler) AssignCallToServer(c *gin.Context) {
-	var req call.CallServerAssignment
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid request", "INVALID_REQUEST"))
-		return
-	}
-	if err := h.service.AssignCallToServer(c.Request.Context(), &req); err != nil {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
-		return
-	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(req))
-}
-
-func (h *CallHandler) GetCallServerAssignments(c *gin.Context) {
-	callID, err := uuid.Parse(c.Query("call_id"))
-	if err != nil {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid call_id", "INVALID_REQUEST"))
-		return
-	}
-	items, err := h.service.GetCallServerAssignments(c.Request.Context(), callID)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
-		return
-	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"assignments": items}))
-}
-
-func (h *CallHandler) RemoveCallServerAssignment(c *gin.Context) {
-	callID, err := uuid.Parse(c.Query("call_id"))
-	if err != nil {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid call_id", "INVALID_REQUEST"))
-		return
-	}
-	serverID, err := uuid.Parse(c.Query("server_id"))
-	if err != nil {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid server_id", "INVALID_REQUEST"))
-		return
-	}
-	if err := h.service.RemoveCallServerAssignment(c.Request.Context(), callID, serverID); err != nil {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
-		return
-	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse[any](nil))
+	return nil
 }

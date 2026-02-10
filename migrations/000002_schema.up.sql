@@ -330,17 +330,6 @@ CREATE TABLE IF NOT EXISTS call_quality_metrics (
   ice_candidate_type TEXT
 );
 
-CREATE TABLE IF NOT EXISTS turn_credentials (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-  username TEXT NOT NULL,
-  credential TEXT NOT NULL,
-  ttl_seconds INTEGER NOT NULL,
-  realm TEXT,
-  created_at TIMESTAMP DEFAULT NOW(),
-  expires_at TIMESTAMP NOT NULL
-);
-
 -- E2E Encryption
 CREATE TABLE IF NOT EXISTS identity_keys (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -406,23 +395,5 @@ CREATE TABLE IF NOT EXISTS upload_sessions (
   status upload_status DEFAULT 'IN_PROGRESS',
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS sfu_servers (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  hostname TEXT NOT NULL,
-  region TEXT NOT NULL,
-  capacity INTEGER NOT NULL,
-  current_load INTEGER DEFAULT 0,
-  is_healthy BOOLEAN DEFAULT TRUE,
-  last_heartbeat TIMESTAMP,
-  created_at TIMESTAMP DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS call_server_assignments (
-  call_id UUID NOT NULL REFERENCES calls(id) ON DELETE CASCADE,
-  sfu_server_id UUID NOT NULL REFERENCES sfu_servers(id) ON DELETE CASCADE,
-  assigned_at TIMESTAMP DEFAULT NOW(),
-  PRIMARY KEY (call_id, sfu_server_id)
 );
 

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"sentinal-chat/internal/domain/broadcast"
-	"sentinal-chat/internal/domain/call"
 	"sentinal-chat/internal/domain/conversation"
 	"sentinal-chat/internal/domain/message"
 	"sentinal-chat/internal/domain/user"
@@ -115,10 +114,6 @@ func Seed(cfg *SeedConfig) (*SeedResult, error) {
 			return nil, fmt.Errorf("failed to seed broadcasts: %w", err)
 		}
 
-		// Create sample SFU servers
-		if err := seedSFUServers(); err != nil {
-			return nil, fmt.Errorf("failed to seed SFU servers: %w", err)
-		}
 	}
 
 	log.Println("Database seeding completed successfully!")
@@ -671,57 +666,6 @@ func seedBroadcasts(users []*user.User) error {
 	}
 
 	log.Printf("Broadcast list seeded: %s", broadcastList.Name)
-	return nil
-}
-
-// seedSFUServers creates sample SFU servers for WebRTC
-func seedSFUServers() error {
-	servers := []call.SFUServer{
-		{
-			ID:            uuid.New(),
-			Hostname:      "sfu-us-east-1.sentinal.chat",
-			Region:        "us-east-1",
-			Capacity:      1000,
-			CurrentLoad:   0,
-			IsHealthy:     true,
-			LastHeartbeat: sql.NullTime{Time: time.Now(), Valid: true},
-			CreatedAt:     time.Now(),
-		},
-		{
-			ID:            uuid.New(),
-			Hostname:      "sfu-eu-west-1.sentinal.chat",
-			Region:        "eu-west-1",
-			Capacity:      800,
-			CurrentLoad:   0,
-			IsHealthy:     true,
-			LastHeartbeat: sql.NullTime{Time: time.Now(), Valid: true},
-			CreatedAt:     time.Now(),
-		},
-		{
-			ID:            uuid.New(),
-			Hostname:      "sfu-ap-south-1.sentinal.chat",
-			Region:        "ap-south-1",
-			Capacity:      600,
-			CurrentLoad:   0,
-			IsHealthy:     true,
-			LastHeartbeat: sql.NullTime{Time: time.Now(), Valid: true},
-			CreatedAt:     time.Now(),
-		},
-	}
-
-	for _, server := range servers {
-		// Check if exists by hostname
-		var existing call.SFUServer
-		if DB.Where("hostname = ?", server.Hostname).First(&existing).Error == nil {
-			continue
-		}
-
-		if err := DB.Create(&server).Error; err != nil {
-			return fmt.Errorf("failed to create SFU server %s: %w", server.Hostname, err)
-		}
-	}
-
-	log.Println("SFU servers seeded")
 	return nil
 }
 

@@ -2,7 +2,7 @@ package httpdto
 
 // CreateConversationRequest is used for POST /conversations
 type CreateConversationRequest struct {
-	Type         string   `json:"type" binding:"required"` // "direct", "group", "channel"
+	Type         string   `json:"type" binding:"required"` // "DM" or "GROUP"
 	Subject      string   `json:"subject,omitempty"`
 	Description  string   `json:"description,omitempty"`
 	Participants []string `json:"participants" binding:"required"`

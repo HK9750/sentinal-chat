@@ -3,7 +3,7 @@ package httpdto
 // CreateCallRequest is used for POST /calls
 type CreateCallRequest struct {
 	ConversationID string `json:"conversation_id" binding:"required"`
-	Type           string `json:"type" binding:"required"` // "voice" or "video"
+	Type           string `json:"type" binding:"required"` // "AUDIO" or "VIDEO"
 	InitiatorID    string `json:"initiator_id" binding:"required"`
 }
 
@@ -24,7 +24,7 @@ type AddCallParticipantRequest struct {
 
 // UpdateParticipantStatusRequest is used for PUT /calls/:id/participants/:user_id/status
 type UpdateParticipantStatusRequest struct {
-	Status string `json:"status" binding:"required"` // "ringing", "connected", "declined", "left"
+	Status string `json:"status" binding:"required"` // "INVITED", "JOINED", "LEFT"
 }
 
 // UpdateParticipantMuteRequest is used for PUT /calls/:id/participants/:user_id/mute
@@ -35,17 +35,7 @@ type UpdateParticipantMuteRequest struct {
 
 // EndCallRequest is used for POST /calls/:id/end
 type EndCallRequest struct {
-	Reason string `json:"reason,omitempty"` // "completed", "canceled", "declined", "timeout"
-}
-
-// UpdateServerLoadRequest is used for PUT /calls/servers/:id/load
-type UpdateServerLoadRequest struct {
-	Load int `json:"load" binding:"required"`
-}
-
-// UpdateServerHealthRequest is used for PUT /calls/servers/:id/health
-type UpdateServerHealthRequest struct {
-	IsHealthy bool `json:"is_healthy"`
+	Reason string `json:"reason,omitempty"` // "COMPLETED", "MISSED", "DECLINED", "FAILED", "TIMEOUT", "NETWORK_ERROR"
 }
 
 // ListCallsRequest holds query parameters for listing calls
@@ -117,48 +107,6 @@ type CallQualityMetricDTO struct {
 // AverageCallQualityResponse is returned for average quality
 type AverageCallQualityResponse struct {
 	Average float64 `json:"average"`
-}
-
-// TurnCredentialsResponse is returned when listing TURN credentials
-type TurnCredentialsResponse struct {
-	Credentials []TurnCredentialDTO `json:"credentials"`
-}
-
-// TurnCredentialDTO represents a TURN credential in API responses
-type TurnCredentialDTO struct {
-	ID        string `json:"id"`
-	Username  string `json:"username"`
-	Password  string `json:"password"`
-	URLs      string `json:"urls"`
-	ExpiresAt string `json:"expires_at"`
-}
-
-// SFUServersResponse is returned when listing SFU servers
-type SFUServersResponse struct {
-	Servers []SFUServerDTO `json:"servers"`
-}
-
-// SFUServerDTO represents an SFU server in API responses
-type SFUServerDTO struct {
-	ID            string `json:"id"`
-	Region        string `json:"region"`
-	URL           string `json:"url"`
-	CurrentLoad   int    `json:"current_load"`
-	MaxLoad       int    `json:"max_load"`
-	IsHealthy     bool   `json:"is_healthy"`
-	LastHeartbeat string `json:"last_heartbeat"`
-}
-
-// CallServerAssignmentsResponse is returned when listing call assignments
-type CallServerAssignmentsResponse struct {
-	Assignments []CallServerAssignmentDTO `json:"assignments"`
-}
-
-// CallServerAssignmentDTO represents a call-server assignment in API responses
-type CallServerAssignmentDTO struct {
-	CallID     string `json:"call_id"`
-	ServerID   string `json:"server_id"`
-	AssignedAt string `json:"assigned_at"`
 }
 
 // DeletedCountResponse is a generic response for delete operations

@@ -35,6 +35,14 @@ type CallParticipant struct {
 	DeviceType string
 }
 
+func (Call) TableName() string {
+	return "calls"
+}
+
+func (CallParticipant) TableName() string {
+	return "call_participants"
+}
+
 // CallQualityMetric represents call_quality_metrics
 type CallQualityMetric struct {
 	ID               uuid.UUID `gorm:"type:uuid;primaryKey;default:uuid_generate_v4()"`
@@ -55,30 +63,6 @@ type CallQualityMetric struct {
 	IceCandidateType string
 }
 
-// TurnCredential represents turn_credentials
-type TurnCredential struct {
-	ID         uuid.UUID     `gorm:"type:uuid;primaryKey;default:uuid_generate_v4()"`
-	UserID     uuid.NullUUID `gorm:"type:uuid"`
-	Username   string        `gorm:"not null"`
-	Credential string        `gorm:"not null"`
-	TTLSeconds int           `gorm:"not null"`
-	Realm      string
-	CreatedAt  time.Time `gorm:"default:now()"`
-	ExpiresAt  time.Time `gorm:"not null"`
-}
-
-func (Call) TableName() string {
-	return "calls"
-}
-
-func (CallParticipant) TableName() string {
-	return "call_participants"
-}
-
 func (CallQualityMetric) TableName() string {
 	return "call_quality_metrics"
-}
-
-func (TurnCredential) TableName() string {
-	return "turn_credentials"
 }

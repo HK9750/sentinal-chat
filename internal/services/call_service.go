@@ -135,58 +135,6 @@ func (s *CallService) GetAverageCallQuality(ctx context.Context, callID uuid.UUI
 	return s.repo.GetAverageCallQuality(ctx, callID)
 }
 
-func (s *CallService) CreateTurnCredential(ctx context.Context, tc *call.TurnCredential) error {
-	return s.repo.CreateTurnCredential(ctx, tc)
-}
-
-func (s *CallService) GetActiveTurnCredentials(ctx context.Context, userID uuid.UUID) ([]call.TurnCredential, error) {
-	return s.repo.GetActiveTurnCredentials(ctx, userID)
-}
-
-func (s *CallService) DeleteExpiredTurnCredentials(ctx context.Context) (int64, error) {
-	return s.repo.DeleteExpiredTurnCredentials(ctx)
-}
-
-func (s *CallService) CreateSFUServer(ctx context.Context, server *call.SFUServer) error {
-	return s.repo.CreateSFUServer(ctx, server)
-}
-
-func (s *CallService) GetSFUServerByID(ctx context.Context, id uuid.UUID) (call.SFUServer, error) {
-	return s.repo.GetSFUServerByID(ctx, id)
-}
-
-func (s *CallService) GetHealthySFUServers(ctx context.Context, region string) ([]call.SFUServer, error) {
-	return s.repo.GetHealthySFUServers(ctx, region)
-}
-
-func (s *CallService) GetLeastLoadedServer(ctx context.Context, region string) (call.SFUServer, error) {
-	return s.repo.GetLeastLoadedServer(ctx, region)
-}
-
-func (s *CallService) UpdateServerLoad(ctx context.Context, serverID uuid.UUID, load int) error {
-	return s.repo.UpdateServerLoad(ctx, serverID, load)
-}
-
-func (s *CallService) UpdateServerHealth(ctx context.Context, serverID uuid.UUID, isHealthy bool) error {
-	return s.repo.UpdateServerHealth(ctx, serverID, isHealthy)
-}
-
-func (s *CallService) UpdateServerHeartbeat(ctx context.Context, serverID uuid.UUID) error {
-	return s.repo.UpdateServerHeartbeat(ctx, serverID)
-}
-
-func (s *CallService) AssignCallToServer(ctx context.Context, a *call.CallServerAssignment) error {
-	return s.repo.AssignCallToServer(ctx, a)
-}
-
-func (s *CallService) GetCallServerAssignments(ctx context.Context, callID uuid.UUID) ([]call.CallServerAssignment, error) {
-	return s.repo.GetCallServerAssignments(ctx, callID)
-}
-
-func (s *CallService) RemoveCallServerAssignment(ctx context.Context, callID, serverID uuid.UUID) error {
-	return s.repo.RemoveCallServerAssignment(ctx, callID, serverID)
-}
-
 func (s *CallService) SendOffer(ctx context.Context, callID, fromID, toID uuid.UUID, sdp string) error {
 	if s.signalingStore == nil {
 		return sentinal_errors.ErrInvalidInput

@@ -187,22 +187,6 @@ type CallRepository interface {
 	GetCallQualityMetrics(ctx context.Context, callID uuid.UUID) ([]call.CallQualityMetric, error)
 	GetUserCallQualityMetrics(ctx context.Context, callID, userID uuid.UUID) ([]call.CallQualityMetric, error)
 	GetAverageCallQuality(ctx context.Context, callID uuid.UUID) (float64, error)
-
-	CreateTurnCredential(ctx context.Context, tc *call.TurnCredential) error
-	GetActiveTurnCredentials(ctx context.Context, userID uuid.UUID) ([]call.TurnCredential, error)
-	DeleteExpiredTurnCredentials(ctx context.Context) (int64, error)
-
-	CreateSFUServer(ctx context.Context, s *call.SFUServer) error
-	GetSFUServerByID(ctx context.Context, id uuid.UUID) (call.SFUServer, error)
-	GetHealthySFUServers(ctx context.Context, region string) ([]call.SFUServer, error)
-	GetLeastLoadedServer(ctx context.Context, region string) (call.SFUServer, error)
-	UpdateServerLoad(ctx context.Context, serverID uuid.UUID, load int) error
-	UpdateServerHealth(ctx context.Context, serverID uuid.UUID, isHealthy bool) error
-	UpdateServerHeartbeat(ctx context.Context, serverID uuid.UUID) error
-
-	AssignCallToServer(ctx context.Context, a *call.CallServerAssignment) error
-	GetCallServerAssignments(ctx context.Context, callID uuid.UUID) ([]call.CallServerAssignment, error)
-	RemoveCallServerAssignment(ctx context.Context, callID, serverID uuid.UUID) error
 }
 
 type BroadcastRepository interface {

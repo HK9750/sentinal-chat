@@ -1,5 +1,3 @@
-DROP TABLE IF EXISTS call_server_assignments;
-DROP TABLE IF EXISTS sfu_servers;
 DROP TABLE IF EXISTS upload_sessions;
 DROP TABLE IF EXISTS conversation_clears;
 DROP TABLE IF EXISTS message_user_states;
@@ -7,7 +5,6 @@ DROP TABLE IF EXISTS message_ciphertexts;
 DROP TABLE IF EXISTS onetime_prekeys;
 DROP TABLE IF EXISTS signed_prekeys;
 DROP TABLE IF EXISTS identity_keys;
-DROP TABLE IF EXISTS turn_credentials;
 DROP TABLE IF EXISTS call_quality_metrics;
 DROP TABLE IF EXISTS call_participants;
 DROP TABLE IF EXISTS calls;

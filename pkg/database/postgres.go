@@ -215,9 +215,6 @@ func MigrateDB(db *gorm.DB) error {
 		&call.Call{},
 		&call.CallParticipant{},
 		&call.CallQualityMetric{},
-		&call.TurnCredential{},
-		&call.SFUServer{},
-		&call.CallServerAssignment{},
 
 		// Encryption domain
 		&encryption.IdentityKey{},
@@ -419,8 +416,6 @@ func CreateUserWithDefaults(input CreateAdminUserInput) (*user.User, error) {
 func TruncateAllTables() error {
 	tables := []string{
 		"key_bundles",
-		"call_server_assignments",
-		"sfu_servers",
 		"upload_sessions",
 		"conversation_clears",
 		"message_user_states",
@@ -428,7 +423,6 @@ func TruncateAllTables() error {
 		"onetime_prekeys",
 		"signed_prekeys",
 		"identity_keys",
-		"turn_credentials",
 		"call_quality_metrics",
 		"call_participants",
 		"calls",

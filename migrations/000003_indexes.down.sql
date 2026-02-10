@@ -1,4 +1,3 @@
-DROP INDEX IF EXISTS idx_call_assignments_server;
 DROP INDEX IF EXISTS idx_upload_sessions_uploader;
 DROP INDEX IF EXISTS idx_conversation_clears_user;
 DROP INDEX IF EXISTS idx_message_user_states_deleted;

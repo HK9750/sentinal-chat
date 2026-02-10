@@ -206,19 +206,6 @@ func (s *Server) SetupRoutes(handlers *Handlers, authService *services.AuthServi
 		calls.GET("/quality", handlers.Call.GetCallQualityMetrics)
 		calls.GET("/quality/user", handlers.Call.GetUserCallQualityMetrics)
 		calls.GET("/quality/average", handlers.Call.GetAverageCallQuality)
-		calls.POST("/turn", handlers.Call.CreateTurnCredential)
-		calls.GET("/turn", handlers.Call.GetActiveTurnCredentials)
-		calls.DELETE("/turn/expired", handlers.Call.DeleteExpiredTurnCredentials)
-		calls.POST("/sfu", handlers.Call.CreateSFUServer)
-		calls.GET("/sfu/:id", handlers.Call.GetSFUServerByID)
-		calls.GET("/sfu", handlers.Call.GetHealthySFUServers)
-		calls.GET("/sfu/least", handlers.Call.GetLeastLoadedServer)
-		calls.PUT("/sfu/:id/load", handlers.Call.UpdateServerLoad)
-		calls.PUT("/sfu/:id/health", handlers.Call.UpdateServerHealth)
-		calls.PUT("/sfu/:id/heartbeat", handlers.Call.UpdateServerHeartbeat)
-		calls.POST("/assignments", handlers.Call.AssignCallToServer)
-		calls.GET("/assignments", handlers.Call.GetCallServerAssignments)
-		calls.DELETE("/assignments", handlers.Call.RemoveCallServerAssignment)
 	}
 
 	if handlers.Upload != nil {
