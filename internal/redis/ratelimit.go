@@ -15,27 +15,23 @@ import (
 
 // RateLimitConfig contains configuration for rate limiting
 type RateLimitConfig struct {
-	MessageLimit    int           // Max messages per window
-	MessageWindow   time.Duration // Message rate limit window
-	CallLimit       int           // Max calls per window
-	CallWindow      time.Duration // Call rate limit window
-	AuthLimit       int           // Max auth attempts per window
-	AuthWindow      time.Duration // Auth rate limit window
-	WebSocketLimit  int           // Max WebSocket connections per user
-	WebSocketWindow time.Duration // WebSocket rate limit window
+	MessageLimit  int           // Max messages per window
+	MessageWindow time.Duration // Message rate limit window
+	CallLimit     int           // Max calls per window
+	CallWindow    time.Duration // Call rate limit window
+	AuthLimit     int           // Max auth attempts per window
+	AuthWindow    time.Duration // Auth rate limit window
 }
 
 // DefaultRateLimitConfig returns sensible defaults
 func DefaultRateLimitConfig() RateLimitConfig {
 	return RateLimitConfig{
-		MessageLimit:    60, // 60 messages per minute
-		MessageWindow:   60 * time.Second,
-		CallLimit:       10, // 10 calls per minute
-		CallWindow:      60 * time.Second,
-		AuthLimit:       5, // 5 auth attempts per minute
-		AuthWindow:      60 * time.Second,
-		WebSocketLimit:  5, // 5 concurrent connections per user
-		WebSocketWindow: 60 * time.Second,
+		MessageLimit:  60, // 60 messages per minute
+		MessageWindow: 60 * time.Second,
+		CallLimit:     10, // 10 calls per minute
+		CallWindow:    60 * time.Second,
+		AuthLimit:     5, // 5 auth attempts per minute
+		AuthWindow:    60 * time.Second,
 	}
 }
 
@@ -77,12 +73,6 @@ func (r *RateLimiter) AllowCall(ctx context.Context, userID string) (*RateLimitR
 func (r *RateLimiter) AllowAuth(ctx context.Context, ip string) (*RateLimitResult, error) {
 	key := fmt.Sprintf("ratelimit:%s:auth", ip)
 	return r.checkLimit(ctx, key, r.config.AuthLimit, r.config.AuthWindow)
-}
-
-// AllowWebSocket checks if a user can open a new WebSocket connection
-func (r *RateLimiter) AllowWebSocket(ctx context.Context, userID string) (*RateLimitResult, error) {
-	key := fmt.Sprintf("ratelimit:%s:websocket", userID)
-	return r.checkLimit(ctx, key, r.config.WebSocketLimit, r.config.WebSocketWindow)
 }
 
 // checkLimit performs the actual rate limit check using a sliding window counter
@@ -177,7 +167,6 @@ func (r *RateLimiter) ResetUser(ctx context.Context, userID string) error {
 	keys := []string{
 		fmt.Sprintf("ratelimit:%s:messages", userID),
 		fmt.Sprintf("ratelimit:%s:calls", userID),
-		fmt.Sprintf("ratelimit:%s:websocket", userID),
 	}
 	return r.client.Del(ctx, keys...).Err()
 }

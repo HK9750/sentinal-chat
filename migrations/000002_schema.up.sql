@@ -377,47 +377,6 @@ CREATE TABLE IF NOT EXISTS onetime_prekeys (
   UNIQUE (device_id, key_id)
 );
 
--- Event-Driven Tables
-CREATE TABLE IF NOT EXISTS outbox_events (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  aggregate_type TEXT NOT NULL,
-  aggregate_id UUID NOT NULL,
-  event_type TEXT NOT NULL,
-  payload JSONB NOT NULL,
-  correlation_id UUID,
-  created_at TIMESTAMP DEFAULT NOW(),
-  processed_at TIMESTAMP,
-  retry_count INTEGER DEFAULT 0,
-  max_retries INTEGER DEFAULT 5,
-  next_retry_at TIMESTAMP,
-  error_message TEXT
-);
-
-CREATE TABLE IF NOT EXISTS command_log (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  command_type TEXT NOT NULL,
-  actor_id UUID REFERENCES users(id),
-  aggregate_type TEXT NOT NULL,
-  aggregate_id UUID,
-  payload JSONB NOT NULL,
-  idempotency_key TEXT,
-  status command_status DEFAULT 'PENDING',
-  created_at TIMESTAMP DEFAULT NOW(),
-  executed_at TIMESTAMP,
-  error_message TEXT
-);
-
-CREATE TABLE IF NOT EXISTS access_policies (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  resource_type TEXT NOT NULL,
-  resource_id UUID,
-  actor_type TEXT NOT NULL,
-  actor_id UUID,
-  permission TEXT NOT NULL,
-  granted BOOLEAN DEFAULT TRUE,
-  created_at TIMESTAMP DEFAULT NOW()
-);
-
 -- Additional Tables
 CREATE TABLE IF NOT EXISTS message_user_states (
   message_id UUID NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
@@ -467,22 +426,3 @@ CREATE TABLE IF NOT EXISTS call_server_assignments (
   PRIMARY KEY (call_id, sfu_server_id)
 );
 
-
-CREATE TABLE IF NOT EXISTS event_subscriptions (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  subscriber_name TEXT NOT NULL,
-  event_type TEXT NOT NULL,
-  is_active BOOLEAN DEFAULT TRUE,
-  created_at TIMESTAMP DEFAULT NOW(),
-  UNIQUE (subscriber_name, event_type)
-);
-
-CREATE TABLE IF NOT EXISTS outbox_event_deliveries (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  event_id UUID NOT NULL REFERENCES outbox_events(id) ON DELETE CASCADE,
-  attempt_number INTEGER NOT NULL,
-  status TEXT NOT NULL,
-  error_message TEXT,
-  delivered_at TIMESTAMP,
-  created_at TIMESTAMP DEFAULT NOW()
-);

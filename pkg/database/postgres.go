@@ -17,7 +17,6 @@ import (
 	"sentinal-chat/internal/domain/call"
 	"sentinal-chat/internal/domain/conversation"
 	"sentinal-chat/internal/domain/encryption"
-	"sentinal-chat/internal/domain/event"
 	"sentinal-chat/internal/domain/message"
 	"sentinal-chat/internal/domain/upload"
 	"sentinal-chat/internal/domain/user"
@@ -225,13 +224,6 @@ func MigrateDB(db *gorm.DB) error {
 		&encryption.SignedPreKey{},
 		&encryption.OneTimePreKey{},
 
-		// Event domain
-		&event.OutboxEvent{},
-		&event.CommandLog{},
-		&event.AccessPolicy{},
-		&event.EventSubscription{},
-		&event.OutboxEventDelivery{},
-
 		// Broadcast domain
 		&broadcast.BroadcastList{},
 		&broadcast.BroadcastRecipient{},
@@ -426,17 +418,12 @@ func CreateUserWithDefaults(input CreateAdminUserInput) (*user.User, error) {
 // TruncateAllTables truncates all tables (USE WITH CAUTION - for testing only)
 func TruncateAllTables() error {
 	tables := []string{
-		"outbox_event_deliveries",
-		"event_subscriptions",
 		"key_bundles",
 		"call_server_assignments",
 		"sfu_servers",
 		"upload_sessions",
 		"conversation_clears",
 		"message_user_states",
-		"access_policies",
-		"command_log",
-		"outbox_events",
 		"encrypted_sessions",
 		"onetime_prekeys",
 		"signed_prekeys",

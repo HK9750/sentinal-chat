@@ -1,14 +1,8 @@
-DROP INDEX IF EXISTS idx_outbox_delivery_event;
-DROP INDEX IF EXISTS idx_event_subscriptions_type;
 DROP INDEX IF EXISTS idx_call_assignments_server;
 DROP INDEX IF EXISTS idx_upload_sessions_uploader;
 DROP INDEX IF EXISTS idx_conversation_clears_user;
 DROP INDEX IF EXISTS idx_message_user_states_deleted;
 DROP INDEX IF EXISTS idx_message_user_states_user;
-DROP INDEX IF EXISTS idx_access_policies_actor;
-DROP INDEX IF EXISTS idx_command_log_type;
-DROP INDEX IF EXISTS idx_outbox_event_type;
-DROP INDEX IF EXISTS idx_outbox_pending;
 DROP INDEX IF EXISTS idx_broadcast_owner;
 DROP INDEX IF EXISTS idx_poll_votes_user;
 DROP INDEX IF EXISTS idx_poll_options_poll;

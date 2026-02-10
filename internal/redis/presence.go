@@ -23,9 +23,8 @@ type PresenceStatus struct {
 
 // PresenceStore handles presence tracking in Redis
 type PresenceStore struct {
-	client    *goredis.Client
-	publisher *Publisher
-	ttl       time.Duration
+	client *goredis.Client
+	ttl    time.Duration
 }
 
 // Redis key prefixes for presence
@@ -36,14 +35,13 @@ const (
 )
 
 // NewPresenceStore creates a new presence store
-func NewPresenceStore(client *goredis.Client, publisher *Publisher, ttl time.Duration) *PresenceStore {
+func NewPresenceStore(client *goredis.Client, ttl time.Duration) *PresenceStore {
 	if ttl == 0 {
 		ttl = 5 * time.Minute // Default TTL for presence data
 	}
 	return &PresenceStore{
-		client:    client,
-		publisher: publisher,
-		ttl:       ttl,
+		client: client,
+		ttl:    ttl,
 	}
 }
 
@@ -80,8 +78,7 @@ func (p *PresenceStore) SetOnline(ctx context.Context, userID, deviceID, clientI
 		return err
 	}
 
-	// Publish presence event
-	return p.publishPresenceEvent(ctx, userID, true, "online", now)
+	return nil
 }
 
 // SetOffline marks a user as offline
@@ -112,8 +109,7 @@ func (p *PresenceStore) SetOffline(ctx context.Context, userID string) error {
 		return err
 	}
 
-	// Publish presence event
-	return p.publishPresenceEvent(ctx, userID, false, "offline", now)
+	return nil
 }
 
 // UpdateStatus updates a user's status (online, away, busy)
@@ -148,8 +144,7 @@ func (p *PresenceStore) UpdateStatus(ctx context.Context, userID, status string)
 		p.client.SAdd(ctx, presenceOnlineSet, userID)
 	}
 
-	// Publish presence event
-	return p.publishPresenceEvent(ctx, userID, status != "offline", status, now)
+	return nil
 }
 
 // Heartbeat updates the user's heartbeat to prevent timeout
@@ -287,39 +282,6 @@ func (p *PresenceStore) CleanupStalePresence(ctx context.Context, maxAge time.Du
 	}
 
 	return int64(len(staleUsers)), nil
-}
-
-// publishPresenceEvent publishes a presence change event to Redis pub/sub
-func (p *PresenceStore) publishPresenceEvent(ctx context.Context, userID string, isOnline bool, status string, timestamp time.Time) error {
-	if p.publisher == nil {
-		return nil
-	}
-
-	eventType := "presence.offline"
-	if isOnline {
-		eventType = "presence.online"
-	}
-
-	event := map[string]interface{}{
-		"event_type":     eventType,
-		"aggregate_type": "presence",
-		"aggregate_id":   userID,
-		"occurred_at":    timestamp.UTC().Format(time.RFC3339),
-		"payload": map[string]interface{}{
-			"user_id":   userID,
-			"is_online": isOnline,
-			"status":    status,
-			"timestamp": timestamp.UTC().Format(time.RFC3339),
-		},
-	}
-
-	data, err := json.Marshal(event)
-	if err != nil {
-		return err
-	}
-
-	channel := fmt.Sprintf("channel:presence:%s", userID)
-	return p.publisher.Publish(ctx, channel, data)
 }
 
 // TrackTyping sets a typing indicator for a user in a conversation

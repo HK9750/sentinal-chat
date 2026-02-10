@@ -5,7 +5,6 @@ import (
 	"strconv"
 	"time"
 
-	"sentinal-chat/internal/commands"
 	"sentinal-chat/internal/domain/conversation"
 	"sentinal-chat/internal/services"
 	"sentinal-chat/internal/transport/httpdto"
@@ -43,10 +42,12 @@ func (h *ConversationHandler) Create(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid participant id", "INVALID_REQUEST"))
 			return
 		}
-		participantIDs = append(participantIDs, id)
+		if id != creatorID {
+			participantIDs = append(participantIDs, id)
+		}
 	}
 
-	res, err := h.service.Create(c.Request.Context(), commands.CreateConversationCommand{
+	res, err := h.service.Create(c.Request.Context(), services.CreateConversationInput{
 		Type:           req.Type,
 		Subject:        req.Subject,
 		Description:    req.Description,

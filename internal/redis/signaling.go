@@ -42,8 +42,7 @@ type CallState struct {
 
 // SignalingStore handles WebRTC signaling state in Redis
 type SignalingStore struct {
-	client    *goredis.Client
-	publisher *Publisher
+	client *goredis.Client
 }
 
 // Redis key prefixes for signaling
@@ -55,11 +54,8 @@ const (
 )
 
 // NewSignalingStore creates a new signaling store
-func NewSignalingStore(client *goredis.Client, publisher *Publisher) *SignalingStore {
-	return &SignalingStore{
-		client:    client,
-		publisher: publisher,
-	}
+func NewSignalingStore(client *goredis.Client) *SignalingStore {
+	return &SignalingStore{client: client}
 }
 
 // CreateCallState initializes call state in Redis
@@ -135,6 +131,7 @@ func (s *SignalingStore) RemoveCallState(ctx context.Context, callID string) err
 }
 
 // SendOffer sends an SDP offer to a user via Redis pub/sub
+
 func (s *SignalingStore) SendOffer(ctx context.Context, callID, fromID, toID, sdp string) error {
 	msg := SignalingMessage{
 		Type:      "offer",
@@ -144,7 +141,7 @@ func (s *SignalingStore) SendOffer(ctx context.Context, callID, fromID, toID, sd
 		SDP:       sdp,
 		Timestamp: time.Now(),
 	}
-	return s.publishSignalingMessage(ctx, toID, msg)
+	return s.storeSignalingMessage(ctx, msg)
 }
 
 // SendAnswer sends an SDP answer to a user via Redis pub/sub
@@ -157,7 +154,7 @@ func (s *SignalingStore) SendAnswer(ctx context.Context, callID, fromID, toID, s
 		SDP:       sdp,
 		Timestamp: time.Now(),
 	}
-	return s.publishSignalingMessage(ctx, toID, msg)
+	return s.storeSignalingMessage(ctx, msg)
 }
 
 // SendICECandidate sends an ICE candidate to a user via Redis pub/sub
@@ -176,7 +173,7 @@ func (s *SignalingStore) SendICECandidate(ctx context.Context, callID, fromID, t
 		// Log error but don't fail - storing is optional
 	}
 
-	return s.publishSignalingMessage(ctx, toID, msg)
+	return s.storeSignalingMessage(ctx, msg)
 }
 
 // storeICECandidate stores ICE candidate for potential late retrieval
@@ -219,81 +216,27 @@ func (s *SignalingStore) ClearICECandidates(ctx context.Context, callID, fromID,
 }
 
 // publishSignalingMessage publishes a signaling message to the target user's call channel
-func (s *SignalingStore) publishSignalingMessage(ctx context.Context, targetUserID string, msg SignalingMessage) error {
-	if s.publisher == nil {
-		return fmt.Errorf("publisher not configured")
-	}
-
-	event := map[string]interface{}{
-		"event_type":     "call." + msg.Type,
-		"aggregate_type": "call",
-		"aggregate_id":   msg.CallID,
-		"occurred_at":    msg.Timestamp.UTC().Format(time.RFC3339),
-		"payload":        msg,
-	}
-
-	data, err := json.Marshal(event)
+func (s *SignalingStore) storeSignalingMessage(ctx context.Context, msg SignalingMessage) error {
+	key := fmt.Sprintf("call:signal:%s:%s", msg.CallID, msg.ToID)
+	data, err := json.Marshal(msg)
 	if err != nil {
 		return err
 	}
-
-	// Publish to the call channel (all participants subscribed)
-	callChannel := fmt.Sprintf("channel:call:%s", msg.CallID)
-	if err := s.publisher.Publish(ctx, callChannel, data); err != nil {
-		return err
-	}
-
-	// Also publish to user's personal channel for redundancy
-	userChannel := fmt.Sprintf("channel:user:%s", targetUserID)
-	return s.publisher.Publish(ctx, userChannel, data)
+	pipe := s.client.Pipeline()
+	pipe.RPush(ctx, key, data)
+	pipe.Expire(ctx, key, signalingTTL)
+	_, err = pipe.Exec(ctx)
+	return err
 }
 
 // SendCallRinging sends a ringing notification to participants
 func (s *SignalingStore) SendCallRinging(ctx context.Context, callID, initiatorID string, participantIDs []string) error {
-	for _, participantID := range participantIDs {
-		event := map[string]interface{}{
-			"event_type":     "call.ringing",
-			"aggregate_type": "call",
-			"aggregate_id":   callID,
-			"occurred_at":    time.Now().UTC().Format(time.RFC3339),
-			"payload": map[string]interface{}{
-				"call_id":      callID,
-				"initiator_id": initiatorID,
-				"target_id":    participantID,
-			},
-		}
-
-		data, err := json.Marshal(event)
-		if err != nil {
-			continue
-		}
-
-		userChannel := fmt.Sprintf("channel:user:%s", participantID)
-		s.publisher.Publish(ctx, userChannel, data)
-	}
 	return nil
 }
 
 // SendCallEnded sends call ended notification to all participants
 func (s *SignalingStore) SendCallEnded(ctx context.Context, callID, reason string) error {
-	event := map[string]interface{}{
-		"event_type":     "call.ended",
-		"aggregate_type": "call",
-		"aggregate_id":   callID,
-		"occurred_at":    time.Now().UTC().Format(time.RFC3339),
-		"payload": map[string]interface{}{
-			"call_id": callID,
-			"reason":  reason,
-		},
-	}
-
-	data, err := json.Marshal(event)
-	if err != nil {
-		return err
-	}
-
-	callChannel := fmt.Sprintf("channel:call:%s", callID)
-	return s.publisher.Publish(ctx, callChannel, data)
+	return nil
 }
 
 // GenerateTURNCredentials generates temporary TURN server credentials

@@ -16,7 +16,6 @@ import (
 	"sentinal-chat/internal/redis"
 	"sentinal-chat/internal/services"
 	"sentinal-chat/internal/transport/httpdto"
-	"sentinal-chat/internal/websocket"
 	"sentinal-chat/pkg/database"
 	"sentinal-chat/pkg/logger"
 
@@ -38,7 +37,6 @@ var (
 
 type Handlers struct {
 	Auth         *handler.AuthHandler
-	WebSocket    *websocket.Handler
 	Message      *handler.MessageHandler
 	Conversation *handler.ConversationHandler
 	User         *handler.UserHandler
@@ -113,10 +111,6 @@ func (s *Server) SetupRoutes(handlers *Handlers, authService *services.AuthServi
 		auth.GET("/sessions", middleware.AuthMiddleware(authService), handlers.Auth.Sessions)
 		auth.POST("/password/forgot", handlers.Auth.PasswordForgot)
 		auth.POST("/password/reset", handlers.Auth.PasswordReset)
-	}
-
-	if handlers.WebSocket != nil {
-		s.engine.GET("/v1/ws", handlers.WebSocket.Connect)
 	}
 
 	if handlers.Message != nil {

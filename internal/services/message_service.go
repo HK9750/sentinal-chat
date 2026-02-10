@@ -7,10 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"sentinal-chat/internal/commands"
-	"sentinal-chat/internal/domain/event"
 	"sentinal-chat/internal/domain/message"
-	"sentinal-chat/internal/proxy"
 	"sentinal-chat/internal/repository"
 	sentinal_errors "sentinal-chat/pkg/errors"
 
@@ -19,299 +16,49 @@ import (
 )
 
 type MessageService struct {
-	db          *gorm.DB
-	messageRepo repository.MessageRepository
-	eventRepo   repository.EventRepository
-	access      *proxy.AccessControl
-	bus         *commands.Bus
+	db               *gorm.DB
+	messageRepo      repository.MessageRepository
+	conversationRepo repository.ConversationRepository
 }
 
-func NewMessageService(db *gorm.DB, messageRepo repository.MessageRepository, eventRepo repository.EventRepository, access *proxy.AccessControl, bus *commands.Bus) *MessageService {
-	if bus == nil {
-		bus = commands.NewBus()
-	}
-	svc := &MessageService{
-		db:          db,
-		messageRepo: messageRepo,
-		eventRepo:   eventRepo,
-		access:      access,
-		bus:         bus,
-	}
-	svc.RegisterHandlers()
-	return svc
+type CiphertextPayload struct {
+	RecipientDeviceID uuid.UUID
+	Ciphertext        []byte
+	Header            map[string]interface{}
 }
 
-func (s *MessageService) HandleSendMessage(ctx context.Context, cmd commands.SendMessageCommand) (commands.Result, error) {
-	if s.bus != nil {
-		return s.bus.Execute(ctx, cmd)
-	}
-	return s.executeSendMessage(ctx, cmd)
+type SendMessageInput struct {
+	ConversationID uuid.UUID
+	SenderID       uuid.UUID
+	Ciphertexts    []CiphertextPayload
+	MessageType    string
+	ClientMsgID    string
+	IdempotencyKey string
+	Metadata       map[string]interface{}
 }
 
-func (s *MessageService) RegisterHandlers() {
-	if s.bus == nil {
-		s.bus = commands.NewBus()
+func NewMessageService(db *gorm.DB, messageRepo repository.MessageRepository, conversationRepo repository.ConversationRepository) *MessageService {
+	return &MessageService{
+		db:               db,
+		messageRepo:      messageRepo,
+		conversationRepo: conversationRepo,
 	}
-	s.bus.Register("message.send", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
-		typed, ok := cmd.(commands.SendMessageCommand)
-		if !ok {
-			return commands.Result{}, sentinal_errors.ErrInvalidInput
-		}
-		return s.executeSendMessage(ctx, typed)
-	}))
-	s.bus.Register("message.update", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
-		return commands.Result{}, sentinal_errors.ErrForbidden
-	}))
-
-	// message.edit - Edit an existing message
-	s.bus.Register("message.edit", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
-		_, ok := cmd.(commands.EditMessageCommand)
-		if !ok {
-			return commands.Result{}, sentinal_errors.ErrInvalidInput
-		}
-		return commands.Result{}, sentinal_errors.ErrForbidden
-	}))
-
-	// message.delete - Delete a message
-	s.bus.Register("message.delete", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
-		c, ok := cmd.(commands.DeleteMessageCommand)
-		if !ok {
-			return commands.Result{}, sentinal_errors.ErrInvalidInput
-		}
-		msg, err := s.messageRepo.GetByID(ctx, c.MessageID)
-		if err != nil {
-			return commands.Result{}, err
-		}
-		if msg.SenderID != c.UserID {
-			return commands.Result{}, sentinal_errors.ErrForbidden
-		}
-		if c.DeleteForEveryone {
-			if err := s.messageRepo.SoftDelete(ctx, c.MessageID); err != nil {
-				return commands.Result{}, err
-			}
-		}
-		_ = createOutboxEvent(ctx, s.eventRepo, "message", "message.deleted", c.MessageID, map[string]any{
-			"message_id":          c.MessageID,
-			"deleted_by":          c.UserID,
-			"delete_for_everyone": c.DeleteForEveryone,
-		})
-		return commands.Result{AggregateID: c.MessageID.String()}, nil
-	}))
-
-	// message.react - Add a reaction to a message
-	s.bus.Register("message.react", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
-		c, ok := cmd.(commands.ReactToMessageCommand)
-		if !ok {
-			return commands.Result{}, sentinal_errors.ErrInvalidInput
-		}
-		reaction := &message.MessageReaction{
-			MessageID:    c.MessageID,
-			UserID:       c.UserID,
-			ReactionCode: c.ReactionCode,
-			CreatedAt:    time.Now(),
-		}
-		if err := s.messageRepo.AddReaction(ctx, reaction); err != nil {
-			return commands.Result{}, err
-		}
-		_ = createOutboxEvent(ctx, s.eventRepo, "reaction", "reaction.added", c.MessageID, map[string]any{
-			"message_id":    c.MessageID,
-			"user_id":       c.UserID,
-			"reaction_code": c.ReactionCode,
-		})
-		return commands.Result{AggregateID: c.MessageID.String(), Payload: reaction}, nil
-	}))
-
-	// message.remove_reaction - Remove a reaction from a message
-	s.bus.Register("message.remove_reaction", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
-		c, ok := cmd.(commands.RemoveReactionCommand)
-		if !ok {
-			return commands.Result{}, sentinal_errors.ErrInvalidInput
-		}
-		if err := s.messageRepo.RemoveReaction(ctx, c.MessageID, c.UserID, c.ReactionCode); err != nil {
-			return commands.Result{}, err
-		}
-		_ = createOutboxEvent(ctx, s.eventRepo, "reaction", "reaction.removed", c.MessageID, map[string]any{
-			"message_id":    c.MessageID,
-			"user_id":       c.UserID,
-			"reaction_code": c.ReactionCode,
-		})
-		return commands.Result{AggregateID: c.MessageID.String()}, nil
-	}))
-
-	// message.star - Star a message
-	s.bus.Register("message.star", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
-		c, ok := cmd.(commands.StarMessageCommand)
-		if !ok {
-			return commands.Result{}, sentinal_errors.ErrInvalidInput
-		}
-		starred := &message.StarredMessage{
-			UserID:    c.UserID,
-			MessageID: c.MessageID,
-			StarredAt: time.Now(),
-		}
-		if err := s.messageRepo.StarMessage(ctx, starred); err != nil {
-			return commands.Result{}, err
-		}
-		_ = createOutboxEvent(ctx, s.eventRepo, "message", "message.starred", c.MessageID, map[string]any{
-			"message_id": c.MessageID,
-			"user_id":    c.UserID,
-		})
-		return commands.Result{AggregateID: c.MessageID.String(), Payload: starred}, nil
-	}))
-
-	// message.unstar - Unstar a message
-	s.bus.Register("message.unstar", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
-		c, ok := cmd.(commands.UnstarMessageCommand)
-		if !ok {
-			return commands.Result{}, sentinal_errors.ErrInvalidInput
-		}
-		if err := s.messageRepo.UnstarMessage(ctx, c.UserID, c.MessageID); err != nil {
-			return commands.Result{}, err
-		}
-		_ = createOutboxEvent(ctx, s.eventRepo, "message", "message.unstarred", c.MessageID, map[string]any{
-			"message_id": c.MessageID,
-			"user_id":    c.UserID,
-		})
-		return commands.Result{AggregateID: c.MessageID.String()}, nil
-	}))
-
-	// message.read - Mark a message as read
-	s.bus.Register("message.read", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
-		c, ok := cmd.(commands.MarkMessageReadCommand)
-		if !ok {
-			return commands.Result{}, sentinal_errors.ErrInvalidInput
-		}
-		if err := s.messageRepo.MarkAsRead(ctx, c.MessageID, c.UserID); err != nil {
-			return commands.Result{}, err
-		}
-		_ = createOutboxEvent(ctx, s.eventRepo, "message_receipt", "receipt.read", c.MessageID, map[string]any{
-			"message_id": c.MessageID,
-			"user_id":    c.UserID,
-			"read_at":    time.Now(),
-		})
-		return commands.Result{AggregateID: c.MessageID.String()}, nil
-	}))
-
-	// message.delivered - Mark a message as delivered
-	s.bus.Register("message.delivered", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
-		c, ok := cmd.(commands.MarkMessageDeliveredCommand)
-		if !ok {
-			return commands.Result{}, sentinal_errors.ErrInvalidInput
-		}
-		if err := s.messageRepo.MarkAsDelivered(ctx, c.MessageID, c.UserID); err != nil {
-			return commands.Result{}, err
-		}
-		_ = createOutboxEvent(ctx, s.eventRepo, "message_receipt", "receipt.delivered", c.MessageID, map[string]any{
-			"message_id":   c.MessageID,
-			"user_id":      c.UserID,
-			"delivered_at": time.Now(),
-		})
-		return commands.Result{AggregateID: c.MessageID.String()}, nil
-	}))
-
-	// message.typing - Typing indicator (ephemeral, no persistence)
-	s.bus.Register("message.typing", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
-		c, ok := cmd.(commands.TypingCommand)
-		if !ok {
-			return commands.Result{}, sentinal_errors.ErrInvalidInput
-		}
-		eventType := "typing.started"
-		if !c.IsTyping {
-			eventType = "typing.stopped"
-		}
-		_ = createOutboxEvent(ctx, s.eventRepo, "typing", eventType, c.ConversationID, map[string]any{
-			"conversation_id": c.ConversationID,
-			"user_id":         c.UserID,
-		})
-		return commands.Result{AggregateID: c.ConversationID.String()}, nil
-	}))
-
-	// message.create_poll - Create a poll
-	s.bus.Register("message.create_poll", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
-		c, ok := cmd.(commands.CreatePollCommand)
-		if !ok {
-			return commands.Result{}, sentinal_errors.ErrInvalidInput
-		}
-		poll := &message.Poll{
-			ID:             uuid.New(),
-			Question:       c.Question,
-			AllowsMultiple: c.AllowsMultiple,
-			CreatedAt:      time.Now(),
-		}
-		if err := s.messageRepo.CreatePoll(ctx, poll); err != nil {
-			return commands.Result{}, err
-		}
-		// Add poll options
-		for i, optionText := range c.Options {
-			opt := &message.PollOption{
-				ID:         uuid.New(),
-				PollID:     poll.ID,
-				OptionText: optionText,
-				Position:   i,
-			}
-			if err := s.messageRepo.AddPollOption(ctx, opt); err != nil {
-				return commands.Result{}, err
-			}
-		}
-		_ = createOutboxEvent(ctx, s.eventRepo, "poll", "poll.created", poll.ID, map[string]any{
-			"poll_id":  poll.ID,
-			"question": c.Question,
-		})
-		return commands.Result{AggregateID: poll.ID.String(), Payload: poll}, nil
-	}))
-
-	// message.vote_poll - Vote on a poll
-	s.bus.Register("message.vote_poll", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
-		c, ok := cmd.(commands.VotePollCommand)
-		if !ok {
-			return commands.Result{}, sentinal_errors.ErrInvalidInput
-		}
-		for _, optionID := range c.OptionIDs {
-			vote := &message.PollVote{
-				PollID:   c.PollID,
-				OptionID: optionID,
-				UserID:   c.UserID,
-				VotedAt:  time.Now(),
-			}
-			if err := s.messageRepo.VotePoll(ctx, vote); err != nil {
-				return commands.Result{}, err
-			}
-		}
-		_ = createOutboxEvent(ctx, s.eventRepo, "poll", "poll.voted", c.PollID, map[string]any{
-			"poll_id":    c.PollID,
-			"user_id":    c.UserID,
-			"option_ids": c.OptionIDs,
-		})
-		return commands.Result{AggregateID: c.PollID.String()}, nil
-	}))
-
-	// message.close_poll - Close a poll
-	s.bus.Register("message.close_poll", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
-		c, ok := cmd.(commands.ClosePollCommand)
-		if !ok {
-			return commands.Result{}, sentinal_errors.ErrInvalidInput
-		}
-		if err := s.messageRepo.ClosePoll(ctx, c.PollID); err != nil {
-			return commands.Result{}, err
-		}
-		_ = createOutboxEvent(ctx, s.eventRepo, "poll", "poll.closed", c.PollID, map[string]any{
-			"poll_id":   c.PollID,
-			"closed_by": c.UserID,
-			"closed_at": time.Now(),
-		})
-		return commands.Result{AggregateID: c.PollID.String()}, nil
-	}))
 }
 
-func (s *MessageService) Bus() *commands.Bus {
-	return s.bus
+func (s *MessageService) SendMessage(ctx context.Context, input SendMessageInput) (message.Message, error) {
+	return s.executeSendMessage(ctx, input)
 }
 
 func (s *MessageService) GetConversationMessages(ctx context.Context, conversationID uuid.UUID, beforeSeq int64, limit int, userID uuid.UUID) ([]message.Message, error) {
-	if s.access != nil {
-		if err := s.access.CanViewConversation(ctx, userID, conversationID); err != nil {
-			return nil, err
-		}
+	if s.conversationRepo == nil {
+		return nil, sentinal_errors.ErrForbidden
+	}
+	ok, err := s.conversationRepo.IsParticipant(ctx, conversationID, userID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, sentinal_errors.ErrForbidden
 	}
 	if limit <= 0 {
 		limit = 50
@@ -328,9 +75,13 @@ func (s *MessageService) GetByID(ctx context.Context, messageID uuid.UUID, userI
 	if err != nil {
 		return message.Message{}, err
 	}
-	if s.access != nil {
-		if err := s.access.CanViewConversation(ctx, userID, msg.ConversationID); err != nil {
+	if s.conversationRepo != nil {
+		ok, err := s.conversationRepo.IsParticipant(ctx, msg.ConversationID, userID)
+		if err != nil {
 			return message.Message{}, err
+		}
+		if !ok {
+			return message.Message{}, sentinal_errors.ErrForbidden
 		}
 	}
 	return msg, nil
@@ -532,25 +283,43 @@ func (s *MessageService) DeleteExpiredMessages(ctx context.Context) (int64, erro
 	return s.messageRepo.DeleteExpiredMessages(ctx)
 }
 
-func (s *MessageService) executeSendMessage(ctx context.Context, cmd commands.SendMessageCommand) (commands.Result, error) {
-	if s.db == nil {
-		return s.executeSendMessageDirect(ctx, cmd)
+func (s *MessageService) executeSendMessage(ctx context.Context, input SendMessageInput) (message.Message, error) {
+	if input.ConversationID == uuid.Nil || input.SenderID == uuid.Nil {
+		return message.Message{}, sentinal_errors.ErrInvalidInput
+	}
+	if len(input.Ciphertexts) == 0 {
+		return message.Message{}, sentinal_errors.ErrInvalidInput
+	}
+	for _, payload := range input.Ciphertexts {
+		if payload.RecipientDeviceID == uuid.Nil || len(payload.Ciphertext) == 0 {
+			return message.Message{}, sentinal_errors.ErrInvalidInput
+		}
 	}
 
-	var result commands.Result
+	if s.conversationRepo != nil {
+		ok, err := s.conversationRepo.IsParticipant(ctx, input.ConversationID, input.SenderID)
+		if err != nil {
+			return message.Message{}, err
+		}
+		if !ok {
+			return message.Message{}, sentinal_errors.ErrForbidden
+		}
+	}
+
+	if s.db == nil {
+		return s.executeSendMessageDirect(ctx, input)
+	}
+
+	var result message.Message
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		msgRepo := repository.NewMessageRepository(tx)
-		eventRepo := repository.NewEventRepository(tx)
 		prevMsgRepo := s.messageRepo
-		prevEventRepo := s.eventRepo
 		s.messageRepo = msgRepo
-		s.eventRepo = eventRepo
 		defer func() {
 			s.messageRepo = prevMsgRepo
-			s.eventRepo = prevEventRepo
 		}()
 
-		res, err := s.executeSendMessageDirect(ctx, cmd)
+		res, err := s.executeSendMessageDirect(ctx, input)
 		if err != nil {
 			return err
 		}
@@ -558,71 +327,55 @@ func (s *MessageService) executeSendMessage(ctx context.Context, cmd commands.Se
 		return nil
 	})
 	if err != nil {
-		return commands.Result{}, err
+		return message.Message{}, err
 	}
 	return result, nil
 }
 
-func (s *MessageService) executeSendMessageDirect(ctx context.Context, cmd commands.SendMessageCommand) (commands.Result, error) {
-	if cmd.IdempotencyKey() != "" {
-		key := cmd.IdempotencyKey()
-		key = key + ":" + cmd.ConversationID.String()
-		if _, err := s.eventRepo.GetCommandLogByIdempotencyKey(ctx, key); err == nil {
-			return commands.Result{}, commands.ErrDuplicateCommand
-		} else if err != nil && err != sentinal_errors.ErrNotFound {
-			return commands.Result{}, err
-		}
-	}
-
-	if s.access != nil {
-		if err := s.access.CanSendMessage(ctx, cmd.SenderID, cmd.ConversationID); err != nil {
-			return commands.Result{}, err
-		}
-	}
-
+func (s *MessageService) executeSendMessageDirect(ctx context.Context, input SendMessageInput) (message.Message, error) {
 	msg := message.Message{
 		ID:             uuid.New(),
-		ConversationID: cmd.ConversationID,
-		SenderID:       cmd.SenderID,
-		Type:           msgTypeOrDefault(cmd.MessageType),
+		ConversationID: input.ConversationID,
+		SenderID:       input.SenderID,
+		Type:           msgTypeOrDefault(input.MessageType),
 		CreatedAt:      time.Now(),
 	}
-	if cmd.ClientMsgID != "" {
-		msg.ClientMessageID = msgNullString(cmd.ClientMsgID)
+	if input.ClientMsgID != "" {
+		msg.ClientMessageID = msgNullString(input.ClientMsgID)
 	}
-	if cmd.IdempotencyKey() != "" {
-		idempotencyKey := cmd.IdempotencyKey()
-		idempotencyKey = idempotencyKey + ":" + cmd.ConversationID.String()
+	if input.IdempotencyKey != "" {
+		idempotencyKey := input.IdempotencyKey + ":" + input.ConversationID.String()
 		msg.IdempotencyKey = msgNullString(idempotencyKey)
 	}
 
-	if cmd.Metadata == nil {
-		cmd.Metadata = map[string]interface{}{}
+	if input.Metadata == nil {
+		input.Metadata = map[string]interface{}{}
 	}
-	cmd.Metadata["e2ee"] = true
+	input.Metadata["e2ee"] = true
 
 	if err := s.messageRepo.Create(ctx, &msg); err != nil {
-		return commands.Result{}, err
+		return message.Message{}, err
 	}
 
 	deviceID, ok := DeviceIDFromContext(ctx)
 	if !ok || !deviceID.Valid {
-		return commands.Result{}, sentinal_errors.ErrInvalidInput
+		return message.Message{}, sentinal_errors.ErrInvalidInput
 	}
 
-	cmd.Metadata["sender_device_id"] = deviceID.UUID.String()
-	raw, err := json.Marshal(cmd.Metadata)
+	input.Metadata["sender_device_id"] = deviceID.UUID.String()
+	raw, err := json.Marshal(input.Metadata)
 	if err != nil {
-		return commands.Result{}, err
+		return message.Message{}, err
 	}
 	msg.Metadata = string(raw)
 	if err := s.messageRepo.Update(ctx, msg); err != nil {
-		return commands.Result{}, err
+		return message.Message{}, err
 	}
-	for _, payload := range cmd.Ciphertexts {
+
+	for _, payload := range input.Ciphertexts {
 		recipientUserID, err := s.lookupUserIDByDevice(ctx, payload.RecipientDeviceID)
 		if err != nil {
-			return commands.Result{}, err
+			return message.Message{}, err
 		}
 		header := payload.Header
 		if header == nil {
@@ -640,29 +393,11 @@ func (s *MessageService) executeSendMessageDirect(ctx context.Context, cmd comma
 			CreatedAt:         time.Now(),
 		}
 		if err := s.messageRepo.CreateCiphertext(ctx, cipher); err != nil {
-			return commands.Result{}, err
+			return message.Message{}, err
 		}
 	}
 
-	if cmd.IdempotencyKey() != "" {
-		idempotencyKey := cmd.IdempotencyKey()
-		idempotencyKey = idempotencyKey + ":" + cmd.ConversationID.String()
-		log := &event.CommandLog{
-			ID:             uuid.New(),
-			CommandType:    cmd.CommandType(),
-			ActorID:        uuid.NullUUID{UUID: cmd.SenderID, Valid: true},
-			AggregateType:  "message",
-			AggregateID:    uuid.NullUUID{UUID: msg.ID, Valid: true},
-			Payload:        msg.Metadata,
-			IdempotencyKey: msgNullString(idempotencyKey),
-			Status:         "EXECUTED",
-			CreatedAt:      time.Now(),
-			ExecutedAt:     msgNullTime(time.Now()),
-		}
-		_ = s.eventRepo.CreateCommandLog(ctx, log)
-	}
-
-	return commands.Result{AggregateID: msg.ID.String(), Payload: msg}, nil
+	return msg, nil
 }
 
 func (s *MessageService) lookupUserIDByDevice(ctx context.Context, deviceID uuid.UUID) (uuid.UUID, error) {
@@ -693,8 +428,4 @@ func msgNullString(value string) sql.NullString {
 		return sql.NullString{}
 	}
 	return sql.NullString{String: value, Valid: true}
-}
-
-func msgNullTime(value time.Time) sql.NullTime {
-	return sql.NullTime{Time: value, Valid: true}
 }

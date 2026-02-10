@@ -101,34 +101,6 @@ func CallRateLimitMiddleware(limiter *redis.RateLimiter) gin.HandlerFunc {
 	}
 }
 
-// WebSocketRateLimitMiddleware creates a middleware for WebSocket connection rate limiting
-func WebSocketRateLimitMiddleware(limiter *redis.RateLimiter) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		userID, ok := services.UserIDFromContext(c.Request.Context())
-		if !ok {
-			c.Next()
-			return
-		}
-
-		result, err := limiter.AllowWebSocket(c.Request.Context(), userID.String())
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, httpdto.NewErrorResponse("rate limit error", "INTERNAL_ERROR"))
-			c.Abort()
-			return
-		}
-
-		setRateLimitHeaders(c, result)
-
-		if !result.Allowed {
-			c.JSON(http.StatusTooManyRequests, httpdto.NewErrorResponse("connection rate limit exceeded", "RATE_LIMITED"))
-			c.Abort()
-			return
-		}
-
-		c.Next()
-	}
-}
-
 // setRateLimitHeaders sets standard rate limit response headers
 func setRateLimitHeaders(c *gin.Context, result *redis.RateLimitResult) {
 	c.Header("X-RateLimit-Limit", strconv.Itoa(result.Limit))

@@ -2,10 +2,8 @@ package services
 
 import (
 	"context"
-	"database/sql"
 	"time"
 
-	"sentinal-chat/internal/commands"
 	"sentinal-chat/internal/domain/call"
 	"sentinal-chat/internal/redis"
 	"sentinal-chat/internal/repository"
@@ -16,252 +14,11 @@ import (
 
 type CallService struct {
 	repo           repository.CallRepository
-	bus            *commands.Bus
-	eventRepo      repository.EventRepository
 	signalingStore *redis.SignalingStore
 }
 
-func NewCallService(repo repository.CallRepository, eventRepo repository.EventRepository, bus *commands.Bus, signalingStore *redis.SignalingStore) *CallService {
-	if bus == nil {
-		bus = commands.NewBus()
-	}
-	svc := &CallService{repo: repo, eventRepo: eventRepo, bus: bus, signalingStore: signalingStore}
-	svc.RegisterHandlers(bus)
-	return svc
-}
-
-func (s *CallService) RegisterHandlers(bus *commands.Bus) {
-	if bus == nil {
-		return
-	}
-
-	// call.initiate - Initiate a new call
-	bus.Register("call.initiate", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
-		c, ok := cmd.(commands.InitiateCallCommand)
-		if !ok {
-			return commands.Result{}, sentinal_errors.ErrInvalidInput
-		}
-		topology := c.Topology
-		if topology == "" {
-			topology = "P2P"
-		}
-		newCall := &call.Call{
-			ID:             uuid.New(),
-			ConversationID: c.ConversationID,
-			InitiatedBy:    c.InitiatorID,
-			Type:           c.CallType,
-			Topology:       topology,
-			IsGroupCall:    c.IsGroupCall,
-			StartedAt:      time.Now(),
-			CreatedAt:      time.Now(),
-		}
-		if err := s.Create(ctx, newCall); err != nil {
-			return commands.Result{}, err
-		}
-
-		// Create call state in Redis for real-time signaling
-		if s.signalingStore != nil {
-			callState := &redis.CallState{
-				CallID:         newCall.ID.String(),
-				ConversationID: newCall.ConversationID.String(),
-				InitiatorID:    newCall.InitiatedBy.String(),
-				CallType:       newCall.Type,
-				Status:         "RINGING",
-				Participants:   map[string]string{newCall.InitiatedBy.String(): "JOINED"},
-				StartedAt:      newCall.StartedAt,
-			}
-			_ = s.signalingStore.CreateCallState(ctx, callState)
-		}
-
-		return commands.Result{AggregateID: newCall.ID.String(), Payload: newCall}, nil
-	}))
-
-	// call.accept - Accept an incoming call
-	bus.Register("call.accept", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
-		c, ok := cmd.(commands.AcceptCallCommand)
-		if !ok {
-			return commands.Result{}, sentinal_errors.ErrInvalidInput
-		}
-		// Mark call as connected
-		if err := s.MarkConnected(ctx, c.CallID); err != nil {
-			return commands.Result{}, err
-		}
-		existingCall, err := s.GetByID(ctx, c.CallID)
-		if err != nil {
-			return commands.Result{}, err
-		}
-		_ = createOutboxEvent(ctx, s.eventRepo, "call", "call.accepted", c.CallID, map[string]any{"call_id": c.CallID, "user_id": c.UserID})
-		return commands.Result{AggregateID: c.CallID.String(), Payload: existingCall}, nil
-	}))
-
-	// call.reject - Reject an incoming call
-	bus.Register("call.reject", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
-		c, ok := cmd.(commands.RejectCallCommand)
-		if !ok {
-			return commands.Result{}, sentinal_errors.ErrInvalidInput
-		}
-		// End call with DECLINED reason
-		if err := s.EndCall(ctx, c.CallID, "DECLINED"); err != nil {
-			return commands.Result{}, err
-		}
-		existingCall, err := s.GetByID(ctx, c.CallID)
-		if err != nil {
-			return commands.Result{}, err
-		}
-		_ = createOutboxEvent(ctx, s.eventRepo, "call", "call.rejected", c.CallID, map[string]any{"call_id": c.CallID, "user_id": c.UserID})
-		return commands.Result{AggregateID: c.CallID.String(), Payload: existingCall}, nil
-	}))
-
-	// call.end - End an active call
-	bus.Register("call.end", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
-		c, ok := cmd.(commands.EndCallCommand)
-		if !ok {
-			return commands.Result{}, sentinal_errors.ErrInvalidInput
-		}
-		reason := c.Reason
-		if reason == "" {
-			reason = "COMPLETED"
-		}
-		if err := s.EndCall(ctx, c.CallID, reason); err != nil {
-			return commands.Result{}, err
-		}
-		return commands.Result{AggregateID: c.CallID.String()}, nil
-	}))
-
-	// call.join - Join an ongoing call
-	bus.Register("call.join", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
-		c, ok := cmd.(commands.JoinCallCommand)
-		if !ok {
-			return commands.Result{}, sentinal_errors.ErrInvalidInput
-		}
-		participant := &call.CallParticipant{
-			CallID:   c.CallID,
-			UserID:   c.UserID,
-			JoinedAt: sql.NullTime{Time: time.Now(), Valid: true},
-			Status:   "CONNECTED",
-		}
-		if err := s.AddParticipant(ctx, participant); err != nil {
-			return commands.Result{}, err
-		}
-		return commands.Result{AggregateID: c.CallID.String(), Payload: participant}, nil
-	}))
-
-	// call.leave - Leave an ongoing call
-	bus.Register("call.leave", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
-		c, ok := cmd.(commands.LeaveCallCommand)
-		if !ok {
-			return commands.Result{}, sentinal_errors.ErrInvalidInput
-		}
-		if err := s.RemoveParticipant(ctx, c.CallID, c.UserID); err != nil {
-			return commands.Result{}, err
-		}
-		return commands.Result{AggregateID: c.CallID.String()}, nil
-	}))
-
-	// call.toggle_mute - Toggle audio/video mute
-	bus.Register("call.toggle_mute", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
-		c, ok := cmd.(commands.ToggleMuteCommand)
-		if !ok {
-			return commands.Result{}, sentinal_errors.ErrInvalidInput
-		}
-		audioMuted := false
-		videoMuted := false
-		if c.MuteAudio != nil {
-			audioMuted = *c.MuteAudio
-		}
-		if c.MuteVideo != nil {
-			videoMuted = *c.MuteVideo
-		}
-		if err := s.UpdateParticipantMuteStatus(ctx, c.CallID, c.UserID, audioMuted, videoMuted); err != nil {
-			return commands.Result{}, err
-		}
-		return commands.Result{AggregateID: c.CallID.String()}, nil
-	}))
-
-	// call.offer - Send WebRTC SDP offer (real-time signaling via Redis pub/sub)
-	bus.Register("call.offer", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
-		c, ok := cmd.(commands.SendOfferCommand)
-		if !ok {
-			return commands.Result{}, sentinal_errors.ErrInvalidInput
-		}
-		// Real-time signaling - publish directly via SignalingStore
-		if s.signalingStore != nil {
-			if err := s.signalingStore.SendOffer(ctx, c.CallID.String(), c.FromID.String(), c.ToID.String(), c.SDP); err != nil {
-				return commands.Result{}, err
-			}
-		}
-		return commands.Result{AggregateID: c.CallID.String()}, nil
-	}))
-
-	// call.answer - Send WebRTC SDP answer (real-time signaling via Redis pub/sub)
-	bus.Register("call.answer", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
-		c, ok := cmd.(commands.SendAnswerCommand)
-		if !ok {
-			return commands.Result{}, sentinal_errors.ErrInvalidInput
-		}
-		// Real-time signaling - publish directly via SignalingStore
-		if s.signalingStore != nil {
-			if err := s.signalingStore.SendAnswer(ctx, c.CallID.String(), c.FromID.String(), c.ToID.String(), c.SDP); err != nil {
-				return commands.Result{}, err
-			}
-			// Update call status to CONNECTED when answer is received
-			_ = s.signalingStore.UpdateCallStatus(ctx, c.CallID.String(), "CONNECTED")
-		}
-		return commands.Result{AggregateID: c.CallID.String()}, nil
-	}))
-
-	// call.ice - Send WebRTC ICE candidate (real-time signaling via Redis pub/sub)
-	bus.Register("call.ice", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
-		c, ok := cmd.(commands.SendICECandidateCommand)
-		if !ok {
-			return commands.Result{}, sentinal_errors.ErrInvalidInput
-		}
-		// Real-time signaling - publish directly via SignalingStore
-		if s.signalingStore != nil {
-			candidate := &redis.ICECandidate{
-				Candidate:     c.Candidate,
-				SDPMid:        c.SDPMid,
-				SDPMLineIndex: c.SDPMLineIndex,
-			}
-			if err := s.signalingStore.SendICECandidate(ctx, c.CallID.String(), c.FromID.String(), c.ToID.String(), candidate); err != nil {
-				return commands.Result{}, err
-			}
-		}
-		return commands.Result{AggregateID: c.CallID.String()}, nil
-	}))
-
-	// call.record_quality - Record call quality metrics
-	bus.Register("call.record_quality", commands.HandlerFunc(func(ctx context.Context, cmd commands.Command) (commands.Result, error) {
-		c, ok := cmd.(commands.RecordQualityMetricCommand)
-		if !ok {
-			return commands.Result{}, sentinal_errors.ErrInvalidInput
-		}
-		metric := &call.CallQualityMetric{
-			ID:               uuid.New(),
-			CallID:           c.CallID,
-			UserID:           c.UserID,
-			PacketsSent:      c.PacketsSent,
-			PacketsReceived:  c.PacketsReceived,
-			PacketsLost:      c.PacketsLost,
-			JitterMs:         c.JitterMs,
-			RoundTripTimeMs:  c.RoundTripTimeMs,
-			BitrateKbps:      c.BitrateKbps,
-			FrameRate:        c.FrameRate,
-			ResolutionWidth:  c.ResolutionWidth,
-			ResolutionHeight: c.ResolutionHeight,
-			AudioLevel:       c.AudioLevel,
-			ConnectionType:   c.ConnectionType,
-			IceCandidateType: c.ICECandidateType,
-			RecordedAt:       c.RecordedAt,
-		}
-		if metric.RecordedAt.IsZero() {
-			metric.RecordedAt = time.Now()
-		}
-		if err := s.RecordQualityMetric(ctx, metric); err != nil {
-			return commands.Result{}, err
-		}
-		return commands.Result{AggregateID: c.CallID.String(), Payload: metric}, nil
-	}))
+func NewCallService(repo repository.CallRepository, signalingStore *redis.SignalingStore) *CallService {
+	return &CallService{repo: repo, signalingStore: signalingStore}
 }
 
 func (s *CallService) Create(ctx context.Context, c *call.Call) error {
@@ -271,7 +28,19 @@ func (s *CallService) Create(ctx context.Context, c *call.Call) error {
 	if err := s.repo.Create(ctx, c); err != nil {
 		return err
 	}
-	return createOutboxEvent(ctx, s.eventRepo, "call", "call.initiated", c.ID, c)
+	if s.signalingStore != nil {
+		state := &redis.CallState{
+			CallID:         c.ID.String(),
+			ConversationID: c.ConversationID.String(),
+			InitiatorID:    c.InitiatedBy.String(),
+			CallType:       c.Type,
+			Status:         "RINGING",
+			Participants:   map[string]string{c.InitiatedBy.String(): "JOINED"},
+			StartedAt:      c.StartedAt,
+		}
+		_ = s.signalingStore.CreateCallState(ctx, state)
+	}
+	return nil
 }
 
 func (s *CallService) GetByID(ctx context.Context, id uuid.UUID) (call.Call, error) {
@@ -302,7 +71,10 @@ func (s *CallService) MarkConnected(ctx context.Context, callID uuid.UUID) error
 	if err := s.repo.MarkConnected(ctx, callID); err != nil {
 		return err
 	}
-	return createOutboxEvent(ctx, s.eventRepo, "call", "call.connected", callID, map[string]any{"call_id": callID})
+	if s.signalingStore != nil {
+		return s.signalingStore.UpdateCallStatus(ctx, callID.String(), "CONNECTED")
+	}
+	return nil
 }
 
 func (s *CallService) EndCall(ctx context.Context, callID uuid.UUID, reason string) error {
@@ -312,7 +84,11 @@ func (s *CallService) EndCall(ctx context.Context, callID uuid.UUID, reason stri
 	if err := s.repo.EndCall(ctx, callID, reason); err != nil {
 		return err
 	}
-	return createOutboxEvent(ctx, s.eventRepo, "call", "call.ended", callID, map[string]any{"call_id": callID, "reason": reason})
+	if s.signalingStore != nil {
+		_ = s.signalingStore.SendCallEnded(ctx, callID.String(), reason)
+		_ = s.signalingStore.RemoveCallState(ctx, callID.String())
+	}
+	return nil
 }
 
 func (s *CallService) GetCallDuration(ctx context.Context, callID uuid.UUID) (int32, error) {
@@ -320,17 +96,11 @@ func (s *CallService) GetCallDuration(ctx context.Context, callID uuid.UUID) (in
 }
 
 func (s *CallService) AddParticipant(ctx context.Context, p *call.CallParticipant) error {
-	if err := s.repo.AddParticipant(ctx, p); err != nil {
-		return err
-	}
-	return createOutboxEvent(ctx, s.eventRepo, "call", "call.participant_added", p.CallID, p)
+	return s.repo.AddParticipant(ctx, p)
 }
 
 func (s *CallService) RemoveParticipant(ctx context.Context, callID, userID uuid.UUID) error {
-	if err := s.repo.RemoveParticipant(ctx, callID, userID); err != nil {
-		return err
-	}
-	return createOutboxEvent(ctx, s.eventRepo, "call", "call.participant_removed", callID, map[string]any{"call_id": callID, "user_id": userID})
+	return s.repo.RemoveParticipant(ctx, callID, userID)
 }
 
 func (s *CallService) GetCallParticipants(ctx context.Context, callID uuid.UUID) ([]call.CallParticipant, error) {
@@ -415,4 +185,41 @@ func (s *CallService) GetCallServerAssignments(ctx context.Context, callID uuid.
 
 func (s *CallService) RemoveCallServerAssignment(ctx context.Context, callID, serverID uuid.UUID) error {
 	return s.repo.RemoveCallServerAssignment(ctx, callID, serverID)
+}
+
+func (s *CallService) SendOffer(ctx context.Context, callID, fromID, toID uuid.UUID, sdp string) error {
+	if s.signalingStore == nil {
+		return sentinal_errors.ErrInvalidInput
+	}
+	if callID == uuid.Nil || fromID == uuid.Nil || toID == uuid.Nil || sdp == "" {
+		return sentinal_errors.ErrInvalidInput
+	}
+	return s.signalingStore.SendOffer(ctx, callID.String(), fromID.String(), toID.String(), sdp)
+}
+
+func (s *CallService) SendAnswer(ctx context.Context, callID, fromID, toID uuid.UUID, sdp string) error {
+	if s.signalingStore == nil {
+		return sentinal_errors.ErrInvalidInput
+	}
+	if callID == uuid.Nil || fromID == uuid.Nil || toID == uuid.Nil || sdp == "" {
+		return sentinal_errors.ErrInvalidInput
+	}
+	if err := s.signalingStore.SendAnswer(ctx, callID.String(), fromID.String(), toID.String(), sdp); err != nil {
+		return err
+	}
+	return s.signalingStore.UpdateCallStatus(ctx, callID.String(), "CONNECTED")
+}
+
+func (s *CallService) SendICECandidate(ctx context.Context, callID, fromID, toID uuid.UUID, candidate, sdpMid string, sdpMLineIndex int) error {
+	if s.signalingStore == nil {
+		return sentinal_errors.ErrInvalidInput
+	}
+	if callID == uuid.Nil || fromID == uuid.Nil || toID == uuid.Nil || candidate == "" {
+		return sentinal_errors.ErrInvalidInput
+	}
+	return s.signalingStore.SendICECandidate(ctx, callID.String(), fromID.String(), toID.String(), &redis.ICECandidate{
+		Candidate:     candidate,
+		SDPMid:        sdpMid,
+		SDPMLineIndex: sdpMLineIndex,
+	})
 }

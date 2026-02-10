@@ -37,15 +37,6 @@ CREATE INDEX IF NOT EXISTS idx_poll_votes_user ON poll_votes (user_id);
 -- Broadcasts
 CREATE INDEX IF NOT EXISTS idx_broadcast_owner ON broadcast_lists (owner_id);
 
--- Outbox
-CREATE INDEX IF NOT EXISTS idx_outbox_pending ON outbox_events (created_at) WHERE processed_at IS NULL;
-CREATE INDEX IF NOT EXISTS idx_outbox_event_type ON outbox_events (event_type);
-
--- Command Log
-CREATE INDEX IF NOT EXISTS idx_command_log_type ON command_log (command_type);
-
--- Access Policies
-CREATE INDEX IF NOT EXISTS idx_access_policies_actor ON access_policies (actor_type, actor_id);
 
 -- Message User States
 CREATE INDEX IF NOT EXISTS idx_message_user_states_user ON message_user_states (user_id);
@@ -59,9 +50,3 @@ CREATE INDEX IF NOT EXISTS idx_upload_sessions_uploader ON upload_sessions (uplo
 
 -- Call Server Assignments
 CREATE INDEX IF NOT EXISTS idx_call_assignments_server ON call_server_assignments (sfu_server_id);
-
--- Event Subscriptions
-CREATE INDEX IF NOT EXISTS idx_event_subscriptions_type ON event_subscriptions (event_type);
-
--- Outbox Event Deliveries
-CREATE INDEX IF NOT EXISTS idx_outbox_delivery_event ON outbox_event_deliveries (event_id);

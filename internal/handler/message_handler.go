@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"time"
 
-	"sentinal-chat/internal/commands"
 	"sentinal-chat/internal/services"
 	"sentinal-chat/internal/transport/httpdto"
 
@@ -46,7 +45,7 @@ func (h *MessageHandler) Send(c *gin.Context) {
 		return
 	}
 
-	items := make([]commands.CiphertextPayload, 0, len(req.Ciphertexts))
+	items := make([]services.CiphertextPayload, 0, len(req.Ciphertexts))
 	for _, payload := range req.Ciphertexts {
 		recipientDeviceID, err := parseUUID(payload.RecipientDeviceID)
 		if err != nil {
@@ -62,26 +61,22 @@ func (h *MessageHandler) Send(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("ciphertext must be base64", "INVALID_REQUEST"))
 			return
 		}
-		items = append(items, commands.CiphertextPayload{
+		items = append(items, services.CiphertextPayload{
 			RecipientDeviceID: recipientDeviceID,
 			Ciphertext:        ciphertext,
 			Header:            payload.Header,
 		})
 	}
 
-	result, err := h.service.HandleSendMessage(c.Request.Context(), commands.SendMessageCommand{
-		ConversationID:      conversationID,
-		SenderID:            userID,
-		Ciphertexts:         items,
-		MessageType:         req.MessageType,
-		ClientMsgID:         req.ClientMsgID,
-		IdempotencyKeyValue: req.IdempotencyKey,
+	result, err := h.service.SendMessage(c.Request.Context(), services.SendMessageInput{
+		ConversationID: conversationID,
+		SenderID:       userID,
+		Ciphertexts:    items,
+		MessageType:    req.MessageType,
+		ClientMsgID:    req.ClientMsgID,
+		IdempotencyKey: req.IdempotencyKey,
 	})
 	if err != nil {
-		if err == commands.ErrDuplicateCommand {
-			c.JSON(http.StatusConflict, httpdto.NewErrorResponse(err.Error(), "DUPLICATE_COMMAND"))
-			return
-		}
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}

@@ -10,7 +10,6 @@ import (
 	"sentinal-chat/internal/domain/call"
 	"sentinal-chat/internal/domain/conversation"
 	"sentinal-chat/internal/domain/encryption"
-	"sentinal-chat/internal/domain/event"
 	"sentinal-chat/internal/domain/message"
 	"sentinal-chat/internal/domain/upload"
 	"sentinal-chat/internal/domain/user"
@@ -262,33 +261,4 @@ type UploadRepository interface {
 
 	GetStaleUploads(ctx context.Context, olderThan time.Duration) ([]upload.UploadSession, error)
 	DeleteStaleUploads(ctx context.Context, olderThan time.Duration) (int64, error)
-}
-
-type EventRepository interface {
-	CreateOutboxEvent(ctx context.Context, e *event.OutboxEvent) error
-	GetOutboxEventByID(ctx context.Context, id uuid.UUID) (event.OutboxEvent, error)
-	GetPendingOutboxEvents(ctx context.Context, limit int) ([]event.OutboxEvent, error)
-	MarkOutboxEventProcessed(ctx context.Context, id uuid.UUID) error
-	MarkOutboxEventFailed(ctx context.Context, id uuid.UUID, nextRetryAt time.Time, errorMessage string) error
-
-	CreateOutboxEventDelivery(ctx context.Context, d *event.OutboxEventDelivery) error
-	GetOutboxEventDeliveries(ctx context.Context, eventID uuid.UUID) ([]event.OutboxEventDelivery, error)
-
-	CreateCommandLog(ctx context.Context, l *event.CommandLog) error
-	GetCommandLogByID(ctx context.Context, id uuid.UUID) (event.CommandLog, error)
-	GetCommandLogByIdempotencyKey(ctx context.Context, key string) (event.CommandLog, error)
-	UpdateCommandLog(ctx context.Context, l event.CommandLog) error
-	UpdateCommandStatus(ctx context.Context, id uuid.UUID, status string, executedAt time.Time, errorMessage string) error
-
-	CreateAccessPolicy(ctx context.Context, p *event.AccessPolicy) error
-	GetAccessPolicyByID(ctx context.Context, id uuid.UUID) (event.AccessPolicy, error)
-	UpdateAccessPolicy(ctx context.Context, p event.AccessPolicy) error
-	DeleteAccessPolicy(ctx context.Context, id uuid.UUID) error
-	HasAccessPolicy(ctx context.Context, resourceType string, resourceID uuid.UUID, actorType string, actorID uuid.UUID, permission string) (bool, error)
-	ListAccessPolicies(ctx context.Context, resourceType string, resourceID uuid.UUID, actorType string, actorID uuid.UUID, permission string, grantedOnly bool) ([]event.AccessPolicy, error)
-
-	CreateEventSubscription(ctx context.Context, s *event.EventSubscription) error
-	GetEventSubscription(ctx context.Context, subscriberName, eventType string) (event.EventSubscription, error)
-	GetActiveEventSubscriptions(ctx context.Context, eventTypes []string) ([]event.EventSubscription, error)
-	UpdateEventSubscriptionStatus(ctx context.Context, subscriberName, eventType string, isActive bool) error
 }

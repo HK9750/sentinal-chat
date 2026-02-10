@@ -11,7 +11,6 @@ import (
 	"sentinal-chat/internal/domain/broadcast"
 	"sentinal-chat/internal/domain/call"
 	"sentinal-chat/internal/domain/conversation"
-	"sentinal-chat/internal/domain/event"
 	"sentinal-chat/internal/domain/message"
 	"sentinal-chat/internal/domain/user"
 
@@ -114,11 +113,6 @@ func Seed(cfg *SeedConfig) (*SeedResult, error) {
 		// Create sample broadcast lists
 		if err := seedBroadcasts(testUsers); err != nil {
 			return nil, fmt.Errorf("failed to seed broadcasts: %w", err)
-		}
-
-		// Create sample event subscriptions
-		if err := seedEventSubscriptions(); err != nil {
-			return nil, fmt.Errorf("failed to seed event subscriptions: %w", err)
 		}
 
 		// Create sample SFU servers
@@ -677,62 +671,6 @@ func seedBroadcasts(users []*user.User) error {
 	}
 
 	log.Printf("Broadcast list seeded: %s", broadcastList.Name)
-	return nil
-}
-
-// seedEventSubscriptions creates sample event subscriptions
-func seedEventSubscriptions() error {
-	subscriptions := []event.EventSubscription{
-		{
-			ID:             uuid.New(),
-			SubscriberName: "notification-service",
-			EventType:      "message.created",
-			IsActive:       true,
-			CreatedAt:      time.Now(),
-		},
-		{
-			ID:             uuid.New(),
-			SubscriberName: "notification-service",
-			EventType:      "message.read",
-			IsActive:       true,
-			CreatedAt:      time.Now(),
-		},
-		{
-			ID:             uuid.New(),
-			SubscriberName: "analytics-service",
-			EventType:      "user.registered",
-			IsActive:       true,
-			CreatedAt:      time.Now(),
-		},
-		{
-			ID:             uuid.New(),
-			SubscriberName: "analytics-service",
-			EventType:      "call.ended",
-			IsActive:       true,
-			CreatedAt:      time.Now(),
-		},
-		{
-			ID:             uuid.New(),
-			SubscriberName: "search-service",
-			EventType:      "message.created",
-			IsActive:       true,
-			CreatedAt:      time.Now(),
-		},
-	}
-
-	for _, sub := range subscriptions {
-		// Check if exists
-		var existing event.EventSubscription
-		if DB.Where("subscriber_name = ? AND event_type = ?", sub.SubscriberName, sub.EventType).First(&existing).Error == nil {
-			continue
-		}
-
-		if err := DB.Create(&sub).Error; err != nil {
-			return fmt.Errorf("failed to create subscription %s-%s: %w", sub.SubscriberName, sub.EventType, err)
-		}
-	}
-
-	log.Println("Event subscriptions seeded")
 	return nil
 }
 
