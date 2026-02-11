@@ -23,6 +23,7 @@ DROP TABLE IF EXISTS message_mentions;
 DROP TABLE IF EXISTS message_receipts;
 DROP TABLE IF EXISTS message_reactions;
 DROP TABLE IF EXISTS messages;
+DROP TABLE IF EXISTS outbox_events;
 DROP TABLE IF EXISTS conversation_sequences;
 DROP TABLE IF EXISTS participants;
 DROP TABLE IF EXISTS conversations;

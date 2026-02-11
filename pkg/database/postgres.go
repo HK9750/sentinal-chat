@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"sentinal-chat/config"
@@ -18,6 +19,7 @@ import (
 	"sentinal-chat/internal/domain/conversation"
 	"sentinal-chat/internal/domain/encryption"
 	"sentinal-chat/internal/domain/message"
+	"sentinal-chat/internal/domain/outbox"
 	"sentinal-chat/internal/domain/upload"
 	"sentinal-chat/internal/domain/user"
 
@@ -28,7 +30,12 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-var DB *gorm.DB
+// Singleton instance variables
+var (
+	DB     *gorm.DB // Kept for backward compatibility - use GetInstance() for new code
+	dbOnce sync.Once
+	dbCfg  *DatabaseConfig
+)
 
 // DatabaseConfig holds database connection configuration
 type DatabaseConfig struct {
@@ -48,40 +55,61 @@ func DefaultDatabaseConfig() *DatabaseConfig {
 	}
 }
 
-// Connect establishes a connection to the PostgreSQL database
+// GetInstance returns the singleton database instance.
+// Panics if Connect() has not been called.
+// This is the recommended way to access the database in new code.
+func GetInstance() *gorm.DB {
+	if DB == nil {
+		panic("database not initialized. Call Connect() first")
+	}
+	return DB
+}
+
+// IsInitialized returns true if the database has been initialized
+func IsInitialized() bool {
+	return DB != nil
+}
+
+// Connect establishes a connection to the PostgreSQL database.
+// This function is safe to call multiple times - only the first call will create the connection.
 func Connect(cfg *config.Config) {
 	ConnectWithOptions(cfg, DefaultDatabaseConfig())
 }
 
-// ConnectWithOptions establishes a connection with custom configuration
-func ConnectWithOptions(cfg *config.Config, dbCfg *DatabaseConfig) {
-	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=disable TimeZone=UTC",
-		cfg.DBHost, cfg.DBUser, cfg.DBPassword, cfg.DBName, cfg.DBPort)
+// ConnectWithOptions establishes a connection with custom configuration.
+// This function is safe to call multiple times - only the first call will create the connection.
+func ConnectWithOptions(cfg *config.Config, config *DatabaseConfig) {
+	dbOnce.Do(func() {
+		dbCfg = config
+		dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=disable TimeZone=UTC",
+			cfg.DBHost, cfg.DBUser, cfg.DBPassword, cfg.DBName, cfg.DBPort)
 
-	var err error
-	DB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{
-		Logger: logger.Default.LogMode(dbCfg.LogLevel),
+		var err error
+		DB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{
+			Logger: logger.Default.LogMode(config.LogLevel),
+		})
+		if err != nil {
+			log.Fatalf("Failed to connect to database: %v", err)
+		}
+
+		sqlDB, err := DB.DB()
+		if err != nil {
+			log.Fatalf("Failed to get generic database object: %v", err)
+		}
+
+		// Connection pool settings
+		sqlDB.SetMaxIdleConns(config.MaxIdleConns)
+		sqlDB.SetMaxOpenConns(config.MaxOpenConns)
+		sqlDB.SetConnMaxLifetime(config.ConnMaxLifetime)
+
+		log.Println("Database connection established (singleton)")
 	})
-	if err != nil {
-		log.Fatalf("Failed to connect to database: %v", err)
-	}
-
-	sqlDB, err := DB.DB()
-	if err != nil {
-		log.Fatalf("Failed to get generic database object: %v", err)
-	}
-
-	// Connection pool settings
-	sqlDB.SetMaxIdleConns(dbCfg.MaxIdleConns)
-	sqlDB.SetMaxOpenConns(dbCfg.MaxOpenConns)
-	sqlDB.SetConnMaxLifetime(dbCfg.ConnMaxLifetime)
-
-	log.Println("Database connection established")
 }
 
-// GetDB returns the current database instance
+// GetDB returns the current database instance.
+// Kept for backward compatibility - use GetInstance() for new code.
 func GetDB() *gorm.DB {
-	return DB
+	return GetInstance()
 }
 
 // Ping checks if the database connection is alive
@@ -227,6 +255,9 @@ func MigrateDB(db *gorm.DB) error {
 
 		// Upload domain
 		&upload.UploadSession{},
+
+		// Outbox domain
+		&outbox.OutboxEvent{},
 	}
 
 	if err := db.AutoMigrate(entities...); err != nil {

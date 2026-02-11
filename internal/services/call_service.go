@@ -10,15 +10,18 @@ import (
 	sentinal_errors "sentinal-chat/pkg/errors"
 
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 type CallService struct {
+	db             *gorm.DB
 	repo           repository.CallRepository
 	signalingStore *redis.SignalingStore
+	eventPublisher *EventPublisher
 }
 
-func NewCallService(repo repository.CallRepository, signalingStore *redis.SignalingStore) *CallService {
-	return &CallService{repo: repo, signalingStore: signalingStore}
+func NewCallService(db *gorm.DB, repo repository.CallRepository, signalingStore *redis.SignalingStore, eventPublisher *EventPublisher) *CallService {
+	return &CallService{db: db, repo: repo, signalingStore: signalingStore, eventPublisher: eventPublisher}
 }
 
 func (s *CallService) Create(ctx context.Context, c *call.Call) error {
@@ -81,13 +84,28 @@ func (s *CallService) EndCall(ctx context.Context, callID uuid.UUID, reason stri
 	if reason == "" {
 		return sentinal_errors.ErrInvalidInput
 	}
+
+	call, err := s.repo.GetByID(ctx, callID)
+	if err != nil {
+		return err
+	}
+
 	if err := s.repo.EndCall(ctx, callID, reason); err != nil {
 		return err
 	}
+
 	if s.signalingStore != nil {
 		_ = s.signalingStore.SendCallEnded(ctx, callID.String(), reason)
 		_ = s.signalingStore.RemoveCallState(ctx, callID.String())
 	}
+
+	if s.eventPublisher != nil && s.db != nil {
+		duration, _ := s.repo.GetCallDuration(ctx, callID)
+		return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			return s.eventPublisher.PublishCallEnded(ctx, tx, callID, call.ConversationID, call.InitiatedBy, reason, int(duration))
+		})
+	}
+
 	return nil
 }
 
@@ -142,7 +160,18 @@ func (s *CallService) SendOffer(ctx context.Context, callID, fromID, toID uuid.U
 	if callID == uuid.Nil || fromID == uuid.Nil || toID == uuid.Nil || sdp == "" {
 		return sentinal_errors.ErrInvalidInput
 	}
-	return s.signalingStore.SendOffer(ctx, callID.String(), fromID.String(), toID.String(), sdp)
+
+	if err := s.signalingStore.SendOffer(ctx, callID.String(), fromID.String(), toID.String(), sdp); err != nil {
+		return err
+	}
+
+	if s.eventPublisher != nil && s.db != nil {
+		return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			return s.eventPublisher.PublishCallOffer(ctx, tx, callID, fromID, toID, sdp)
+		})
+	}
+
+	return nil
 }
 
 func (s *CallService) SendAnswer(ctx context.Context, callID, fromID, toID uuid.UUID, sdp string) error {
@@ -155,7 +184,17 @@ func (s *CallService) SendAnswer(ctx context.Context, callID, fromID, toID uuid.
 	if err := s.signalingStore.SendAnswer(ctx, callID.String(), fromID.String(), toID.String(), sdp); err != nil {
 		return err
 	}
-	return s.signalingStore.UpdateCallStatus(ctx, callID.String(), "CONNECTED")
+	if err := s.signalingStore.UpdateCallStatus(ctx, callID.String(), "CONNECTED"); err != nil {
+		return err
+	}
+
+	if s.eventPublisher != nil && s.db != nil {
+		return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			return s.eventPublisher.PublishCallAnswer(ctx, tx, callID, fromID, toID, sdp)
+		})
+	}
+
+	return nil
 }
 
 func (s *CallService) SendICECandidate(ctx context.Context, callID, fromID, toID uuid.UUID, candidate, sdpMid string, sdpMLineIndex int) error {
@@ -165,9 +204,19 @@ func (s *CallService) SendICECandidate(ctx context.Context, callID, fromID, toID
 	if callID == uuid.Nil || fromID == uuid.Nil || toID == uuid.Nil || candidate == "" {
 		return sentinal_errors.ErrInvalidInput
 	}
-	return s.signalingStore.SendICECandidate(ctx, callID.String(), fromID.String(), toID.String(), &redis.ICECandidate{
+	if err := s.signalingStore.SendICECandidate(ctx, callID.String(), fromID.String(), toID.String(), &redis.ICECandidate{
 		Candidate:     candidate,
 		SDPMid:        sdpMid,
 		SDPMLineIndex: sdpMLineIndex,
-	})
+	}); err != nil {
+		return err
+	}
+
+	if s.eventPublisher != nil && s.db != nil {
+		return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			return s.eventPublisher.PublishCallICE(ctx, tx, callID, fromID, toID, candidate)
+		})
+	}
+
+	return nil
 }

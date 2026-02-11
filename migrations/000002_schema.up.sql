@@ -366,6 +366,20 @@ CREATE TABLE IF NOT EXISTS onetime_prekeys (
   UNIQUE (device_id, key_id)
 );
 
+CREATE TABLE outbox_events (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    event_type VARCHAR(50) NOT NULL,
+    aggregate_type VARCHAR(50) NOT NULL,
+    aggregate_id VARCHAR(36) NOT NULL,
+    payload JSONB NOT NULL,
+    status outbox_status DEFAULT 'PENDING',
+    retry_count INT DEFAULT 0,
+    error TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    processed_at TIMESTAMP
+);
+
 -- Additional Tables
 CREATE TABLE IF NOT EXISTS message_user_states (
   message_id UUID NOT NULL REFERENCES messages(id) ON DELETE CASCADE,

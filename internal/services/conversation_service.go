@@ -14,8 +14,9 @@ import (
 )
 
 type ConversationService struct {
-	db   *gorm.DB
-	repo repository.ConversationRepository
+	db             *gorm.DB
+	repo           repository.ConversationRepository
+	eventPublisher *EventPublisher
 }
 
 type CreateConversationInput struct {
@@ -26,8 +27,8 @@ type CreateConversationInput struct {
 	ParticipantIDs []uuid.UUID
 }
 
-func NewConversationService(db *gorm.DB, repo repository.ConversationRepository) *ConversationService {
-	return &ConversationService{db: db, repo: repo}
+func NewConversationService(db *gorm.DB, repo repository.ConversationRepository, eventPublisher *EventPublisher) *ConversationService {
+	return &ConversationService{db: db, repo: repo, eventPublisher: eventPublisher}
 }
 
 func (s *ConversationService) Create(ctx context.Context, input CreateConversationInput) (conversation.Conversation, error) {
@@ -208,6 +209,26 @@ func (s *ConversationService) GetConversationSequence(ctx context.Context, conve
 
 func (s *ConversationService) IncrementSequence(ctx context.Context, conversationID uuid.UUID) (int64, error) {
 	return s.repo.IncrementSequence(ctx, conversationID)
+}
+
+func (s *ConversationService) StartTyping(ctx context.Context, conversationID, userID uuid.UUID, displayName string) error {
+	if s.eventPublisher == nil || s.db == nil {
+		return nil
+	}
+
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return s.eventPublisher.PublishTypingStarted(ctx, tx, conversationID, userID, displayName)
+	})
+}
+
+func (s *ConversationService) StopTyping(ctx context.Context, conversationID, userID uuid.UUID, displayName string) error {
+	if s.eventPublisher == nil || s.db == nil {
+		return nil
+	}
+
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return s.eventPublisher.PublishTypingStopped(ctx, tx, conversationID, userID, displayName)
+	})
 }
 
 func convNullString(value string) sql.NullString {

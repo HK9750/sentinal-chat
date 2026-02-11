@@ -15,8 +15,6 @@ CREATE INDEX IF NOT EXISTS idx_participants_role ON participants (conversation_i
 -- Messages
 CREATE INDEX IF NOT EXISTS idx_messages_conv_seq ON messages (conversation_id, seq_id DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages (sender_id);
--- CREATE INDEX IF NOT EXISTS idx_messages_content_gin ON messages USING gin(to_tsvector('english', content))
---   WHERE content IS NOT NULL AND deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_messages_expires ON messages (expires_at) WHERE expires_at IS NOT NULL;
 
 -- Receipts & reactions
@@ -47,3 +45,9 @@ CREATE INDEX IF NOT EXISTS idx_conversation_clears_user ON conversation_clears (
 
 -- Upload Sessions
 CREATE INDEX IF NOT EXISTS idx_upload_sessions_uploader ON upload_sessions (uploader_id);
+
+-- Outbox Session
+CREATE INDEX IF NOT EXISTS idx_outbox_status ON outbox_events(status);
+CREATE INDEX IF NOT EXISTS idx_outbox_created_at ON outbox_events(created_at);
+CREATE INDEX IF NOT EXISTS idx_outbox_pending ON outbox_events(status, retry_count) WHERE status = 'PENDING';
+CREATE INDEX IF NOT EXISTS idx_outbox_aggregate ON outbox_events(aggregate_type, aggregate_id);

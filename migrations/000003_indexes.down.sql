@@ -11,7 +11,6 @@ DROP INDEX IF EXISTS idx_attachments_uploader;
 DROP INDEX IF EXISTS idx_reactions_message;
 DROP INDEX IF EXISTS idx_receipts_message;
 DROP INDEX IF EXISTS idx_messages_expires;
--- DROP INDEX IF EXISTS idx_messages_content_gin;
 DROP INDEX IF EXISTS idx_messages_sender;
 DROP INDEX IF EXISTS idx_messages_conv_seq;
 DROP INDEX IF EXISTS idx_participants_role;
@@ -22,3 +21,7 @@ DROP INDEX IF EXISTS idx_sessions_user;
 DROP INDEX IF EXISTS idx_users_email;
 DROP INDEX IF EXISTS idx_users_username;
 DROP INDEX IF EXISTS idx_users_phone;
+DROP INDEX IF EXISTS idx_outbox_status
+DROP INDEX IF EXISTS idx_outbox_created_at
+DROP INDEX IF EXISTS idx_outbox_pending
+DROP INDEX IF EXISTS idx_outbox_aggregate

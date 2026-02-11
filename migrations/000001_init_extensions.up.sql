@@ -75,6 +75,12 @@ EXCEPTION
 END $$;
 
 DO $$ BEGIN
+    CREATE TYPE outbox_status AS ENUM ('PENDING','PROCESSING','COMPLETED','FAILED');
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+
+DO $$ BEGIN
     CREATE TYPE call_end_reason AS ENUM ('COMPLETED', 'MISSED', 'DECLINED', 'FAILED', 'TIMEOUT', 'NETWORK_ERROR');
 EXCEPTION
     WHEN duplicate_object THEN null;

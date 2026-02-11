@@ -5,12 +5,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 
 	"sentinal-chat/internal/domain/broadcast"
 	"sentinal-chat/internal/domain/call"
 	"sentinal-chat/internal/domain/conversation"
 	"sentinal-chat/internal/domain/encryption"
 	"sentinal-chat/internal/domain/message"
+	"sentinal-chat/internal/domain/outbox"
 	"sentinal-chat/internal/domain/upload"
 	"sentinal-chat/internal/domain/user"
 )
@@ -245,4 +247,13 @@ type UploadRepository interface {
 
 	GetStaleUploads(ctx context.Context, olderThan time.Duration) ([]upload.UploadSession, error)
 	DeleteStaleUploads(ctx context.Context, olderThan time.Duration) (int64, error)
+}
+
+type OutboxRepository interface {
+	Create(ctx context.Context, tx *gorm.DB, event *outbox.OutboxEvent) error
+	GetPending(ctx context.Context, limit int) ([]outbox.OutboxEvent, error)
+	MarkProcessing(ctx context.Context, id string) error
+	MarkCompleted(ctx context.Context, id string) error
+	MarkFailed(ctx context.Context, id string, errorMsg string) error
+	IncrementRetry(ctx context.Context, id string) error
 }

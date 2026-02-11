@@ -2,6 +2,7 @@ package logger
 
 import (
 	"context"
+	"sync"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -16,6 +17,42 @@ var (
 	DevelopmentMode = "development"
 )
 
+// Singleton instance variables
+var (
+	globalLogger      *Logger
+	loggerOnce        sync.Once
+	defaultLoggerMode = DevelopmentMode
+)
+
+// Init initializes the global logger singleton with the specified mode.
+// This function is safe to call multiple times - only the first call will create the logger.
+// Mode can be "production" or "development".
+func Init(mode string) {
+	loggerOnce.Do(func() {
+		defaultLoggerMode = mode
+		globalLogger = New(mode)
+	})
+}
+
+// InitWithConfig initializes the global logger with a custom zap configuration.
+// This function is safe to call multiple times - only the first call will create the logger.
+func InitWithConfig(config zap.Config) {
+	loggerOnce.Do(func() {
+		zapLogger, err := config.Build(zap.AddCallerSkip(1))
+		if err != nil {
+			panic(err)
+		}
+		globalLogger = &Logger{Logger: zapLogger}
+	})
+}
+
+// IsInitialized returns true if the global logger has been initialized
+func IsInitialized() bool {
+	return globalLogger != nil
+}
+
+// New creates a new Logger instance (not singleton - use for custom loggers).
+// For the global singleton logger, use Init() and GetGlobalLogger() instead.
 func New(mode string) *Logger {
 	var config zap.Config
 	if mode == ProductionMode {
@@ -50,14 +87,20 @@ func (l *Logger) withContext(ctx context.Context) *zap.Logger {
 	return l.Logger.With(fields...)
 }
 
-var logger *Logger
-
+// SetGlobalLogger sets a custom logger as the global instance.
+// Use this if you need custom configuration. For standard initialization, use Init().
 func SetGlobalLogger(l *Logger) {
-	logger = l
+	globalLogger = l
 }
 
+// GetGlobalLogger returns the global logger instance.
+// If Init() has not been called, it will auto-initialize with Development mode.
+// This ensures the logger is always available, but explicit initialization is recommended.
 func GetGlobalLogger() *Logger {
-	return logger
+	if globalLogger == nil {
+		Init(defaultLoggerMode)
+	}
+	return globalLogger
 }
 
 func (l *Logger) Infof(template string, args ...interface{}) {

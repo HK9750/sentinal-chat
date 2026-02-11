@@ -19,6 +19,7 @@ type MessageService struct {
 	db               *gorm.DB
 	messageRepo      repository.MessageRepository
 	conversationRepo repository.ConversationRepository
+	eventPublisher   *EventPublisher
 }
 
 type CiphertextPayload struct {
@@ -37,11 +38,12 @@ type SendMessageInput struct {
 	Metadata       map[string]interface{}
 }
 
-func NewMessageService(db *gorm.DB, messageRepo repository.MessageRepository, conversationRepo repository.ConversationRepository) *MessageService {
+func NewMessageService(db *gorm.DB, messageRepo repository.MessageRepository, conversationRepo repository.ConversationRepository, eventPublisher *EventPublisher) *MessageService {
 	return &MessageService{
 		db:               db,
 		messageRepo:      messageRepo,
 		conversationRepo: conversationRepo,
+		eventPublisher:   eventPublisher,
 	}
 }
 
@@ -108,11 +110,55 @@ func (s *MessageService) RemoveReaction(ctx context.Context, messageID, userID u
 }
 
 func (s *MessageService) MarkAsRead(ctx context.Context, messageID, userID uuid.UUID) error {
-	return s.messageRepo.MarkAsRead(ctx, messageID, userID)
+	msg, err := s.messageRepo.GetByID(ctx, messageID)
+	if err != nil {
+		return err
+	}
+
+	if s.db == nil {
+		return s.messageRepo.MarkAsRead(ctx, messageID, userID)
+	}
+
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		msgRepo := repository.NewMessageRepository(tx)
+		if err := msgRepo.MarkAsRead(ctx, messageID, userID); err != nil {
+			return err
+		}
+
+		if s.eventPublisher != nil {
+			if err := s.eventPublisher.PublishMessageRead(ctx, tx, messageID, msg.ConversationID, userID); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
 }
 
 func (s *MessageService) MarkAsDelivered(ctx context.Context, messageID, userID uuid.UUID) error {
-	return s.messageRepo.MarkAsDelivered(ctx, messageID, userID)
+	msg, err := s.messageRepo.GetByID(ctx, messageID)
+	if err != nil {
+		return err
+	}
+
+	if s.db == nil {
+		return s.messageRepo.MarkAsDelivered(ctx, messageID, userID)
+	}
+
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		msgRepo := repository.NewMessageRepository(tx)
+		if err := msgRepo.MarkAsDelivered(ctx, messageID, userID); err != nil {
+			return err
+		}
+
+		if s.eventPublisher != nil {
+			if err := s.eventPublisher.PublishMessageDelivered(ctx, tx, messageID, msg.ConversationID, userID); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
 }
 
 func (s *MessageService) MarkAsPlayed(ctx context.Context, messageID, userID uuid.UUID) error {
@@ -324,6 +370,14 @@ func (s *MessageService) executeSendMessage(ctx context.Context, input SendMessa
 			return err
 		}
 		result = res
+
+		// Write to outbox for reliable event delivery
+		if s.eventPublisher != nil {
+			if err := s.eventPublisher.PublishMessageNew(ctx, tx, res.ID, res.ConversationID, res.SenderID); err != nil {
+				return err
+			}
+		}
+
 		return nil
 	})
 	if err != nil {
