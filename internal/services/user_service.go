@@ -1,3 +1,4 @@
+// Package services provides business logic for chat operations.
 package services
 
 import (
@@ -11,10 +12,12 @@ import (
 	"github.com/google/uuid"
 )
 
+// UserService manages user profiles, contacts, devices, and sessions.
 type UserService struct {
 	repo repository.UserRepository
 }
 
+// NewUserService creates a user service.
 func NewUserService(repo repository.UserRepository) *UserService {
 	return &UserService{repo: repo}
 }

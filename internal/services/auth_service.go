@@ -1,3 +1,4 @@
+// Package services provides business logic for chat operations.
 package services
 
 import (
@@ -21,6 +22,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+// AuthService handles user authentication and JWT management.
 type AuthService struct {
 	userRepo   repository.UserRepository
 	jwtSecret  []byte
@@ -28,6 +30,7 @@ type AuthService struct {
 	refreshTTL time.Duration
 }
 
+// NewAuthService creates an auth service with JWT configuration.
 func NewAuthService(userRepo repository.UserRepository, cfg *config.Config) *AuthService {
 	return &AuthService{
 		userRepo:   userRepo,

@@ -1,3 +1,4 @@
+// Package handler provides HTTP handlers for API endpoints.
 package handler
 
 import (
@@ -9,14 +10,17 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// AuthHandler handles authentication HTTP endpoints.
 type AuthHandler struct {
 	service *services.AuthService
 }
 
+// NewAuthHandler creates an auth handler.
 func NewAuthHandler(service *services.AuthService) *AuthHandler {
 	return &AuthHandler{service: service}
 }
 
+// Register handles user registration.
 func (h *AuthHandler) Register(c *gin.Context) {
 	var req httpdto.RegisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -42,6 +46,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(res))
 }
 
+// Login handles user authentication.
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req httpdto.LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -64,6 +69,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(res))
 }
 
+// Refresh handles token refresh.
 func (h *AuthHandler) Refresh(c *gin.Context) {
 	var req httpdto.RefreshRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -83,6 +89,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(res))
 }
 
+// Logout handles user logout.
 func (h *AuthHandler) Logout(c *gin.Context) {
 	var req httpdto.LogoutRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -98,6 +105,7 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	c.JSON(http.StatusOK, httpdto.NewSuccessResponse[any](nil))
 }
 
+// LogoutAll handles logout from all sessions.
 func (h *AuthHandler) LogoutAll(c *gin.Context) {
 	userID, ok := services.UserIDFromContext(c.Request.Context())
 	if !ok {
@@ -113,6 +121,7 @@ func (h *AuthHandler) LogoutAll(c *gin.Context) {
 	c.JSON(http.StatusOK, httpdto.NewSuccessResponse[any](nil))
 }
 
+// Sessions lists all active user sessions.
 func (h *AuthHandler) Sessions(c *gin.Context) {
 	userID, ok := services.UserIDFromContext(c.Request.Context())
 	if !ok {

@@ -1,3 +1,4 @@
+// Package services provides business logic for chat operations.
 package services
 
 import (
@@ -11,10 +12,12 @@ import (
 	"github.com/google/uuid"
 )
 
+// EncryptionService manages Signal Protocol keys and key bundles.
 type EncryptionService struct {
 	repo repository.EncryptionRepository
 }
 
+// KeyBundle contains all public keys needed for E2EE session setup.
 type KeyBundle struct {
 	UserID                uuid.UUID `json:"user_id"`
 	DeviceID              uuid.UUID `json:"device_id"`
@@ -26,6 +29,7 @@ type KeyBundle struct {
 	OneTimePreKey         []byte    `json:"one_time_prekey,omitempty"`
 }
 
+// NewEncryptionService creates an encryption service.
 func NewEncryptionService(repo repository.EncryptionRepository) *EncryptionService {
 	return &EncryptionService{repo: repo}
 }
@@ -90,6 +94,7 @@ func (s *EncryptionService) HasActiveKeys(ctx context.Context, userID uuid.UUID,
 	return s.repo.HasActiveKeys(ctx, userID, deviceID)
 }
 
+// GetKeyBundle retrieves a key bundle for initiating E2EE with a user.
 func (s *EncryptionService) GetKeyBundle(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID, consumerID uuid.UUID, consumerDeviceID uuid.UUID) (KeyBundle, error) {
 	if owned, err := s.repo.IsDeviceOwnedByUser(ctx, consumerID, consumerDeviceID); err != nil {
 		return KeyBundle{}, err

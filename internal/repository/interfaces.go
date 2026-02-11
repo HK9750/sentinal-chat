@@ -1,3 +1,4 @@
+// Package repository defines data access interfaces.
 package repository
 
 import (
@@ -18,6 +19,7 @@ import (
 	"sentinal-chat/internal/domain/user"
 )
 
+// UserRepository manages user data and related entities.
 type UserRepository interface {
 	Create(ctx context.Context, u *user.User) error
 	GetAllUsers(ctx context.Context, page, limit int) ([]user.User, int64, error)
@@ -63,6 +65,7 @@ type UserRepository interface {
 	CleanExpiredSessions(ctx context.Context) error
 }
 
+// ConversationRepository manages conversations and participants.
 type ConversationRepository interface {
 	Create(ctx context.Context, c *conversation.Conversation) error
 	GetByID(ctx context.Context, id uuid.UUID) (conversation.Conversation, error)
@@ -97,6 +100,7 @@ type ConversationRepository interface {
 	IncrementSequence(ctx context.Context, conversationID uuid.UUID) (int64, error)
 }
 
+// MessageRepository manages messages and related data.
 type MessageRepository interface {
 	Create(ctx context.Context, m *message.Message) error
 	GetByID(ctx context.Context, id uuid.UUID) (message.Message, error)

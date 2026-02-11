@@ -1,3 +1,4 @@
+// Package services provides business logic for chat operations.
 package services
 
 import (
@@ -13,12 +14,14 @@ import (
 	"gorm.io/gorm"
 )
 
+// ConversationService manages chat conversations and participants.
 type ConversationService struct {
 	db             *gorm.DB
 	repo           repository.ConversationRepository
 	eventPublisher *EventPublisher
 }
 
+// CreateConversationInput contains data needed to create a conversation.
 type CreateConversationInput struct {
 	Type           string
 	Subject        string
@@ -27,10 +30,12 @@ type CreateConversationInput struct {
 	ParticipantIDs []uuid.UUID
 }
 
+// NewConversationService creates a conversation service with dependencies.
 func NewConversationService(db *gorm.DB, repo repository.ConversationRepository, eventPublisher *EventPublisher) *ConversationService {
 	return &ConversationService{db: db, repo: repo, eventPublisher: eventPublisher}
 }
 
+// Create validates input and creates a new conversation.
 func (s *ConversationService) Create(ctx context.Context, input CreateConversationInput) (conversation.Conversation, error) {
 	if input.CreatorID == uuid.Nil {
 		return conversation.Conversation{}, sentinal_errors.ErrInvalidInput
@@ -47,6 +52,7 @@ func (s *ConversationService) Create(ctx context.Context, input CreateConversati
 	return s.executeCreate(ctx, input)
 }
 
+// executeCreate runs the conversation creation in a transaction.
 func (s *ConversationService) executeCreate(ctx context.Context, input CreateConversationInput) (conversation.Conversation, error) {
 	if s.db == nil {
 		return s.createDirect(ctx, input)
@@ -74,6 +80,7 @@ func (s *ConversationService) executeCreate(ctx context.Context, input CreateCon
 	return result, nil
 }
 
+// createDirect creates conversation and adds participants.
 func (s *ConversationService) createDirect(ctx context.Context, input CreateConversationInput) (conversation.Conversation, error) {
 	conv := conversation.Conversation{
 		ID:               uuid.New(),

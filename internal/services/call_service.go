@@ -1,3 +1,4 @@
+// Package services provides business logic for chat operations.
 package services
 
 import (
@@ -13,6 +14,7 @@ import (
 	"gorm.io/gorm"
 )
 
+// CallService handles voice/video calls and WebRTC signaling.
 type CallService struct {
 	db             *gorm.DB
 	repo           repository.CallRepository
@@ -20,6 +22,7 @@ type CallService struct {
 	eventPublisher *EventPublisher
 }
 
+// NewCallService creates a call service with dependencies.
 func NewCallService(db *gorm.DB, repo repository.CallRepository, signalingStore *redis.SignalingStore, eventPublisher *EventPublisher) *CallService {
 	return &CallService{db: db, repo: repo, signalingStore: signalingStore, eventPublisher: eventPublisher}
 }

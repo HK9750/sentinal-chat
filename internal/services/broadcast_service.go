@@ -1,3 +1,4 @@
+// Package services provides business logic for chat operations.
 package services
 
 import (
@@ -9,10 +10,12 @@ import (
 	"github.com/google/uuid"
 )
 
+// BroadcastService manages broadcast lists for bulk messaging.
 type BroadcastService struct {
 	repo repository.BroadcastRepository
 }
 
+// NewBroadcastService creates a broadcast service.
 func NewBroadcastService(repo repository.BroadcastRepository) *BroadcastService {
 	return &BroadcastService{repo: repo}
 }

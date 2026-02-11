@@ -1,3 +1,4 @@
+// Package services provides business logic for chat operations.
 package services
 
 import (
@@ -15,6 +16,7 @@ import (
 	"gorm.io/gorm"
 )
 
+// MessageService handles message operations and E2EE ciphertext management.
 type MessageService struct {
 	db               *gorm.DB
 	messageRepo      repository.MessageRepository
@@ -23,12 +25,14 @@ type MessageService struct {
 	commandExecutor  *CommandExecutor
 }
 
+// CiphertextPayload contains encrypted data for a specific device.
 type CiphertextPayload struct {
 	RecipientDeviceID uuid.UUID
 	Ciphertext        []byte
 	Header            map[string]interface{}
 }
 
+// SendMessageInput contains all data needed to send an E2EE message.
 type SendMessageInput struct {
 	ConversationID uuid.UUID
 	SenderID       uuid.UUID
@@ -39,6 +43,7 @@ type SendMessageInput struct {
 	Metadata       map[string]interface{}
 }
 
+// NewMessageService creates a message service with all dependencies.
 func NewMessageService(db *gorm.DB, messageRepo repository.MessageRepository, conversationRepo repository.ConversationRepository, eventPublisher *EventPublisher, commandExecutor *CommandExecutor) *MessageService {
 	return &MessageService{
 		db:               db,
@@ -49,10 +54,12 @@ func NewMessageService(db *gorm.DB, messageRepo repository.MessageRepository, co
 	}
 }
 
+// SendMessage creates and stores a new E2EE message.
 func (s *MessageService) SendMessage(ctx context.Context, input SendMessageInput) (message.Message, error) {
 	return s.executeSendMessage(ctx, input)
 }
 
+// GetConversationMessages retrieves messages with pagination and access control.
 func (s *MessageService) GetConversationMessages(ctx context.Context, conversationID uuid.UUID, beforeSeq int64, limit int, userID uuid.UUID) ([]message.Message, error) {
 	if s.conversationRepo == nil {
 		return nil, sentinal_errors.ErrForbidden
@@ -327,10 +334,12 @@ func (s *MessageService) GetUserVotes(ctx context.Context, pollID, userID uuid.U
 	return s.messageRepo.GetUserVotes(ctx, pollID, userID)
 }
 
+// DeleteExpiredMessages removes messages past their expiry date.
 func (s *MessageService) DeleteExpiredMessages(ctx context.Context) (int64, error) {
 	return s.messageRepo.DeleteExpiredMessages(ctx)
 }
 
+// executeSendMessage validates and creates a message within a transaction.
 func (s *MessageService) executeSendMessage(ctx context.Context, input SendMessageInput) (message.Message, error) {
 	if input.ConversationID == uuid.Nil || input.SenderID == uuid.Nil {
 		return message.Message{}, sentinal_errors.ErrInvalidInput
@@ -388,6 +397,7 @@ func (s *MessageService) executeSendMessage(ctx context.Context, input SendMessa
 	return result, nil
 }
 
+// executeSendMessageDirect creates message and ciphertexts without transaction.
 func (s *MessageService) executeSendMessageDirect(ctx context.Context, input SendMessageInput) (message.Message, error) {
 	msg := message.Message{
 		ID:             uuid.New(),
@@ -456,6 +466,7 @@ func (s *MessageService) executeSendMessageDirect(ctx context.Context, input Sen
 	return msg, nil
 }
 
+// lookupUserIDByDevice finds the user who owns a device.
 func (s *MessageService) lookupUserIDByDevice(ctx context.Context, deviceID uuid.UUID) (uuid.UUID, error) {
 	if s.db == nil {
 		return uuid.Nil, sentinal_errors.ErrInvalidInput

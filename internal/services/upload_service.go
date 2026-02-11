@@ -1,3 +1,4 @@
+// Package services provides business logic for chat operations.
 package services
 
 import (
@@ -10,10 +11,12 @@ import (
 	"github.com/google/uuid"
 )
 
+// UploadService manages file upload sessions.
 type UploadService struct {
 	repo repository.UploadRepository
 }
 
+// NewUploadService creates an upload service.
 func NewUploadService(repo repository.UploadRepository) *UploadService {
 	return &UploadService{repo: repo}
 }
