@@ -16,6 +16,7 @@ import (
 	"sentinal-chat/config"
 	"sentinal-chat/internal/domain/broadcast"
 	"sentinal-chat/internal/domain/call"
+	"sentinal-chat/internal/domain/command"
 	"sentinal-chat/internal/domain/conversation"
 	"sentinal-chat/internal/domain/encryption"
 	"sentinal-chat/internal/domain/message"
@@ -258,6 +259,11 @@ func MigrateDB(db *gorm.DB) error {
 
 		// Outbox domain
 		&outbox.OutboxEvent{},
+
+		// Command domain
+		&command.CommandLog{},
+		&command.ScheduledMessage{},
+		&command.MessageVersion{},
 	}
 
 	if err := db.AutoMigrate(entities...); err != nil {

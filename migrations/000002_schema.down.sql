@@ -1,3 +1,6 @@
+DROP TABLE IF EXISTS message_versions;
+DROP TABLE IF EXISTS scheduled_messages;
+DROP TABLE IF EXISTS command_logs;
 DROP TABLE IF EXISTS upload_sessions;
 DROP TABLE IF EXISTS conversation_clears;
 DROP TABLE IF EXISTS message_user_states;

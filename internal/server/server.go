@@ -69,7 +69,7 @@ func New(cfg *config.Config, l *logger.Logger) *Server {
 	}
 }
 
-func (s *Server) SetupRoutes(handlers *Handlers, authService *services.AuthService, rateLimiter *redis.RateLimiter, cacheStore *redis.CacheStore) {
+func (s *Server) SetupRoutes(handlers *Handlers, authService *services.AuthService, rateLimiter *redis.RateLimiter, cacheStore *redis.CacheStore, wsHandler *WebSocketHandler) {
 	s.engine.Use(middleware.RequestIDMiddleware())
 	s.engine.Use(middleware.CORSMiddleware())
 	s.engine.Use(middleware.LoggingMiddleware(s.logger))
@@ -82,6 +82,11 @@ func (s *Server) SetupRoutes(handlers *Handlers, authService *services.AuthServi
 
 	// Store cacheStore reference for potential future use
 	_ = cacheStore
+
+	// WebSocket endpoint
+	if wsHandler != nil {
+		s.engine.GET("/v1/ws", wsHandler.Handle)
+	}
 
 	s.engine.GET("/ping", func(c *gin.Context) {
 		c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"message": "pong"}))

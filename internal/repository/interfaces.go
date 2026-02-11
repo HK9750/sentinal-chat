@@ -9,6 +9,7 @@ import (
 
 	"sentinal-chat/internal/domain/broadcast"
 	"sentinal-chat/internal/domain/call"
+	"sentinal-chat/internal/domain/command"
 	"sentinal-chat/internal/domain/conversation"
 	"sentinal-chat/internal/domain/encryption"
 	"sentinal-chat/internal/domain/message"
@@ -256,4 +257,13 @@ type OutboxRepository interface {
 	MarkCompleted(ctx context.Context, id string) error
 	MarkFailed(ctx context.Context, id string, errorMsg string) error
 	IncrementRetry(ctx context.Context, id string) error
+}
+
+type CommandRepository interface {
+	CreateLog(ctx context.Context, log *command.CommandLog) error
+	UpdateLog(ctx context.Context, log *command.CommandLog) error
+	GetLogByID(ctx context.Context, id uuid.UUID) (command.CommandLog, error)
+	GetPendingCommands(ctx context.Context, limit int) ([]command.CommandLog, error)
+	GetCommandsByUser(ctx context.Context, userID uuid.UUID, limit int) ([]command.CommandLog, error)
+	CanUndo(ctx context.Context, commandID uuid.UUID, userID uuid.UUID) (bool, error)
 }

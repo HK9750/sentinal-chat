@@ -411,3 +411,43 @@ CREATE TABLE IF NOT EXISTS upload_sessions (
   updated_at TIMESTAMP DEFAULT NOW()
 );
 
+-- Command Log table for audit trail and undo
+CREATE TABLE IF NOT EXISTS command_logs (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  command_type VARCHAR(50) NOT NULL,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  status command_status NULL DEFAULT 'PENDING',
+  payload JSONB NOT NULL,
+  result JSONB,
+  undo_data JSONB,
+  error_message TEXT,
+  execution_time_ms INT,
+  created_at TIMESTAMP DEFAULT NOW(),
+  executed_at TIMESTAMP,
+  undone_at TIMESTAMP
+);
+
+-- Scheduled messages for delayed delivery
+CREATE TABLE IF NOT EXISTS scheduled_messages (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  message_id UUID NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  sender_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  content TEXT NOT NULL,
+  scheduled_for TIMESTAMP NOT NULL,
+  timezone VARCHAR(50) DEFAULT 'UTC',
+  status scheduled_messages_status DEFAULT 'PENDING',
+  created_at TIMESTAMP DEFAULT NOW(),
+  sent_at TIMESTAMP
+);
+
+-- Message versions for edit history
+CREATE TABLE IF NOT EXISTS message_versions (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  message_id UUID NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  content TEXT NOT NULL,
+  edited_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  edited_at TIMESTAMP DEFAULT NOW(),
+  version_number INT NOT NULL
+);
+

@@ -67,8 +67,21 @@ func main() {
 	// Create Outbox Repository
 	outboxRepo := repository.NewOutboxRepository(database.GetInstance())
 
+	// Create Command Repository
+	commandRepo := repository.NewCommandRepository(database.GetInstance())
+
 	// Create Event Publisher
 	eventPublisher := services.NewEventPublisher(outboxRepo)
+
+	// Create Command Executor
+	commandExecutor := services.NewCommandExecutor(
+		database.GetInstance(),
+		commandRepo,
+		messageRepo,
+		conversationRepo,
+		userRepo,
+		eventPublisher,
+	)
 
 	// Start Outbox Worker
 	outboxWorker := services.NewOutboxWorker(outboxRepo, eventBus)
@@ -76,13 +89,20 @@ func main() {
 
 	//Services
 	authService := services.NewAuthService(userRepo, cfg)
-	messageService := services.NewMessageService(database.GetDB(), messageRepo, conversationRepo, eventPublisher)
+	messageService := services.NewMessageService(database.GetDB(), messageRepo, conversationRepo, eventPublisher, commandExecutor)
 	conversationService := services.NewConversationService(database.GetDB(), conversationRepo, eventPublisher)
 	userService := services.NewUserService(userRepo)
 	uploadService := services.NewUploadService(uploadRepo)
 	encryptionService := services.NewEncryptionService(encryptionRepo)
 	broadcastService := services.NewBroadcastService(broadcastRepo)
 	callService := services.NewCallService(database.GetDB(), callRepo, signalingStore, eventPublisher)
+
+	// Initialize WebSocket Hub
+	hub := server.NewHub(eventBus, conversationService, messageService, userService)
+	go hub.Run()
+
+	// Create WebSocket Handler
+	wsHandler := server.NewWebSocketHandler(hub, authService)
 
 	//Handlers
 	authHandler := handler.NewAuthHandler(authService)
@@ -110,10 +130,11 @@ func main() {
 	}
 
 	// Setup routes
-	serverInstance.SetupRoutes(handlers, authService, rateLimiter, cacheStore)
+	serverInstance.SetupRoutes(handlers, authService, rateLimiter, cacheStore, wsHandler)
 
 	// Graceful shutdown
 	defer func() {
+		hub.Stop()
 		outboxWorker.Stop()
 		eventBus.Stop()
 	}()

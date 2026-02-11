@@ -104,6 +104,18 @@ EXCEPTION
     WHEN duplicate_object THEN null;
 END $$;
 
+DO $$ BEGIN
+    CREATE TYPE scheduled_messages_status AS ENUM ('PENDING', 'SENT', 'CANCELED');
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+
+DO $$ BEGIN
+    CREATE TYPE command_status AS ENUM ('PENDING', 'EXECUTING','COMPLETED', 'FAILED','UNDONE');
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+
 -- Functions & Triggers
 
 -- Message Sequence Assignment

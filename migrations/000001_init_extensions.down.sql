@@ -16,6 +16,8 @@ DROP TYPE IF EXISTS delivery_status;
 DROP TYPE IF EXISTS message_type;
 DROP TYPE IF EXISTS participant_role;
 DROP TYPE IF EXISTS conversation_type;
+DROP TYPE IF EXISTS command_status;
+DROP TYPE IF EXISTS scheduled_messages_status;
 
 DROP EXTENSION IF EXISTS "citext";
 DROP EXTENSION IF EXISTS "pgcrypto";

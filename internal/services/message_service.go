@@ -20,6 +20,7 @@ type MessageService struct {
 	messageRepo      repository.MessageRepository
 	conversationRepo repository.ConversationRepository
 	eventPublisher   *EventPublisher
+	commandExecutor  *CommandExecutor
 }
 
 type CiphertextPayload struct {
@@ -38,12 +39,13 @@ type SendMessageInput struct {
 	Metadata       map[string]interface{}
 }
 
-func NewMessageService(db *gorm.DB, messageRepo repository.MessageRepository, conversationRepo repository.ConversationRepository, eventPublisher *EventPublisher) *MessageService {
+func NewMessageService(db *gorm.DB, messageRepo repository.MessageRepository, conversationRepo repository.ConversationRepository, eventPublisher *EventPublisher, commandExecutor *CommandExecutor) *MessageService {
 	return &MessageService{
 		db:               db,
 		messageRepo:      messageRepo,
 		conversationRepo: conversationRepo,
 		eventPublisher:   eventPublisher,
+		commandExecutor:  commandExecutor,
 	}
 }
 

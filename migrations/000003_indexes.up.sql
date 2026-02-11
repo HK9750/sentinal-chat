@@ -51,3 +51,16 @@ CREATE INDEX IF NOT EXISTS idx_outbox_status ON outbox_events(status);
 CREATE INDEX IF NOT EXISTS idx_outbox_created_at ON outbox_events(created_at);
 CREATE INDEX IF NOT EXISTS idx_outbox_pending ON outbox_events(status, retry_count) WHERE status = 'PENDING';
 CREATE INDEX IF NOT EXISTS idx_outbox_aggregate ON outbox_events(aggregate_type, aggregate_id);
+
+-- Command Log indexes
+CREATE INDEX IF NOT EXISTS idx_command_logs_user_created ON command_logs(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_command_logs_status ON command_logs(status) WHERE status = 'PENDING';
+CREATE INDEX IF NOT EXISTS idx_command_logs_type ON command_logs(command_type);
+
+-- Scheduled messages indexes
+CREATE INDEX IF NOT EXISTS idx_scheduled_messages_pending ON scheduled_messages(scheduled_for) WHERE status = 'PENDING';
+CREATE INDEX IF NOT EXISTS idx_scheduled_messages_sender ON scheduled_messages(sender_id, status);
+
+-- Message versions index
+CREATE INDEX IF NOT EXISTS idx_message_versions_message ON message_versions(message_id, version_number DESC);
+
