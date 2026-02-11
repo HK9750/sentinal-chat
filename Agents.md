@@ -1,51 +1,64 @@
 # Agents Guide
 
-This document defines how agents should extend Sentinal Chat without changing the overall structure. It is based on the current codebase and `docs/database.md` and is the primary guidance for event-driven flows (outbox + Redis + WebSockets) and design pattern usage.
+This document defines the architectural standards and design patterns for the Sentinal Chat codebase. It reflects the current implementation (Service/Repository pattern with Redis signaling) and outlines future architectural goals.
 
 ## Codebase Structure Map
 
 ```
 cmd/
-  api/main.go
-  migrate/main.go
-config/
+  api/main.go          # HTTP API entry point
+  migrate/main.go      # Database migration tool
+config/                # Configuration loading (env vars)
 internal/
-  domain/
-  handler/
-  middleware/
-  repository/
-  server/
-  services/
-  transport/httpdto/
+  domain/              # Domain models (structs)
+  handler/             # HTTP handlers (GIN)
+  middleware/          # HTTP middleware (Auth, RateLimit)
+  repository/          # Data access layer (PostgreSQL/GORM)
+  server/              # Server setup and route registration
+  services/            # Business logic
+  redis/               # Redis wrappers (Signaling, RateLimit)
+  transport/httpdto/   # Request/Response DTOs
 pkg/
-  database/
-  errors/
-  logger/
+  database/            # Database connection helpers
+  errors/              # Standardized error definitions
+  logger/              # Structured logging
 docs/
-  database.md
+  database.md          # Database schema documentation
 ```
 
-## Event-Driven Outbox Flow (Authoritative)
+## Current Architecture: Service-Repository & Redis
 
-### Transaction Rule
-All state-changing commands must write domain state and an outbox event in the same database transaction. This guarantees durability and prevents missing events.
+The application currently follows a monolithic **Layered Architecture**:
 
-### Event Emission Pipeline
+1.  **Handler**: Receives HTTP request, validates DTO, calls Service.
+2.  **Service**: Executes business logic, enforces permissions, calls Repository.
+3.  **Repository**: Executes database queries using GORM within a transaction context if needed.
+4.  **Redis**: Used for short-lived state (e.g., Signaling, Rate Limiting) and Pub/Sub.
 
-1. Handler receives request.
-2. Service validates and builds a command.
-3. Repository writes data.
-4. Repository creates outbox record.
-5. Worker publishes to Redis.
-6. WebSocket observers fan-out to clients.
+### Transaction Management
+Database transactions are managed within the **Service** layer using `gorm.DB` transaction blocks when multiple repository calls must be atomic.
 
-### Outbox Tables
-- `outbox_events` is the primary event queue.
-- `outbox_event_deliveries` tracks delivery attempts and status.
-- `command_log` stores idempotency and audit trail.
+### Real-Time Signaling (Redis)
+Real-time features (like WebRTC signaling) use Redis Pub/Sub and Lists.
+-   **Files**: `internal/redis/signaling.go`
+-   **Mechanism**: Services push signaling messages (offers, answers, ICE candidates) to Redis.
+-   **Current State**: Clients poll or subscribe via a separate mechanism (implementation details handled in `call_service.go` and `signaling.go`).
+
+## Future Architecture: Event-Driven Outbox Flow
+
+> **Note**: The following patterns are **aspirational goals** for future iterations to improve scalability and reliability. They are NOT strictly enforced in the current codebase but should be kept in mind for major refactors.
+
+### Transaction Rule (Future)
+All state-changing commands should write domain state and an outbox event in the same database transaction.
+
+### Event Emission Pipeline (Future)
+1.  Handler receives request.
+2.  Service validates and builds a command.
+3.  Repository writes data AND outbox record.
+4.  Worker publishes to Redis.
+5.  WebSocket observers fan-out to clients.
 
 ### Redis Channel Taxonomy
-
 ```
 channel:conversation:{conversation_id}
 channel:user:{user_id}
@@ -54,94 +67,48 @@ channel:call:{call_id}
 channel:system:outbox
 ```
 
-### Event Envelope
+## Design Patterns Usage
 
-```
-{
-  "event_type": "message.created",
-  "aggregate_type": "message",
-  "aggregate_id": "uuid",
-  "occurred_at": "2026-01-16T10:00:00Z",
-  "payload": { ... }
-}
-```
+### 1) Service & Repository Pattern (Primary)
+**Current Implementation**:
+-   **Services** (`internal/services`): Contain all business logic. They accept simple structs or DTOs.
+-   **Repositories** (`internal/repository`): Strictly for database access.
 
-## Required Design Patterns
+### 2) Command Pattern (Implicit)
+**Current Implementation**:
+-   Service methods accept "Input" structs (e.g., `SendMessageInput`) which act as command objects containing all necessary data and validation logic.
 
-### 1) Observer Pattern (WebSockets)
+### 3) Observer Pattern (via Redis)
+**Current Implementation**:
+-   The `SignalingStore` (`internal/redis/signaling.go`) acts as a distributed observer, publishing events to channels that interested parties (e.g., other server instances or connected clients) subscribe to.
 
-Use Observer for WebSocket fan-out. The WebSocket hub is the Subject, each connection is an Observer. Redis Pub/Sub subscriptions feed into the hub and are delivered to all observers.
-
-Where to use:
-- `internal/interfaces/websocket` or `internal/server` WebSocket handlers.
-- Hub holds subscribers by conversation/user/channel.
-- Each event published from Redis triggers a notify loop on observers.
-
-Implementation guidance:
-- Define a `Hub` that registers/unregisters clients.
-- Each `Client` has a `Send` channel.
-- Use `Publish(event)` to notify all clients in a room.
-
-### 2) Command Pattern
-
-Use Command pattern for all state-changing operations. Commands are validated objects passed to a handler that executes the transaction and writes the outbox event.
-
-Where to use:
-- `internal/services` and `internal/repository` for commands like:
-  - `SendMessageCommand`
-  - `CreateConversationCommand`
-  - `UpdateProfileCommand`
-
-Implementation guidance:
-- Create command structs with `Validate` methods.
-- Use a command handler that:
-  - checks permissions
-  - writes data
-  - writes outbox event
-  - writes command_log entry
-
-### 3) Proxy Pattern
-
-Use Proxy for access control, rate limiting, caching, and security checks before executing commands.
-
-Where to use:
-- `internal/middleware` for HTTP-level proxies (auth, rate limit).
-- `internal/services` for service-level proxies (permission checks).
-- `access_policies` table for permission decisions.
-
-Implementation guidance:
-- Create proxy services that wrap command handlers.
-- Example: `AccessControlProxy` checks `access_policies` before allowing `SendMessageCommand`.
+### 4) Proxy Pattern
+**Current Implementation**:
+-   **Middleware** (`internal/middleware`): Acts as a proxy for Auth, Rate Limiting, and Logging before requests reach handlers.
 
 ## Transport Layer Standards
 
 All request and response DTOs must live in `internal/transport/httpdto`.
 
-Required response shape:
-
-```
+### Standard Response Shape
+```go
 type Response[T any] struct {
-  Success bool
-  Data    T
-  Error   string
-  Code    string
+  Success bool   `json:"success"`
+  Data    T      `json:"data,omitempty"`
+  Error   string `json:"error,omitempty"`
+  Code    string `json:"code,omitempty"`
 }
 ```
 
-Handlers must respond with:
-- `NewSuccessResponse(data)` on success
-- `NewErrorResponse(message, code)` on failure
+### Handler Requirements
+-   Return `NewSuccessResponse(data)` on success.
+-   Return `NewErrorResponse(message, code)` on failure.
+-   Use `http.StatusOK` for successful operations, even if the business logic result implies a "soft" failure (unless it's a protocol error).
 
-## Required Event Emission Rules
+## Agent Notes & Roadmap
 
-- Every command that changes state must emit at least one outbox event.
-- Do not publish directly to Redis inside transaction.
-- Only worker services publish from outbox.
-- WebSocket events must flow only from Redis to hubs.
-
-## Agent Notes for Future Work
-
-- Add worker process for outbox polling (batch by `created_at` where `processed_at` is null).
-- Implement Redis publisher and subscriber in `internal/infrastructure` when needed.
-- Implement WebSocket hub in `internal/interfaces` or `internal/server`.
-- Maintain full API response conformity with `httpdto.Response`.
+-   **Priority 1**: Maintain consistency with `httpdto` for all new endpoints.
+-   **Priority 2**: Use `internal/redis` for any new real-time features instead of local state.
+-   **Future Work**:
+    -   Implement the "Outbox Pattern" worker to reliably publish DB events to Redis.
+    -   Implement a full-fledged WebSocket Hub in `internal/server` for bi-directional real-time communication beyond simple signaling.
