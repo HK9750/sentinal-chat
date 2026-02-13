@@ -10,7 +10,8 @@ logs:
 
 run:
 	go run cmd/api/main.go
-
+build:
+	go build cmd/api/main.go
 migrate-up:
 	go run cmd/migrate/main.go up
 

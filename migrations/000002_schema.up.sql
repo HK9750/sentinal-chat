@@ -366,7 +366,7 @@ CREATE TABLE IF NOT EXISTS onetime_prekeys (
   UNIQUE (device_id, key_id)
 );
 
-CREATE TABLE outbox_events (
+CREATE TABLE IF NOT EXISTS outbox_events (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     event_type VARCHAR(50) NOT NULL,
     aggregate_type VARCHAR(50) NOT NULL,
