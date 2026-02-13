@@ -59,7 +59,7 @@ func (r *PostgresUserRepository) GetAllUsers(ctx context.Context, page, limit in
 func (r *PostgresUserRepository) GetUserByID(ctx context.Context, id uuid.UUID) (user.User, error) {
 	var u user.User
 	err := r.db.WithContext(ctx).
-		Where("id = ? AND role <> ?", id, "SUPER_ADMIN").
+		Where("id = ?", id).
 		First(&u).Error
 
 	if err != nil {

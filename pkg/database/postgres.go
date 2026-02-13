@@ -52,7 +52,7 @@ func DefaultDatabaseConfig() *DatabaseConfig {
 		MaxIdleConns:    10,
 		MaxOpenConns:    100,
 		ConnMaxLifetime: time.Hour,
-		LogLevel:        logger.Info,
+		LogLevel:        logger.Silent,
 	}
 }
 
