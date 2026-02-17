@@ -114,8 +114,8 @@ func FromUserSession(s user.UserSession) SessionDTO {
 		ID:        s.ID.String(),
 		CreatedAt: s.CreatedAt.Format(time.RFC3339),
 	}
-	if s.DeviceID.Valid {
-		dto.DeviceID = s.DeviceID.UUID.String()
+	if s.DeviceID != nil {
+		dto.DeviceID = s.DeviceID.String()
 	}
 	return dto
 }

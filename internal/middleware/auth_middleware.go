@@ -42,13 +42,18 @@ func AuthMiddleware(service *services.AuthService) gin.HandlerFunc {
 			return
 		}
 
-		if claims.DeviceID != "" && session.DeviceID.Valid && session.DeviceID.UUID.String() != claims.DeviceID {
+		if claims.DeviceID != "" && session.DeviceID != nil && session.DeviceID.String() != claims.DeviceID {
 			c.JSON(http.StatusUnauthorized, httpdto.NewErrorResponse("unauthorized", "UNAUTHORIZED"))
 			c.Abort()
 			return
 		}
 
-		ctx := services.WithUserSessionContext(c.Request.Context(), userID, sessionID, session.DeviceID)
+		devID := uuid.NullUUID{}
+		if session.DeviceID != nil {
+			devID = uuid.NullUUID{UUID: *session.DeviceID, Valid: true}
+		}
+
+		ctx := services.WithUserSessionContext(c.Request.Context(), userID, sessionID, devID)
 		c.Request = c.Request.WithContext(ctx)
 		c.Next()
 	}

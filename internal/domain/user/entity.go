@@ -80,7 +80,8 @@ type PushToken struct {
 type UserSession struct {
 	ID               uuid.UUID     `gorm:"type:uuid;primaryKey;default:uuid_generate_v4()"`
 	UserID           uuid.UUID     `gorm:"type:uuid;not null"`
-	DeviceID         uuid.NullUUID `gorm:"type:uuid"`
+	DeviceID         *uuid.UUID    `gorm:"type:uuid"`
+	Device           *Device       `gorm:"foreignKey:DeviceID;references:ID"`
 	RefreshTokenHash string        `gorm:"not null"`
 	ExpiresAt        time.Time     `gorm:"not null"`
 	IsRevoked        bool          `gorm:"default:false"`

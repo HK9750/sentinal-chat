@@ -439,6 +439,7 @@ func (r *PostgresUserRepository) GetSessionByID(ctx context.Context, sessionID u
 func (r *PostgresUserRepository) GetUserSessions(ctx context.Context, userID uuid.UUID) ([]user.UserSession, error) {
 	var sessions []user.UserSession
 	err := r.db.WithContext(ctx).
+		Preload("Device").
 		Where("user_id = ? AND is_revoked = false AND expires_at > NOW()", userID).
 		Order("created_at DESC").
 		Find(&sessions).Error

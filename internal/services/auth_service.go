@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -86,9 +87,11 @@ type UserInfo struct {
 }
 
 type SessionInfo struct {
-	ID        string    `json:"id"`
-	DeviceID  string    `json:"device_id,omitempty"`
-	ExpiresAt time.Time `json:"expires_at"`
+	ID         string    `json:"id"`
+	DeviceID   string    `json:"device_id,omitempty"`
+	DeviceName string    `json:"device_name,omitempty"`
+	DeviceType string    `json:"device_type,omitempty"`
+	ExpiresAt  time.Time `json:"expires_at"`
 	CreatedAt time.Time `json:"created_at"`
 	IsRevoked bool      `json:"is_revoked"`
 }
@@ -162,7 +165,7 @@ func (s *AuthService) Register(ctx context.Context, in RegisterInput) (AuthRespo
 	session := &user.UserSession{
 		ID:               uuid.New(),
 		UserID:           newUser.ID,
-		DeviceID:         deviceID,
+		DeviceID:         toUUIDPointer(deviceID),
 		RefreshTokenHash: refreshHash,
 		ExpiresAt:        createdAt.Add(s.refreshTTL),
 		CreatedAt:        createdAt,
@@ -172,7 +175,7 @@ func (s *AuthService) Register(ctx context.Context, in RegisterInput) (AuthRespo
 		return AuthResponse{}, err
 	}
 
-	accessToken, expiresIn, err := s.newAccessToken(newUser.ID, session.ID, deviceID)
+	accessToken, expiresIn, err := s.newAccessToken(newUser.ID, session.ID, toNullUUID(session.DeviceID))
 	if err != nil {
 		return AuthResponse{}, err
 	}
@@ -219,7 +222,7 @@ func (s *AuthService) Login(ctx context.Context, in LoginInput) (AuthResponse, e
 	session := &user.UserSession{
 		ID:               uuid.New(),
 		UserID:           u.ID,
-		DeviceID:         deviceID,
+		DeviceID:         toUUIDPointer(deviceID),
 		RefreshTokenHash: refreshHash,
 		ExpiresAt:        createdAt.Add(s.refreshTTL),
 		CreatedAt:        createdAt,
@@ -231,7 +234,7 @@ func (s *AuthService) Login(ctx context.Context, in LoginInput) (AuthResponse, e
 
 	_ = s.userRepo.UpdateOnlineStatus(ctx, u.ID, true)
 
-	accessToken, expiresIn, err := s.newAccessToken(u.ID, session.ID, deviceID)
+	accessToken, expiresIn, err := s.newAccessToken(u.ID, session.ID, toNullUUID(session.DeviceID))
 	if err != nil {
 		return AuthResponse{}, err
 	}
@@ -281,7 +284,7 @@ func (s *AuthService) Refresh(ctx context.Context, in RefreshInput) (AuthRespons
 		return AuthResponse{}, err
 	}
 
-	accessToken, expiresIn, err := s.newAccessToken(session.UserID, session.ID, session.DeviceID)
+	accessToken, expiresIn, err := s.newAccessToken(session.UserID, session.ID, toNullUUID(session.DeviceID))
 	if err != nil {
 		return AuthResponse{}, err
 	}
@@ -321,6 +324,16 @@ func (s *AuthService) Sessions(ctx context.Context, userID uuid.UUID) ([]Session
 		return nil, err
 	}
 
+	// TODO: Remove logging after debugging
+	fmt.Printf("DEBUG: Fetched %d sessions for user %s\n", len(sessions), userID)
+	for i, s := range sessions {
+		devID := "nil"
+		if s.DeviceID != nil {
+			devID = s.DeviceID.String()
+		}
+		fmt.Printf("DEBUG: Session[%d] ID=%s DeviceID=%s DevicePtr=%v\n", i, s.ID, devID, s.Device)
+	}
+
 	result := make([]SessionInfo, 0, len(sessions))
 	for _, session := range sessions {
 		item := SessionInfo{
@@ -329,8 +342,10 @@ func (s *AuthService) Sessions(ctx context.Context, userID uuid.UUID) ([]Session
 			CreatedAt: session.CreatedAt,
 			IsRevoked: session.IsRevoked,
 		}
-		if session.DeviceID.Valid {
-			item.DeviceID = session.DeviceID.UUID.String()
+		if session.DeviceID != nil && session.Device != nil {
+			item.DeviceID = session.DeviceID.String()
+			item.DeviceName = session.Device.DeviceName
+			item.DeviceType = session.Device.DeviceType
 		}
 		result = append(result, item)
 	}
@@ -684,4 +699,18 @@ func toUserInfo(u user.User) UserInfo {
 		info.PhoneNumber = u.PhoneNumber.String
 	}
 	return info
+}
+
+func toUUIDPointer(n uuid.NullUUID) *uuid.UUID {
+	if n.Valid {
+		return &n.UUID
+	}
+	return nil
+}
+
+func toNullUUID(p *uuid.UUID) uuid.NullUUID {
+	if p == nil {
+		return uuid.NullUUID{}
+	}
+	return uuid.NullUUID{UUID: *p, Valid: true}
 }

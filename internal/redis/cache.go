@@ -91,8 +91,8 @@ func (c *CacheStore) SetSession(ctx context.Context, session *SessionCache) erro
 // SetSessionFromEntity stores a session from the domain entity
 func (c *CacheStore) SetSessionFromEntity(ctx context.Context, session *user.UserSession) error {
 	deviceID := ""
-	if session.DeviceID.Valid {
-		deviceID = session.DeviceID.UUID.String()
+	if session.DeviceID != nil {
+		deviceID = session.DeviceID.String()
 	}
 	cached := &SessionCache{
 		SessionID:  session.ID,

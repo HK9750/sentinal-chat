@@ -176,9 +176,11 @@ func (h *AuthHandler) Sessions(c *gin.Context) {
 	sessionDTOs := make([]httpdto.SessionDTO, len(sessions))
 	for i, s := range sessions {
 		sessionDTOs[i] = httpdto.SessionDTO{
-			ID:        s.ID,
-			DeviceID:  s.DeviceID,
-			CreatedAt: s.CreatedAt.Format(time.RFC3339),
+			ID:         s.ID,
+			DeviceID:   s.DeviceID,
+			DeviceName: s.DeviceName,
+			DeviceType: s.DeviceType,
+			CreatedAt:  s.CreatedAt.Format(time.RFC3339),
 		}
 	}
 
