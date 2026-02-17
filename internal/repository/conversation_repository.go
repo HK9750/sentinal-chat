@@ -109,7 +109,7 @@ func (r *PostgresConversationRepository) GetDirectConversation(ctx context.Conte
 
 	err := r.db.WithContext(ctx).
 		Preload("Participants").
-		Where("id IN (?) AND type = ?", subQuery, "DIRECT").
+		Where("id IN (?) AND type = ?", subQuery, "DM").
 		First(&c).Error
 
 	if err != nil {

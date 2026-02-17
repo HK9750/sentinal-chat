@@ -18,7 +18,7 @@ type Conversation struct {
 	ExpirySeconds        sql.NullInt32
 	DisappearingMode     string `gorm:"type:disappearing_mode;default:'OFF'"`
 	MessageExpirySeconds sql.NullInt32
-	GroupPermissions     string `gorm:"type:jsonb"` // Using string for JSONB for simplicity, or define a specific struct/map
+	GroupPermissions     *string `gorm:"type:jsonb"` // Using *string for JSONB to allow null values
 	InviteLink           sql.NullString
 	InviteLinkRevokedAt  sql.NullTime
 	CreatedBy            uuid.NullUUID `gorm:"type:uuid"`
@@ -39,9 +39,9 @@ type Participant struct {
 	AddedBy          uuid.NullUUID `gorm:"type:uuid"`
 	MutedUntil       sql.NullTime
 	PinnedAt         sql.NullTime
-	Archived         bool   `gorm:"default:false"`
-	LastReadSequence int64  `gorm:"default:0"`
-	Permissions      string `gorm:"type:jsonb"`
+	Archived         bool    `gorm:"default:false"`
+	LastReadSequence int64   `gorm:"default:0"`
+	Permissions      *string `gorm:"type:jsonb"`
 
 	// Relationships
 	// User user.User `gorm:"foreignKey:UserID"`

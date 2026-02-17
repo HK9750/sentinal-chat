@@ -4,6 +4,7 @@ package services
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"time"
 
 	"sentinal-chat/internal/domain/conversation"
@@ -49,6 +50,7 @@ func (s *ConversationService) Create(ctx context.Context, input CreateConversati
 	if len(input.ParticipantIDs) == 0 {
 		return conversation.Conversation{}, sentinal_errors.ErrInvalidInput
 	}
+	fmt.Println("input",input);
 	return s.executeCreate(ctx, input)
 }
 

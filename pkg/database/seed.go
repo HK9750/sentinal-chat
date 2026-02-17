@@ -284,11 +284,12 @@ func seedConversations(users []*user.User) ([]*conversation.Conversation, error)
 
 	// Create a DM conversation between first two users
 	if len(users) >= 2 {
+		emptyJSON := "{}"
 		dmConv := &conversation.Conversation{
 			ID:               uuid.New(),
 			Type:             "DM",
 			DisappearingMode: "OFF",
-			GroupPermissions: "{}", // Empty JSON object for JSONB field
+			GroupPermissions: &emptyJSON, // Empty JSON object for JSONB field
 			CreatedBy:        uuid.NullUUID{UUID: users[0].ID, Valid: true},
 			CreatedAt:        time.Now(),
 			UpdatedAt:        time.Now(),
@@ -307,7 +308,7 @@ func seedConversations(users []*user.User) ([]*conversation.Conversation, error)
 					Role:             "MEMBER",
 					JoinedAt:         time.Now(),
 					LastReadSequence: 0,
-					Permissions:      "{}", // Empty JSON object for JSONB field
+					Permissions:      &emptyJSON, // Empty JSON object for JSONB field
 				}
 				if err := tx.Create(participant).Error; err != nil {
 					return err
@@ -338,6 +339,7 @@ func seedConversations(users []*user.User) ([]*conversation.Conversation, error)
 			"add_members":     false,
 			"edit_group_info": false,
 		})
+		groupPermsStr := string(groupPerms)
 
 		groupConv := &conversation.Conversation{
 			ID:               uuid.New(),
@@ -345,7 +347,7 @@ func seedConversations(users []*user.User) ([]*conversation.Conversation, error)
 			Subject:          sql.NullString{String: "Sentinal Chat Team", Valid: true},
 			Description:      sql.NullString{String: "Welcome to our team chat!", Valid: true},
 			DisappearingMode: "OFF",
-			GroupPermissions: string(groupPerms),
+			GroupPermissions: &groupPermsStr,
 			CreatedBy:        uuid.NullUUID{UUID: users[0].ID, Valid: true},
 			CreatedAt:        time.Now(),
 			UpdatedAt:        time.Now(),
@@ -362,13 +364,14 @@ func seedConversations(users []*user.User) ([]*conversation.Conversation, error)
 				if i >= len(roles) {
 					break
 				}
+				emptyJson2 := "{}"
 				participant := &conversation.Participant{
 					ConversationID:   groupConv.ID,
 					UserID:           u.ID,
 					Role:             roles[i],
 					JoinedAt:         time.Now(),
 					LastReadSequence: 0,
-					Permissions:      "{}", // Empty JSON object for JSONB field
+					Permissions:      &emptyJson2, // Empty JSON object for JSONB field
 				}
 				if i > 0 {
 					participant.AddedBy = uuid.NullUUID{UUID: users[0].ID, Valid: true}
