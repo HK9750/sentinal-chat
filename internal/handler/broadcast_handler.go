@@ -20,16 +20,30 @@ func NewBroadcastHandler(service *services.BroadcastService) *BroadcastHandler {
 }
 
 func (h *BroadcastHandler) Create(c *gin.Context) {
-	var req broadcast.BroadcastList
+	var req httpdto.CreateBroadcastRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid request", "INVALID_REQUEST"))
 		return
 	}
-	if err := h.service.Create(c.Request.Context(), &req); err != nil {
+	ownerID, ok := services.UserIDFromContext(c.Request.Context())
+	if !ok {
+		c.JSON(http.StatusUnauthorized, httpdto.NewErrorResponse("unauthorized", "UNAUTHORIZED"))
+		return
+	}
+
+	item := &broadcast.BroadcastList{
+		OwnerID: ownerID,
+		Name:    req.Name,
+	}
+	if req.Description != "" {
+		item.Description.String = req.Description
+		item.Description.Valid = true
+	}
+	if err := h.service.Create(c.Request.Context(), item); err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(req))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.FromBroadcastList(*item)))
 }
 
 func (h *BroadcastHandler) GetByID(c *gin.Context) {
@@ -43,20 +57,37 @@ func (h *BroadcastHandler) GetByID(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(item))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.FromBroadcastList(item)))
 }
 
 func (h *BroadcastHandler) Update(c *gin.Context) {
-	var req broadcast.BroadcastList
+	var req httpdto.UpdateBroadcastRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid request", "INVALID_REQUEST"))
 		return
 	}
-	if err := h.service.Update(c.Request.Context(), req); err != nil {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid broadcast id", "INVALID_REQUEST"))
+		return
+	}
+	item, err := h.service.GetByID(c.Request.Context(), id)
+	if err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(req))
+	if req.Name != "" {
+		item.Name = req.Name
+	}
+	if req.Description != "" {
+		item.Description.String = req.Description
+		item.Description.Valid = true
+	}
+	if err := h.service.Update(c.Request.Context(), item); err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
+		return
+	}
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.FromBroadcastList(item)))
 }
 
 func (h *BroadcastHandler) Delete(c *gin.Context) {
@@ -73,9 +104,9 @@ func (h *BroadcastHandler) Delete(c *gin.Context) {
 }
 
 func (h *BroadcastHandler) ListByOwner(c *gin.Context) {
-	ownerID, err := uuid.Parse(c.Query("owner_id"))
-	if err != nil {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid owner_id", "INVALID_REQUEST"))
+	ownerID, ok := services.UserIDFromContext(c.Request.Context())
+	if !ok {
+		c.JSON(http.StatusUnauthorized, httpdto.NewErrorResponse("unauthorized", "UNAUTHORIZED"))
 		return
 	}
 	items, err := h.service.GetUserBroadcastLists(c.Request.Context(), ownerID)
@@ -83,13 +114,15 @@ func (h *BroadcastHandler) ListByOwner(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"broadcasts": items}))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.ListBroadcastsResponse{
+		Broadcasts: httpdto.FromBroadcastListSlice(items),
+	}))
 }
 
 func (h *BroadcastHandler) Search(c *gin.Context) {
-	ownerID, err := uuid.Parse(c.Query("owner_id"))
-	if err != nil {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid owner_id", "INVALID_REQUEST"))
+	ownerID, ok := services.UserIDFromContext(c.Request.Context())
+	if !ok {
+		c.JSON(http.StatusUnauthorized, httpdto.NewErrorResponse("unauthorized", "UNAUTHORIZED"))
 		return
 	}
 	query := c.Query("query")
@@ -98,20 +131,36 @@ func (h *BroadcastHandler) Search(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"broadcasts": items}))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.ListBroadcastsResponse{
+		Broadcasts: httpdto.FromBroadcastListSlice(items),
+	}))
 }
 
 func (h *BroadcastHandler) AddRecipient(c *gin.Context) {
-	var req broadcast.BroadcastRecipient
+	var req httpdto.AddRecipientRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid request", "INVALID_REQUEST"))
 		return
 	}
-	if err := h.service.AddRecipient(c.Request.Context(), &req); err != nil {
+	broadcastID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid broadcast id", "INVALID_REQUEST"))
+		return
+	}
+	userID, err := uuid.Parse(req.UserID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid user_id", "INVALID_REQUEST"))
+		return
+	}
+	item := &broadcast.BroadcastRecipient{
+		BroadcastID: broadcastID,
+		UserID:      userID,
+	}
+	if err := h.service.AddRecipient(c.Request.Context(), item); err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(req))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.FromBroadcastRecipient(*item)))
 }
 
 func (h *BroadcastHandler) RemoveRecipient(c *gin.Context) {
@@ -143,7 +192,9 @@ func (h *BroadcastHandler) ListRecipients(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"recipients": items}))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.RecipientsResponse{
+		Recipients: httpdto.FromBroadcastRecipientSlice(items),
+	}))
 }
 
 func (h *BroadcastHandler) RecipientCount(c *gin.Context) {
@@ -157,7 +208,7 @@ func (h *BroadcastHandler) RecipientCount(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"count": count}))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.RecipientCountResponse{Count: count}))
 }
 
 func (h *BroadcastHandler) IsRecipient(c *gin.Context) {
@@ -176,7 +227,7 @@ func (h *BroadcastHandler) IsRecipient(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"is_recipient": ok}))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.IsRecipientResponse{IsRecipient: ok}))
 }
 
 func (h *BroadcastHandler) BulkAddRecipients(c *gin.Context) {

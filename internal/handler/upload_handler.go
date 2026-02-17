@@ -22,16 +22,30 @@ func NewUploadHandler(service *services.UploadService) *UploadHandler {
 }
 
 func (h *UploadHandler) Create(c *gin.Context) {
-	var req upload.UploadSession
+	var req httpdto.CreateUploadRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid request", "INVALID_REQUEST"))
 		return
 	}
-	if err := h.service.Create(c.Request.Context(), &req); err != nil {
+	uploaderID, err := uuid.Parse(req.UploaderID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid uploader_id", "INVALID_REQUEST"))
+		return
+	}
+
+	session := &upload.UploadSession{
+		UploaderID: uploaderID,
+		Filename:   req.FileName,
+		MimeType:   req.ContentType,
+		SizeBytes:  req.FileSize,
+		ChunkSize:  0,
+		Status:     "IN_PROGRESS",
+	}
+	if err := h.service.Create(c.Request.Context(), session); err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(req))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.FromUploadSession(*session)))
 }
 
 func (h *UploadHandler) GetByID(c *gin.Context) {
@@ -45,20 +59,38 @@ func (h *UploadHandler) GetByID(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(item))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.FromUploadSession(item)))
 }
 
 func (h *UploadHandler) Update(c *gin.Context) {
-	var req upload.UploadSession
+	var req httpdto.UpdateUploadRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid request", "INVALID_REQUEST"))
 		return
 	}
-	if err := h.service.Update(c.Request.Context(), req); err != nil {
+	uploadID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid upload id", "INVALID_REQUEST"))
+		return
+	}
+
+	item, err := h.service.GetByID(c.Request.Context(), uploadID)
+	if err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(req))
+	if req.FileName != "" {
+		item.Filename = req.FileName
+	}
+	if req.ContentType != "" {
+		item.MimeType = req.ContentType
+	}
+
+	if err := h.service.Update(c.Request.Context(), item); err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
+		return
+	}
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.FromUploadSession(item)))
 }
 
 func (h *UploadHandler) Delete(c *gin.Context) {
@@ -85,7 +117,9 @@ func (h *UploadHandler) ListUser(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"uploads": items}))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.ListUploadsResponse{
+		Uploads: httpdto.FromUploadSessionSlice(items),
+	}))
 }
 
 func (h *UploadHandler) ListCompleted(c *gin.Context) {
@@ -101,7 +135,10 @@ func (h *UploadHandler) ListCompleted(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"uploads": items, "total": total}))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.ListUploadsResponse{
+		Uploads: httpdto.FromUploadSessionSlice(items),
+		Total:   total,
+	}))
 }
 
 func (h *UploadHandler) UpdateProgress(c *gin.Context) {
@@ -159,7 +196,9 @@ func (h *UploadHandler) ListInProgress(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"uploads": items}))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.ListUploadsResponse{
+		Uploads: httpdto.FromUploadSessionSlice(items),
+	}))
 }
 
 func (h *UploadHandler) ListStale(c *gin.Context) {
@@ -169,7 +208,9 @@ func (h *UploadHandler) ListStale(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"uploads": items}))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.ListUploadsResponse{
+		Uploads: httpdto.FromUploadSessionSlice(items),
+	}))
 }
 
 func (h *UploadHandler) DeleteStale(c *gin.Context) {
@@ -179,5 +220,5 @@ func (h *UploadHandler) DeleteStale(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"deleted": count}))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.DeleteStaleUploadsResponse{Deleted: count}))
 }

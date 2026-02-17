@@ -1,5 +1,10 @@
 package httpdto
 
+import (
+	"sentinal-chat/internal/domain/upload"
+	"time"
+)
+
 // CreateUploadRequest is used for POST /uploads
 type CreateUploadRequest struct {
 	FileName    string `json:"file_name" binding:"required"`
@@ -71,4 +76,28 @@ type DeleteStaleUploadsRequest struct {
 // DeleteStaleUploadsResponse is returned after deleting stale uploads
 type DeleteStaleUploadsResponse struct {
 	Deleted int64 `json:"deleted"`
+}
+
+// FromUploadSession converts a domain upload session to UploadDTO
+func FromUploadSession(s upload.UploadSession) UploadDTO {
+	dto := UploadDTO{
+		ID:            s.ID.String(),
+		FileName:      s.Filename,
+		FileSize:      s.SizeBytes,
+		ContentType:   s.MimeType,
+		UploaderID:    s.UploaderID.String(),
+		Status:        s.Status,
+		UploadedBytes: s.UploadedBytes,
+		CreatedAt:     s.CreatedAt.Format(time.RFC3339),
+	}
+	return dto
+}
+
+// FromUploadSessionSlice converts a slice of domain upload sessions to UploadDTO slice
+func FromUploadSessionSlice(sessions []upload.UploadSession) []UploadDTO {
+	dtos := make([]UploadDTO, len(sessions))
+	for i, s := range sessions {
+		dtos[i] = FromUploadSession(s)
+	}
+	return dtos
 }

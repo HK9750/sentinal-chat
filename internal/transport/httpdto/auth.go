@@ -1,5 +1,10 @@
 package httpdto
 
+import (
+	"sentinal-chat/internal/domain/user"
+	"time"
+)
+
 // RegisterRequest is used for POST /auth/register
 type RegisterRequest struct {
 	Email       string `json:"email" binding:"required"`
@@ -37,6 +42,24 @@ type LoginResponse struct {
 	RefreshToken string `json:"refresh_token"`
 	SessionID    string `json:"session_id"`
 	ExpiresAt    string `json:"expires_at"`
+}
+
+// AuthResponse represents token-based auth responses.
+type AuthResponse struct {
+	AccessToken  string      `json:"access_token"`
+	RefreshToken string      `json:"refresh_token,omitempty"`
+	ExpiresIn    int64       `json:"expires_in"`
+	SessionID    string      `json:"session_id"`
+	User         AuthUserDTO `json:"user"`
+}
+
+// AuthUserDTO represents the authenticated user in auth responses.
+type AuthUserDTO struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"display_name"`
+	Username    string `json:"username,omitempty"`
+	Email       string `json:"email,omitempty"`
+	PhoneNumber string `json:"phone_number,omitempty"`
 }
 
 // RefreshRequest is used for POST /auth/refresh
@@ -83,4 +106,25 @@ type SessionDTO struct {
 	LastActive string `json:"last_active"`
 	CreatedAt  string `json:"created_at"`
 	IsCurrent  bool   `json:"is_current,omitempty"`
+}
+
+// FromUserSession converts a domain user session to SessionDTO
+func FromUserSession(s user.UserSession) SessionDTO {
+	dto := SessionDTO{
+		ID:        s.ID.String(),
+		CreatedAt: s.CreatedAt.Format(time.RFC3339),
+	}
+	if s.DeviceID.Valid {
+		dto.DeviceID = s.DeviceID.UUID.String()
+	}
+	return dto
+}
+
+// FromUserSessionSlice converts a slice of domain user sessions to SessionDTO slice
+func FromUserSessionSlice(sessions []user.UserSession) []SessionDTO {
+	dtos := make([]SessionDTO, len(sessions))
+	for i, s := range sessions {
+		dtos[i] = FromUserSession(s)
+	}
+	return dtos
 }

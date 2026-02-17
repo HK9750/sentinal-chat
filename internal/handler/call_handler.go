@@ -2,6 +2,8 @@ package handler
 
 import (
 	"context"
+	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"time"
@@ -26,30 +28,49 @@ func NewCallHandler(service *services.CallService) *CallHandler {
 }
 
 func (h *CallHandler) Create(c *gin.Context) {
-	var req call.Call
+	var req httpdto.CreateCallRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid request", "INVALID_REQUEST"))
-		return
-	}
-	if req.Topology != "" && req.Topology != "P2P" {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("unsupported call topology", "INVALID_REQUEST"))
 		return
 	}
 	if req.Type != "AUDIO" && req.Type != "VIDEO" {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("unsupported call type", "INVALID_REQUEST"))
 		return
 	}
-	req.Topology = "P2P"
-	req.IsGroupCall = false
-	if err := h.ensureDMCall(c.Request.Context(), req.ConversationID); err != nil {
+
+	conversationID, err := uuid.Parse(req.ConversationID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid conversation_id", "INVALID_REQUEST"))
+		return
+	}
+
+	initiatorID, err := uuid.Parse(req.InitiatorID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid initiator_id", "INVALID_REQUEST"))
+		return
+	}
+
+	if err := h.ensureDMCall(c.Request.Context(), conversationID); err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	if err := h.service.Create(c.Request.Context(), &req); err != nil {
+
+	callEntity := &call.Call{
+		ConversationID: conversationID,
+		Type:           req.Type,
+		InitiatedBy:    initiatorID,
+		Topology:       "P2P",
+		IsGroupCall:    false,
+		StartedAt:      time.Now(),
+	}
+
+	if err := h.service.Create(c.Request.Context(), callEntity); err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(req))
+	response := httpdto.FromCall(*callEntity)
+	response.Status = "RINGING"
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(response))
 }
 
 func (h *CallHandler) GetByID(c *gin.Context) {
@@ -63,7 +84,7 @@ func (h *CallHandler) GetByID(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(item))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.FromCall(item)))
 }
 
 func (h *CallHandler) ListByConversation(c *gin.Context) {
@@ -79,7 +100,10 @@ func (h *CallHandler) ListByConversation(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"calls": items, "total": total}))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.ListCallsResponse{
+		Calls: httpdto.FromCallSlice(items),
+		Total: total,
+	}))
 }
 
 func (h *CallHandler) ListByUser(c *gin.Context) {
@@ -95,7 +119,10 @@ func (h *CallHandler) ListByUser(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"calls": items, "total": total}))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.ListCallsResponse{
+		Calls: httpdto.FromCallSlice(items),
+		Total: total,
+	}))
 }
 
 func (h *CallHandler) ActiveCalls(c *gin.Context) {
@@ -109,7 +136,9 @@ func (h *CallHandler) ActiveCalls(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"calls": items}))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.ListCallsResponse{
+		Calls: httpdto.FromCallSlice(items),
+	}))
 }
 
 func (h *CallHandler) MissedCalls(c *gin.Context) {
@@ -124,7 +153,9 @@ func (h *CallHandler) MissedCalls(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"calls": items}))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.ListCallsResponse{
+		Calls: httpdto.FromCallSlice(items),
+	}))
 }
 
 func (h *CallHandler) AddParticipant(c *gin.Context) {
@@ -133,12 +164,18 @@ func (h *CallHandler) AddParticipant(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid call id", "INVALID_REQUEST"))
 		return
 	}
-	var req call.CallParticipant
+	var req httpdto.AddCallParticipantRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid request", "INVALID_REQUEST"))
 		return
 	}
-	req.CallID = callID
+
+	userID, err := uuid.Parse(req.UserID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid user_id", "INVALID_REQUEST"))
+		return
+	}
+
 	callItem, err := h.service.GetByID(c.Request.Context(), callID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
@@ -157,11 +194,18 @@ func (h *CallHandler) AddParticipant(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("dm calls are limited to two participants", "REQUEST_FAILED"))
 		return
 	}
-	if err := h.service.AddParticipant(c.Request.Context(), &req); err != nil {
+
+	participant := &call.CallParticipant{
+		CallID: callID,
+		UserID: userID,
+		Status: "INVITED",
+	}
+
+	if err := h.service.AddParticipant(c.Request.Context(), participant); err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(req))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.FromCallParticipant(*participant)))
 }
 
 func (h *CallHandler) RemoveParticipant(c *gin.Context) {
@@ -202,7 +246,9 @@ func (h *CallHandler) ListParticipants(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"participants": items}))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.CallParticipantsResponse{
+		Participants: httpdto.FromCallParticipantSlice(items),
+	}))
 }
 
 func (h *CallHandler) UpdateParticipantStatus(c *gin.Context) {
@@ -270,12 +316,23 @@ func (h *CallHandler) UpdateParticipantMute(c *gin.Context) {
 }
 
 func (h *CallHandler) RecordQualityMetric(c *gin.Context) {
-	var req call.CallQualityMetric
+	var req httpdto.RecordCallQualityMetricRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid request", "INVALID_REQUEST"))
 		return
 	}
-	callItem, err := h.service.GetByID(c.Request.Context(), req.CallID)
+	callID, err := uuid.Parse(req.CallID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid call_id", "INVALID_REQUEST"))
+		return
+	}
+	userID, err := uuid.Parse(req.UserID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid user_id", "INVALID_REQUEST"))
+		return
+	}
+
+	callItem, err := h.service.GetByID(c.Request.Context(), callID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
@@ -284,11 +341,59 @@ func (h *CallHandler) RecordQualityMetric(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	if err := h.service.RecordQualityMetric(c.Request.Context(), &req); err != nil {
+
+	packetsLost := req.PacketsLost
+	if packetsLost == 0 && req.PacketLoss > 0 {
+		base := req.PacketsSent
+		if base == 0 {
+			base = req.PacketsReceived
+		}
+		if base > 0 {
+			packetsLost = int64(math.Round(req.PacketLoss * float64(base)))
+		}
+	}
+	metric := call.CallQualityMetric{
+		CallID:           callID,
+		UserID:           userID,
+		PacketsSent:      req.PacketsSent,
+		PacketsReceived:  req.PacketsReceived,
+		PacketsLost:      packetsLost,
+		JitterMs:         req.Jitter,
+		RoundTripTimeMs:  req.Latency,
+		BitrateKbps:      int(req.Bitrate / 1000),
+		FrameRate:        req.FrameRate,
+		AudioLevel:       req.AudioLevel,
+		ConnectionType:   req.ConnectionType,
+		IceCandidateType: req.IceCandidateType,
+	}
+	if req.ResolutionWidth > 0 {
+		metric.ResolutionWidth = req.ResolutionWidth
+	}
+	if req.ResolutionHeight > 0 {
+		metric.ResolutionHeight = req.ResolutionHeight
+	}
+	if req.Resolution != "" {
+		var width, height int
+		_, _ = fmt.Sscanf(req.Resolution, "%dx%d", &width, &height)
+		if width > 0 && height > 0 {
+			metric.ResolutionWidth = width
+			metric.ResolutionHeight = height
+		}
+	}
+	if req.Timestamp != "" {
+		if t, err := time.Parse(time.RFC3339, req.Timestamp); err == nil {
+			metric.RecordedAt = t
+		}
+	}
+	if metric.RecordedAt.IsZero() {
+		metric.RecordedAt = time.Now()
+	}
+
+	if err := h.service.RecordQualityMetric(c.Request.Context(), &metric); err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(req))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.FromCallQualityMetric(metric)))
 }
 
 func (h *CallHandler) MarkConnected(c *gin.Context) {
@@ -351,7 +456,7 @@ func (h *CallHandler) GetCallDuration(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"duration": duration}))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.CallDurationResponse{Duration: int64(duration)}))
 }
 
 func (h *CallHandler) GetCallQualityMetrics(c *gin.Context) {
@@ -374,7 +479,9 @@ func (h *CallHandler) GetCallQualityMetrics(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"metrics": items}))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.CallQualityMetricsResponse{
+		Metrics: httpdto.FromCallQualityMetricSlice(items),
+	}))
 }
 
 func (h *CallHandler) GetUserCallQualityMetrics(c *gin.Context) {
@@ -402,7 +509,9 @@ func (h *CallHandler) GetUserCallQualityMetrics(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"metrics": items}))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.CallQualityMetricsResponse{
+		Metrics: httpdto.FromCallQualityMetricSlice(items),
+	}))
 }
 
 func (h *CallHandler) GetAverageCallQuality(c *gin.Context) {
@@ -425,7 +534,7 @@ func (h *CallHandler) GetAverageCallQuality(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"average": avg}))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.AverageCallQualityResponse{Average: avg}))
 }
 
 func (h *CallHandler) ensureDMCall(ctx context.Context, conversationID uuid.UUID) error {

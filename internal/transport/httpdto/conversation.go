@@ -1,5 +1,10 @@
 package httpdto
 
+import (
+	"sentinal-chat/internal/domain/conversation"
+	"time"
+)
+
 // CreateConversationRequest is used for POST /conversations
 type CreateConversationRequest struct {
 	Type         string   `json:"type" binding:"required"` // "DM" or "GROUP"
@@ -115,4 +120,74 @@ type RegenerateInviteLinkResponse struct {
 // SequenceResponse is returned when getting/incrementing sequence
 type SequenceResponse struct {
 	Sequence int64 `json:"sequence"`
+}
+
+// ConversationSequenceDTO represents conversation sequence in API responses
+type ConversationSequenceDTO struct {
+	ConversationID string `json:"conversation_id"`
+	LastSequence   int64  `json:"last_sequence"`
+	UpdatedAt      string `json:"updated_at"`
+}
+
+// FromConversation converts a domain conversation to ConversationDTO
+func FromConversation(c conversation.Conversation) ConversationDTO {
+	dto := ConversationDTO{
+		ID:        c.ID.String(),
+		Type:      c.Type,
+		CreatedAt: c.CreatedAt.Format(time.RFC3339),
+	}
+	if c.Subject.Valid {
+		dto.Subject = c.Subject.String
+	}
+	if c.Description.Valid {
+		dto.Description = c.Description.String
+	}
+	if c.AvatarURL.Valid {
+		dto.AvatarURL = c.AvatarURL.String
+	}
+	if c.CreatedBy.Valid {
+		dto.CreatorID = c.CreatedBy.UUID.String()
+	}
+	if c.InviteLink.Valid {
+		dto.InviteLink = c.InviteLink.String
+	}
+	dto.ParticipantCount = len(c.Participants)
+	return dto
+}
+
+// FromConversationSlice converts a slice of domain conversations to ConversationDTO slice
+func FromConversationSlice(conversations []conversation.Conversation) []ConversationDTO {
+	dtos := make([]ConversationDTO, len(conversations))
+	for i, c := range conversations {
+		dtos[i] = FromConversation(c)
+	}
+	return dtos
+}
+
+// FromParticipant converts a domain participant to ParticipantDTO
+func FromParticipant(p conversation.Participant) ParticipantDTO {
+	dto := ParticipantDTO{
+		UserID:   p.UserID.String(),
+		Role:     p.Role,
+		JoinedAt: p.JoinedAt.Format(time.RFC3339),
+	}
+	return dto
+}
+
+// FromParticipantSlice converts a slice of domain participants to ParticipantDTO slice
+func FromParticipantSlice(participants []conversation.Participant) []ParticipantDTO {
+	dtos := make([]ParticipantDTO, len(participants))
+	for i, p := range participants {
+		dtos[i] = FromParticipant(p)
+	}
+	return dtos
+}
+
+// FromConversationSequence converts a domain conversation sequence to ConversationSequenceDTO
+func FromConversationSequence(s conversation.ConversationSequence) ConversationSequenceDTO {
+	return ConversationSequenceDTO{
+		ConversationID: s.ConversationID.String(),
+		LastSequence:   s.LastSequence,
+		UpdatedAt:      s.UpdatedAt.Format(time.RFC3339),
+	}
 }

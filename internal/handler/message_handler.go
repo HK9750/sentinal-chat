@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"net/http"
 	"strconv"
-	"time"
 
 	"sentinal-chat/internal/services"
 	"sentinal-chat/internal/transport/httpdto"
@@ -81,7 +80,7 @@ func (h *MessageHandler) Send(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"message": result}))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.FromSendMessage(result)))
 }
 
 func (h *MessageHandler) List(c *gin.Context) {
@@ -115,32 +114,9 @@ func (h *MessageHandler) List(c *gin.Context) {
 		return
 	}
 
-	response := make([]httpdto.MessageDTO, 0, len(items))
-	for _, item := range items {
-		dto := httpdto.MessageDTO{
-			ID:                item.ID.String(),
-			ConversationID:    item.ConversationID.String(),
-			SenderID:          item.SenderID.String(),
-			ClientMsgID:       item.ClientMessageID.String,
-			SequenceNumber:    item.SeqID.Int64,
-			IsDeleted:         item.DeletedAt.Valid,
-			IsEdited:          item.EditedAt.Valid,
-			Ciphertext:        base64.StdEncoding.EncodeToString(item.Ciphertext),
-			Header:            item.Header,
-			RecipientDeviceID: nullUUIDString(item.RecipientDeviceID),
-			CreatedAt:         item.CreatedAt.Format(time.RFC3339),
-		}
-		response = append(response, dto)
-	}
-
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"messages": response}))
-}
-
-func nullUUIDString(value uuid.NullUUID) string {
-	if value.Valid {
-		return value.UUID.String()
-	}
-	return ""
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.ListMessagesResponse{
+		Messages: httpdto.FromMessageSlice(items),
+	}))
 }
 
 func (h *MessageHandler) GetByID(c *gin.Context) {

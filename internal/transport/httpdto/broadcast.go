@@ -1,5 +1,10 @@
 package httpdto
 
+import (
+	"sentinal-chat/internal/domain/broadcast"
+	"time"
+)
+
 // CreateBroadcastRequest is used for POST /broadcasts
 type CreateBroadcastRequest struct {
 	Name        string   `json:"name" binding:"required"`
@@ -84,4 +89,44 @@ type RecipientCountResponse struct {
 // IsRecipientResponse is returned when checking if user is a recipient
 type IsRecipientResponse struct {
 	IsRecipient bool `json:"is_recipient"`
+}
+
+// FromBroadcastList converts a domain broadcast list to BroadcastDTO
+func FromBroadcastList(b broadcast.BroadcastList) BroadcastDTO {
+	dto := BroadcastDTO{
+		ID:        b.ID.String(),
+		Name:      b.Name,
+		OwnerID:   b.OwnerID.String(),
+		CreatedAt: b.CreatedAt.Format(time.RFC3339),
+	}
+	if b.Description.Valid {
+		dto.Description = b.Description.String
+	}
+	return dto
+}
+
+// FromBroadcastListSlice converts a slice of domain broadcast lists to BroadcastDTO slice
+func FromBroadcastListSlice(lists []broadcast.BroadcastList) []BroadcastDTO {
+	dtos := make([]BroadcastDTO, len(lists))
+	for i, b := range lists {
+		dtos[i] = FromBroadcastList(b)
+	}
+	return dtos
+}
+
+// FromBroadcastRecipient converts a domain broadcast recipient to RecipientDTO
+func FromBroadcastRecipient(r broadcast.BroadcastRecipient) RecipientDTO {
+	return RecipientDTO{
+		UserID:  r.UserID.String(),
+		AddedAt: r.AddedAt.Format(time.RFC3339),
+	}
+}
+
+// FromBroadcastRecipientSlice converts a slice of domain broadcast recipients to RecipientDTO slice
+func FromBroadcastRecipientSlice(recipients []broadcast.BroadcastRecipient) []RecipientDTO {
+	dtos := make([]RecipientDTO, len(recipients))
+	for i, r := range recipients {
+		dtos[i] = FromBroadcastRecipient(r)
+	}
+	return dtos
 }

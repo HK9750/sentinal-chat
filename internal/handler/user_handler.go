@@ -31,7 +31,10 @@ func (h *UserHandler) List(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"users": items, "total": total}))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.ListUsersResponse{
+		Users: httpdto.FromUserSlice(items),
+		Total: total,
+	}))
 }
 
 func (h *UserHandler) GetProfile(c *gin.Context) {
@@ -47,11 +50,11 @@ func (h *UserHandler) GetProfile(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(userInfo))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.FromUser(userInfo)))
 }
 
 func (h *UserHandler) UpdateProfile(c *gin.Context) {
-	var req user.User
+	var req httpdto.UpdateProfileRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid request", "INVALID_REQUEST"))
 		return
@@ -62,17 +65,32 @@ func (h *UserHandler) UpdateProfile(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, httpdto.NewErrorResponse("unauthorized", "UNAUTHORIZED"))
 		return
 	}
-	if req.ID == uuid.Nil {
-		req.ID = userID
-	}
 
-	updated, err := h.service.UpdateProfile(c.Request.Context(), userID, req)
+	// Get current user data
+	currentUser, err := h.service.GetByID(c.Request.Context(), userID, userID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
 
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(updated))
+	// Update fields from request
+	if req.DisplayName != "" {
+		currentUser.DisplayName = req.DisplayName
+	}
+	if req.AvatarURL != "" {
+		currentUser.AvatarURL = req.AvatarURL
+	}
+	if req.Bio != "" {
+		currentUser.Bio = req.Bio
+	}
+
+	updated, err := h.service.UpdateProfile(c.Request.Context(), userID, currentUser)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
+		return
+	}
+
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.FromUser(updated)))
 }
 
 func (h *UserHandler) DeleteProfile(c *gin.Context) {
@@ -103,11 +121,11 @@ func (h *UserHandler) GetSettings(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(settings))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.FromUserSettings(settings)))
 }
 
 func (h *UserHandler) UpdateSettings(c *gin.Context) {
-	var req user.UserSettings
+	var req httpdto.UpdateSettingsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid request", "INVALID_REQUEST"))
 		return
@@ -118,17 +136,30 @@ func (h *UserHandler) UpdateSettings(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, httpdto.NewErrorResponse("unauthorized", "UNAUTHORIZED"))
 		return
 	}
-	if req.UserID == uuid.Nil {
-		req.UserID = userID
-	}
 
-	updated, err := h.service.UpdateSettings(c.Request.Context(), userID, req)
+	// Get current settings
+	currentSettings, err := h.service.GetSettings(c.Request.Context(), userID, userID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
 
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(updated))
+	// Update fields from request
+	currentSettings.NotificationsEnabled = req.NotificationsEnabled
+	if req.Theme != "" {
+		currentSettings.Theme = req.Theme
+	}
+	if req.Language != "" {
+		currentSettings.Language = req.Language
+	}
+
+	updated, err := h.service.UpdateSettings(c.Request.Context(), userID, currentSettings)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
+		return
+	}
+
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.FromUserSettings(updated)))
 }
 
 func (h *UserHandler) ListContacts(c *gin.Context) {
@@ -144,7 +175,9 @@ func (h *UserHandler) ListContacts(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"contacts": items}))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.ContactsResponse{
+		Contacts: httpdto.FromUserContactSlice(items),
+	}))
 }
 
 func (h *UserHandler) AddContact(c *gin.Context) {
@@ -251,7 +284,9 @@ func (h *UserHandler) BlockedContacts(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"contacts": items}))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.ContactsResponse{
+		Contacts: httpdto.FromUserContactSlice(items),
+	}))
 }
 
 func (h *UserHandler) GetDevice(c *gin.Context) {
@@ -270,7 +305,7 @@ func (h *UserHandler) GetDevice(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(item))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.FromDevice(item)))
 }
 
 func (h *UserHandler) ListDevices(c *gin.Context) {
@@ -284,7 +319,9 @@ func (h *UserHandler) ListDevices(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"devices": items}))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.DevicesResponse{
+		Devices: httpdto.FromDeviceSlice(items),
+	}))
 }
 
 func (h *UserHandler) DeactivateDevice(c *gin.Context) {
@@ -316,7 +353,9 @@ func (h *UserHandler) ListPushTokens(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"tokens": items}))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.PushTokensResponse{
+		Tokens: httpdto.FromPushTokenSlice(items),
+	}))
 }
 
 func (h *UserHandler) RevokeSession(c *gin.Context) {

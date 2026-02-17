@@ -3,6 +3,7 @@ package handler
 
 import (
 	"net/http"
+	"time"
 
 	"sentinal-chat/internal/services"
 	"sentinal-chat/internal/transport/httpdto"
@@ -43,7 +44,19 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(res))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.AuthResponse{
+		AccessToken:  res.AccessToken,
+		RefreshToken: res.RefreshToken,
+		ExpiresIn:    res.ExpiresIn,
+		SessionID:    res.SessionID,
+		User: httpdto.AuthUserDTO{
+			ID:          res.User.ID,
+			DisplayName: res.User.DisplayName,
+			Username:    res.User.Username,
+			Email:       res.User.Email,
+			PhoneNumber: res.User.PhoneNumber,
+		},
+	}))
 }
 
 // Login handles user authentication.
@@ -66,7 +79,19 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(res))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.AuthResponse{
+		AccessToken:  res.AccessToken,
+		RefreshToken: res.RefreshToken,
+		ExpiresIn:    res.ExpiresIn,
+		SessionID:    res.SessionID,
+		User: httpdto.AuthUserDTO{
+			ID:          res.User.ID,
+			DisplayName: res.User.DisplayName,
+			Username:    res.User.Username,
+			Email:       res.User.Email,
+			PhoneNumber: res.User.PhoneNumber,
+		},
+	}))
 }
 
 // Refresh handles token refresh.
@@ -86,7 +111,19 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(res))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.AuthResponse{
+		AccessToken:  res.AccessToken,
+		RefreshToken: res.RefreshToken,
+		ExpiresIn:    res.ExpiresIn,
+		SessionID:    res.SessionID,
+		User: httpdto.AuthUserDTO{
+			ID:          res.User.ID,
+			DisplayName: res.User.DisplayName,
+			Username:    res.User.Username,
+			Email:       res.User.Email,
+			PhoneNumber: res.User.PhoneNumber,
+		},
+	}))
 }
 
 // Logout handles user logout.
@@ -135,7 +172,17 @@ func (h *AuthHandler) Sessions(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"sessions": sessions}))
+	// Convert service SessionInfo to DTO SessionDTO
+	sessionDTOs := make([]httpdto.SessionDTO, len(sessions))
+	for i, s := range sessions {
+		sessionDTOs[i] = httpdto.SessionDTO{
+			ID:        s.ID,
+			DeviceID:  s.DeviceID,
+			CreatedAt: s.CreatedAt.Format(time.RFC3339),
+		}
+	}
+
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.SessionsResponse{Sessions: sessionDTOs}))
 }
 
 func (h *AuthHandler) PasswordForgot(c *gin.Context) {

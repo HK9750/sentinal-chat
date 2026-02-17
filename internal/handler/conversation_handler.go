@@ -59,7 +59,7 @@ func (h *ConversationHandler) Create(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(res))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.FromConversation(res)))
 }
 
 func (h *ConversationHandler) List(c *gin.Context) {
@@ -77,7 +77,10 @@ func (h *ConversationHandler) List(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"conversations": items, "total": total}))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.ListConversationsResponse{
+		Conversations: httpdto.FromConversationSlice(items),
+		Total:         total,
+	}))
 }
 
 func (h *ConversationHandler) GetByID(c *gin.Context) {
@@ -91,20 +94,47 @@ func (h *ConversationHandler) GetByID(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(item))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.FromConversation(item)))
 }
 
 func (h *ConversationHandler) Update(c *gin.Context) {
-	var req conversation.Conversation
+	var req httpdto.UpdateConversationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid request", "INVALID_REQUEST"))
 		return
 	}
-	if err := h.service.Update(c.Request.Context(), req); err != nil {
+	conversationID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid conversation id", "INVALID_REQUEST"))
+		return
+	}
+
+	// Get existing conversation
+	existing, err := h.service.GetByID(c.Request.Context(), conversationID)
+	if err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(req))
+
+	// Update fields
+	if req.Subject != "" {
+		existing.Subject.String = req.Subject
+		existing.Subject.Valid = true
+	}
+	if req.Description != "" {
+		existing.Description.String = req.Description
+		existing.Description.Valid = true
+	}
+	if req.AvatarURL != "" {
+		existing.AvatarURL.String = req.AvatarURL
+		existing.AvatarURL.Valid = true
+	}
+
+	if err := h.service.Update(c.Request.Context(), existing); err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
+		return
+	}
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.FromConversation(existing)))
 }
 
 func (h *ConversationHandler) Delete(c *gin.Context) {
@@ -136,7 +166,7 @@ func (h *ConversationHandler) GetDirect(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(item))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.FromConversation(item)))
 }
 
 func (h *ConversationHandler) Search(c *gin.Context) {
@@ -151,7 +181,9 @@ func (h *ConversationHandler) Search(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"conversations": items}))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.ListConversationsResponse{
+		Conversations: httpdto.FromConversationSlice(items),
+	}))
 }
 
 func (h *ConversationHandler) GetByType(c *gin.Context) {
@@ -166,7 +198,9 @@ func (h *ConversationHandler) GetByType(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"conversations": items}))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.ListConversationsResponse{
+		Conversations: httpdto.FromConversationSlice(items),
+	}))
 }
 
 func (h *ConversationHandler) GetByInviteLink(c *gin.Context) {
@@ -176,7 +210,7 @@ func (h *ConversationHandler) GetByInviteLink(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(item))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.FromConversation(item)))
 }
 
 func (h *ConversationHandler) RegenerateInviteLink(c *gin.Context) {
@@ -190,7 +224,7 @@ func (h *ConversationHandler) RegenerateInviteLink(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"invite_link": link}))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.RegenerateInviteLinkResponse{InviteLink: link}))
 }
 
 func (h *ConversationHandler) AddParticipant(c *gin.Context) {
@@ -219,7 +253,7 @@ func (h *ConversationHandler) AddParticipant(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(p))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.FromParticipant(*p)))
 }
 
 func (h *ConversationHandler) RemoveParticipant(c *gin.Context) {
@@ -251,7 +285,9 @@ func (h *ConversationHandler) ListParticipants(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"participants": items}))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.ParticipantsResponse{
+		Participants: httpdto.FromParticipantSlice(items),
+	}))
 }
 
 func (h *ConversationHandler) UpdateParticipantRole(c *gin.Context) {
@@ -429,7 +465,7 @@ func (h *ConversationHandler) GetSequence(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(item))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.FromConversationSequence(item)))
 }
 
 func (h *ConversationHandler) IncrementSequence(c *gin.Context) {
@@ -443,5 +479,5 @@ func (h *ConversationHandler) IncrementSequence(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{"sequence": seq}))
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.SequenceResponse{Sequence: seq}))
 }

@@ -1,5 +1,13 @@
 package httpdto
 
+import (
+	"encoding/base64"
+	"sentinal-chat/internal/domain/message"
+	"time"
+
+	"github.com/google/uuid"
+)
+
 // SendMessageRequest is used for POST /messages
 type SendMessageRequest struct {
 	ConversationID string                   `json:"conversation_id" binding:"required"`
@@ -57,4 +65,69 @@ type MessageDTO struct {
 // UpdateMessageRequest is used for PUT /messages/:id
 type UpdateMessageRequest struct {
 	Ciphertext string `json:"ciphertext" binding:"required"`
+}
+
+// FromMessage converts a domain message to MessageDTO
+func FromMessage(m message.Message) MessageDTO {
+	dto := MessageDTO{
+		ID:             m.ID.String(),
+		ConversationID: m.ConversationID.String(),
+		SenderID:       m.SenderID.String(),
+		CreatedAt:      m.CreatedAt.Format(time.RFC3339),
+		IsDeleted:      m.DeletedAt.Valid,
+		IsEdited:       m.EditedAt.Valid,
+	}
+	if m.ClientMessageID.Valid {
+		dto.ClientMsgID = m.ClientMessageID.String
+	}
+	if m.SeqID.Valid {
+		dto.SequenceNumber = m.SeqID.Int64
+	}
+	if len(m.Ciphertext) > 0 {
+		dto.Ciphertext = base64.StdEncoding.EncodeToString(m.Ciphertext)
+	}
+	if m.Header != "" {
+		dto.Header = m.Header
+	}
+	if m.RecipientDeviceID.Valid {
+		dto.RecipientDeviceID = m.RecipientDeviceID.UUID.String()
+	}
+	if m.EditedAt.Valid {
+		dto.UpdatedAt = m.EditedAt.Time.Format(time.RFC3339)
+	}
+	return dto
+}
+
+// FromSendMessage converts a domain message to SendMessageResponse
+func FromSendMessage(m message.Message) SendMessageResponse {
+	res := SendMessageResponse{
+		ID:             m.ID.String(),
+		ConversationID: m.ConversationID.String(),
+		SenderID:       m.SenderID.String(),
+		CreatedAt:      m.CreatedAt.Format(time.RFC3339),
+	}
+	if m.ClientMessageID.Valid {
+		res.ClientMsgID = m.ClientMessageID.String
+	}
+	if m.SeqID.Valid {
+		res.SequenceNumber = m.SeqID.Int64
+	}
+	return res
+}
+
+// FromMessageSlice converts a slice of domain messages to MessageDTO slice
+func FromMessageSlice(messages []message.Message) []MessageDTO {
+	dtos := make([]MessageDTO, len(messages))
+	for i, m := range messages {
+		dtos[i] = FromMessage(m)
+	}
+	return dtos
+}
+
+// NullUUIDString converts a uuid.NullUUID to string
+func NullUUIDString(value uuid.NullUUID) string {
+	if value.Valid {
+		return value.UUID.String()
+	}
+	return ""
 }
