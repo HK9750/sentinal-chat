@@ -92,8 +92,8 @@ type SessionInfo struct {
 	DeviceName string    `json:"device_name,omitempty"`
 	DeviceType string    `json:"device_type,omitempty"`
 	ExpiresAt  time.Time `json:"expires_at"`
-	CreatedAt time.Time `json:"created_at"`
-	IsRevoked bool      `json:"is_revoked"`
+	CreatedAt  time.Time `json:"created_at"`
+	IsRevoked  bool      `json:"is_revoked"`
 }
 
 type AccessClaims struct {
@@ -335,6 +335,7 @@ func (s *AuthService) Sessions(ctx context.Context, userID uuid.UUID) ([]Session
 	}
 
 	result := make([]SessionInfo, 0, len(sessions))
+	deviceCache := make(map[uuid.UUID]user.Device)
 	for _, session := range sessions {
 		item := SessionInfo{
 			ID:        session.ID.String(),
@@ -342,10 +343,23 @@ func (s *AuthService) Sessions(ctx context.Context, userID uuid.UUID) ([]Session
 			CreatedAt: session.CreatedAt,
 			IsRevoked: session.IsRevoked,
 		}
-		if session.DeviceID != nil && session.Device != nil {
+		if session.DeviceID != nil {
 			item.DeviceID = session.DeviceID.String()
-			item.DeviceName = session.Device.DeviceName
-			item.DeviceType = session.Device.DeviceType
+			if session.Device != nil {
+				item.DeviceName = session.Device.DeviceName
+				item.DeviceType = session.Device.DeviceType
+				deviceCache[*session.DeviceID] = *session.Device
+			} else if cached, ok := deviceCache[*session.DeviceID]; ok {
+				item.DeviceName = cached.DeviceName
+				item.DeviceType = cached.DeviceType
+			} else {
+				device, err := s.userRepo.GetDeviceByID(ctx, *session.DeviceID)
+				if err == nil {
+					deviceCache[device.ID] = device
+					item.DeviceName = device.DeviceName
+					item.DeviceType = device.DeviceType
+				}
+			}
 		}
 		result = append(result, item)
 	}
