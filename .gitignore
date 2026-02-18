@@ -34,5 +34,8 @@ Thumbs.db
 *.log
 logs/
 
+#Executable binary
+main
+
 #Postman
 postman/*
