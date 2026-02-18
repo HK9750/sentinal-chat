@@ -338,7 +338,7 @@ CREATE TABLE IF NOT EXISTS identity_keys (
   public_key BYTEA NOT NULL,
   is_active BOOLEAN DEFAULT TRUE,
   created_at TIMESTAMP DEFAULT NOW(),
-  UNIQUE (device_id)
+  UNIQUE (user_id, device_id)
 );
 
 CREATE TABLE IF NOT EXISTS signed_prekeys (

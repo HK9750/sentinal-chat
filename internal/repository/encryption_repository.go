@@ -33,14 +33,17 @@ func (r *PostgresEncryptionRepository) IsDeviceOwnedByUser(ctx context.Context, 
 }
 
 func (r *PostgresEncryptionRepository) CreateIdentityKey(ctx context.Context, k *encryption.IdentityKey) error {
-	res := r.db.WithContext(ctx).Create(k)
-	if res.Error != nil {
-		if errors.Is(res.Error, gorm.ErrDuplicatedKey) {
-			return sentinal_errors.ErrAlreadyExists
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Remove any existing identity key for this user+device to handle retries
+		tx.Where("user_id = ? AND device_id = ?", k.UserID, k.DeviceID).
+			Delete(&encryption.IdentityKey{})
+
+		// Insert the new key
+		if err := tx.Create(k).Error; err != nil {
+			return err
 		}
-		return res.Error
-	}
-	return nil
+		return nil
+	})
 }
 
 func (r *PostgresEncryptionRepository) GetIdentityKey(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID) (encryption.IdentityKey, error) {
