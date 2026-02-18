@@ -49,6 +49,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		RefreshToken: res.RefreshToken,
 		ExpiresIn:    res.ExpiresIn,
 		SessionID:    res.SessionID,
+		DeviceID:     res.DeviceID,
 		User: httpdto.AuthUserDTO{
 			ID:          res.User.ID,
 			DisplayName: res.User.DisplayName,
@@ -84,6 +85,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		RefreshToken: res.RefreshToken,
 		ExpiresIn:    res.ExpiresIn,
 		SessionID:    res.SessionID,
+		DeviceID:     res.DeviceID,
 		User: httpdto.AuthUserDTO{
 			ID:          res.User.ID,
 			DisplayName: res.User.DisplayName,
@@ -116,6 +118,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		RefreshToken: res.RefreshToken,
 		ExpiresIn:    res.ExpiresIn,
 		SessionID:    res.SessionID,
+		DeviceID:     res.DeviceID,
 		User: httpdto.AuthUserDTO{
 			ID:          res.User.ID,
 			DisplayName: res.User.DisplayName,

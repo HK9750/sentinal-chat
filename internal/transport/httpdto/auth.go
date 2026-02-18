@@ -50,6 +50,7 @@ type AuthResponse struct {
 	RefreshToken string      `json:"refresh_token,omitempty"`
 	ExpiresIn    int64       `json:"expires_in"`
 	SessionID    string      `json:"session_id"`
+	DeviceID     string      `json:"device_id,omitempty"`
 	User         AuthUserDTO `json:"user"`
 }
 

@@ -75,6 +75,7 @@ type AuthResponse struct {
 	RefreshToken string   `json:"refresh_token,omitempty"`
 	ExpiresIn    int64    `json:"expires_in"`
 	SessionID    string   `json:"session_id"`
+	DeviceID     string   `json:"device_id,omitempty"`
 	User         UserInfo `json:"user"`
 }
 
@@ -180,11 +181,17 @@ func (s *AuthService) Register(ctx context.Context, in RegisterInput) (AuthRespo
 		return AuthResponse{}, err
 	}
 
+	var deviceIDStr string
+	if deviceID.Valid {
+		deviceIDStr = deviceID.UUID.String()
+	}
+
 	return AuthResponse{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
 		ExpiresIn:    expiresIn,
 		SessionID:    session.ID.String(),
+		DeviceID:     deviceIDStr,
 		User:         toUserInfo(*newUser),
 	}, nil
 }
@@ -239,11 +246,17 @@ func (s *AuthService) Login(ctx context.Context, in LoginInput) (AuthResponse, e
 		return AuthResponse{}, err
 	}
 
+	var deviceIDStr string
+	if deviceID.Valid {
+		deviceIDStr = deviceID.UUID.String()
+	}
+
 	return AuthResponse{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
 		ExpiresIn:    expiresIn,
 		SessionID:    session.ID.String(),
+		DeviceID:     deviceIDStr,
 		User:         toUserInfo(u),
 	}, nil
 }
@@ -294,11 +307,17 @@ func (s *AuthService) Refresh(ctx context.Context, in RefreshInput) (AuthRespons
 		return AuthResponse{}, err
 	}
 
+	var deviceIDStr string
+	if session.DeviceID != nil {
+		deviceIDStr = session.DeviceID.String()
+	}
+
 	return AuthResponse{
 		AccessToken:  accessToken,
 		RefreshToken: newRefresh,
 		ExpiresIn:    expiresIn,
 		SessionID:    session.ID.String(),
+		DeviceID:     deviceIDStr,
 		User:         toUserInfo(userInfo),
 	}, nil
 }
