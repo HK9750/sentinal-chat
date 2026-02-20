@@ -9,7 +9,6 @@ import (
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
-	"gorm.io/gorm"
 	"sentinal-chat/internal/commands"
 	"sentinal-chat/internal/domain/command"
 	"sentinal-chat/internal/domain/message"
@@ -18,7 +17,7 @@ import (
 
 // CommandExecutor executes commands with transactions and logging
 type CommandExecutor struct {
-	db             *gorm.DB
+	db             repository.DBTX
 	commandRepo    repository.CommandRepository
 	messageRepo    repository.MessageRepository
 	convRepo       repository.ConversationRepository
@@ -29,7 +28,7 @@ type CommandExecutor struct {
 
 // NewCommandExecutor creates a new command executor
 func NewCommandExecutor(
-	db *gorm.DB,
+	db repository.DBTX,
 	commandRepo repository.CommandRepository,
 	messageRepo repository.MessageRepository,
 	convRepo repository.ConversationRepository,
@@ -124,7 +123,7 @@ func (e *CommandExecutor) executeSendMessage(ctx context.Context, cmd *commands.
 		CreatedAt:      time.Now(),
 	}
 
-	return e.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	return repository.WithTx(ctx, e.db, func(tx repository.DBTX) error {
 		msgRepo := repository.NewMessageRepository(tx)
 		if err := msgRepo.Create(ctx, &msg); err != nil {
 			return err
@@ -150,7 +149,7 @@ func (e *CommandExecutor) executeDeleteMessage(ctx context.Context, cmd *command
 	// Store original state for undo
 	cmd.OriginalContent = msg.Content.String
 
-	return e.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	return repository.WithTx(ctx, e.db, func(tx repository.DBTX) error {
 		msgRepo := repository.NewMessageRepository(tx)
 
 		if cmd.DeleteForAll {
@@ -178,7 +177,7 @@ func (e *CommandExecutor) executeEditMessage(ctx context.Context, cmd *commands.
 	// Store previous content
 	cmd.PreviousContent = msg.Content.String
 
-	return e.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	return repository.WithTx(ctx, e.db, func(tx repository.DBTX) error {
 		msgRepo := repository.NewMessageRepository(tx)
 
 		// Create version record

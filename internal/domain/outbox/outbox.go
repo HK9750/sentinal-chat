@@ -18,16 +18,16 @@ const (
 
 // OutboxEvent stores domain events waiting to be published to Redis
 type OutboxEvent struct {
-	ID            uuid.UUID `gorm:"type:uuid;primary_key;default:gen_random_uuid()"`
-	EventType     string    `gorm:"type:varchar(50);not null"`
-	AggregateType string    `gorm:"type:varchar(50);not null"`
-	AggregateID   string    `gorm:"type:varchar(36);not null"`
-	Payload       []byte    `gorm:"type:jsonb;not null"`
-	Status        Status    `gorm:"type:varchar(20);not null;default:'PENDING'"`
-	RetryCount    int       `gorm:"default:0"`
-	Error         string    `gorm:"type:text"`
-	CreatedAt     time.Time `gorm:"not null;default:now()"`
-	UpdatedAt     time.Time `gorm:"not null;default:now()"`
+	ID            uuid.UUID
+	EventType     string
+	AggregateType string
+	AggregateID   string
+	Payload       []byte
+	Status        Status
+	RetryCount    int
+	Error         string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 	ProcessedAt   *time.Time
 }
 

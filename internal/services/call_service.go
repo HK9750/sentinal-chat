@@ -11,19 +11,18 @@ import (
 	sentinal_errors "sentinal-chat/pkg/errors"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 )
 
 // CallService handles voice/video calls and WebRTC signaling.
 type CallService struct {
-	db             *gorm.DB
+	db             repository.DBTX
 	repo           repository.CallRepository
 	signalingStore *redis.SignalingStore
 	eventPublisher *EventPublisher
 }
 
 // NewCallService creates a call service with dependencies.
-func NewCallService(db *gorm.DB, repo repository.CallRepository, signalingStore *redis.SignalingStore, eventPublisher *EventPublisher) *CallService {
+func NewCallService(db repository.DBTX, repo repository.CallRepository, signalingStore *redis.SignalingStore, eventPublisher *EventPublisher) *CallService {
 	return &CallService{db: db, repo: repo, signalingStore: signalingStore, eventPublisher: eventPublisher}
 }
 
@@ -104,7 +103,7 @@ func (s *CallService) EndCall(ctx context.Context, callID uuid.UUID, reason stri
 
 	if s.eventPublisher != nil && s.db != nil {
 		duration, _ := s.repo.GetCallDuration(ctx, callID)
-		return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return repository.WithTx(ctx, s.db, func(tx repository.DBTX) error {
 			return s.eventPublisher.PublishCallEnded(ctx, tx, callID, call.ConversationID, call.InitiatedBy, reason, int(duration))
 		})
 	}
@@ -169,7 +168,7 @@ func (s *CallService) SendOffer(ctx context.Context, callID, fromID, toID uuid.U
 	}
 
 	if s.eventPublisher != nil && s.db != nil {
-		return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return repository.WithTx(ctx, s.db, func(tx repository.DBTX) error {
 			return s.eventPublisher.PublishCallOffer(ctx, tx, callID, fromID, toID, sdp)
 		})
 	}
@@ -192,7 +191,7 @@ func (s *CallService) SendAnswer(ctx context.Context, callID, fromID, toID uuid.
 	}
 
 	if s.eventPublisher != nil && s.db != nil {
-		return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return repository.WithTx(ctx, s.db, func(tx repository.DBTX) error {
 			return s.eventPublisher.PublishCallAnswer(ctx, tx, callID, fromID, toID, sdp)
 		})
 	}
@@ -216,7 +215,7 @@ func (s *CallService) SendICECandidate(ctx context.Context, callID, fromID, toID
 	}
 
 	if s.eventPublisher != nil && s.db != nil {
-		return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return repository.WithTx(ctx, s.db, func(tx repository.DBTX) error {
 			return s.eventPublisher.PublishCallICE(ctx, tx, callID, fromID, toID, candidate)
 		})
 	}

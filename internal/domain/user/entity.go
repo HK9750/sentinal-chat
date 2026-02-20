@@ -9,56 +9,56 @@ import (
 
 // User represents the users table
 type User struct {
-	ID           uuid.UUID      `gorm:"type:uuid;primaryKey;default:uuid_generate_v4()"`
-	PhoneNumber  sql.NullString `gorm:"type:citext;unique"`
-	Username     sql.NullString `gorm:"type:citext;unique"`
-	Email        sql.NullString `gorm:"type:citext;unique"`
-	PasswordHash string         `gorm:"not null"`
-	DisplayName  string         `gorm:"not null"`
-	Role         string         `gorm:"type:user_role;default:'USER'"` // SUPER_ADMIN, ADMIN, MODERATOR, USER
+	ID           uuid.UUID
+	PhoneNumber  sql.NullString
+	Username     sql.NullString
+	Email        sql.NullString
+	PasswordHash string
+	DisplayName  string
+	Role         string // SUPER_ADMIN, ADMIN, MODERATOR, USER
 	Bio          string
 	AvatarURL    string
-	IsOnline     bool `gorm:"default:false"`
+	IsOnline     bool
 	LastSeenAt   sql.NullTime
-	IsActive     bool      `gorm:"default:true"`
-	IsVerified   bool      `gorm:"default:false"`
-	CreatedAt    time.Time `gorm:"default:now()"`
-	UpdatedAt    time.Time `gorm:"default:now()"`
+	IsActive     bool
+	IsVerified   bool
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 
 	// Relationships
-	Settings UserSettings  `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE"`
-	Devices  []Device      `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE"`
-	Sessions []UserSession `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE"`
+	Settings UserSettings
+	Devices  []Device
+	Sessions []UserSession
 }
 
 // UserSettings represents the user_settings table
 type UserSettings struct {
-	UserID                  uuid.UUID `gorm:"type:uuid;primaryKey"`
-	PrivacyLastSeen         string    `gorm:"type:privacy_setting;default:'EVERYONE'"`
-	PrivacyProfilePhoto     string    `gorm:"type:privacy_setting;default:'EVERYONE'"`
-	PrivacyAbout            string    `gorm:"type:privacy_setting;default:'EVERYONE'"`
-	PrivacyGroups           string    `gorm:"type:privacy_setting;default:'EVERYONE'"`
-	ReadReceipts            bool      `gorm:"default:true"`
-	NotificationsEnabled    bool      `gorm:"default:true"`
-	NotificationSound       string    `gorm:"default:'default'"`
-	NotificationVibrate     bool      `gorm:"default:true"`
-	Theme                   string    `gorm:"type:theme_mode;default:'SYSTEM'"`
-	Language                string    `gorm:"type:language_code;default:'en'"`
-	EnterToSend             bool      `gorm:"default:true"`
-	MediaAutoDownloadWiFi   bool      `gorm:"column:media_auto_download_wifi;default:true"`
-	MediaAutoDownloadMobile bool      `gorm:"column:media_auto_download_mobile;default:false"`
-	UpdatedAt               time.Time `gorm:"default:now()"`
+	UserID                  uuid.UUID
+	PrivacyLastSeen         string
+	PrivacyProfilePhoto     string
+	PrivacyAbout            string
+	PrivacyGroups           string
+	ReadReceipts            bool
+	NotificationsEnabled    bool
+	NotificationSound       string
+	NotificationVibrate     bool
+	Theme                   string
+	Language                string
+	EnterToSend             bool
+	MediaAutoDownloadWiFi   bool
+	MediaAutoDownloadMobile bool
+	UpdatedAt               time.Time
 }
 
 // Device represents the devices table
 type Device struct {
-	ID           uuid.UUID `gorm:"type:uuid;primaryKey;default:uuid_generate_v4()"`
-	UserID       uuid.UUID `gorm:"type:uuid;not null"`
-	DeviceID     string    `gorm:"not null"`
+	ID           uuid.UUID
+	UserID       uuid.UUID
+	DeviceID     string
 	DeviceName   string
 	DeviceType   string
-	IsActive     bool      `gorm:"default:true"`
-	RegisteredAt time.Time `gorm:"default:now()"`
+	IsActive     bool
+	RegisteredAt time.Time
 	LastSeenAt   sql.NullTime
 
 	// Unique constraint handled by index in SQL, but good to note: UNIQUE(user_id, device_id)
@@ -66,35 +66,35 @@ type Device struct {
 
 // PushToken represents the push_tokens table
 type PushToken struct {
-	ID         uuid.UUID `gorm:"type:uuid;primaryKey;default:uuid_generate_v4()"`
-	UserID     uuid.UUID `gorm:"type:uuid;not null"`
-	DeviceID   uuid.UUID `gorm:"type:uuid;not null"`
-	Platform   string    `gorm:"not null"`
-	Token      string    `gorm:"not null"`
-	IsActive   bool      `gorm:"default:true"`
-	CreatedAt  time.Time `gorm:"default:now()"`
+	ID         uuid.UUID
+	UserID     uuid.UUID
+	DeviceID   uuid.UUID
+	Platform   string
+	Token      string
+	IsActive   bool
+	CreatedAt  time.Time
 	LastUsedAt sql.NullTime
 }
 
 // UserSession represents the user_sessions table
 type UserSession struct {
-	ID               uuid.UUID     `gorm:"type:uuid;primaryKey;default:uuid_generate_v4()"`
-	UserID           uuid.UUID     `gorm:"type:uuid;not null"`
-	DeviceID         *uuid.UUID    `gorm:"type:uuid"`
-	Device           *Device       `gorm:"foreignKey:DeviceID;references:ID"`
-	RefreshTokenHash string        `gorm:"not null"`
-	ExpiresAt        time.Time     `gorm:"not null"`
-	IsRevoked        bool          `gorm:"default:false"`
-	CreatedAt        time.Time     `gorm:"default:now()"`
+	ID               uuid.UUID
+	UserID           uuid.UUID
+	DeviceID         *uuid.UUID
+	Device           *Device
+	RefreshTokenHash string
+	ExpiresAt        time.Time
+	IsRevoked        bool
+	CreatedAt        time.Time
 }
 
 // UserContact represents the user_contacts table
 type UserContact struct {
-	UserID        uuid.UUID `gorm:"type:uuid;primaryKey"`
-	ContactUserID uuid.UUID `gorm:"type:uuid;primaryKey"`
+	UserID        uuid.UUID
+	ContactUserID uuid.UUID
 	Nickname      string
-	IsBlocked     bool      `gorm:"default:false"`
-	CreatedAt     time.Time `gorm:"default:now()"`
+	IsBlocked     bool
+	CreatedAt     time.Time
 }
 
 func (User) TableName() string {

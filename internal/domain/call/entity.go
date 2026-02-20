@@ -9,29 +9,29 @@ import (
 
 // Call represents calls table
 type Call struct {
-	ID              uuid.UUID `gorm:"type:uuid;primaryKey;default:uuid_generate_v4()"`
-	ConversationID  uuid.UUID `gorm:"type:uuid;not null"`
-	InitiatedBy     uuid.UUID `gorm:"type:uuid;not null"`
-	Type            string    `gorm:"type:call_type;not null"`
-	Topology        string    `gorm:"type:call_topology;not null"`
-	IsGroupCall     bool      `gorm:"default:false"`
-	StartedAt       time.Time `gorm:"default:now()"`
+	ID              uuid.UUID
+	ConversationID  uuid.UUID
+	InitiatedBy     uuid.UUID
+	Type            string
+	Topology        string
+	IsGroupCall     bool
+	StartedAt       time.Time
 	ConnectedAt     sql.NullTime
 	EndedAt         sql.NullTime
-	EndReason       sql.NullString `gorm:"type:call_end_reason"` // Using NullString for nullable enum
+	EndReason       sql.NullString
 	DurationSeconds sql.NullInt32
-	CreatedAt       time.Time `gorm:"default:now()"`
+	CreatedAt       time.Time
 }
 
 // CallParticipant represents call_participants
 type CallParticipant struct {
-	CallID     uuid.UUID `gorm:"type:uuid;primaryKey"`
-	UserID     uuid.UUID `gorm:"type:uuid;primaryKey"`
-	Status     string    `gorm:"type:participant_call_status;default:'INVITED'"`
+	CallID     uuid.UUID
+	UserID     uuid.UUID
+	Status     string
 	JoinedAt   sql.NullTime
 	LeftAt     sql.NullTime
-	MutedAudio bool `gorm:"default:false"`
-	MutedVideo bool `gorm:"default:false"`
+	MutedAudio bool
+	MutedVideo bool
 	DeviceType string
 }
 
@@ -45,20 +45,20 @@ func (CallParticipant) TableName() string {
 
 // CallQualityMetric represents call_quality_metrics
 type CallQualityMetric struct {
-	ID               uuid.UUID `gorm:"type:uuid;primaryKey;default:uuid_generate_v4()"`
-	CallID           uuid.UUID `gorm:"type:uuid;not null"`
-	UserID           uuid.UUID `gorm:"type:uuid;not null"`
-	RecordedAt       time.Time `gorm:"default:now()"`
+	ID               uuid.UUID
+	CallID           uuid.UUID
+	UserID           uuid.UUID
+	RecordedAt       time.Time
 	PacketsSent      int64
 	PacketsReceived  int64
 	PacketsLost      int64
-	JitterMs         float64 `gorm:"type:decimal"`
-	RoundTripTimeMs  float64 `gorm:"type:decimal"`
+	JitterMs         float64
+	RoundTripTimeMs  float64
 	BitrateKbps      int
 	FrameRate        int
 	ResolutionWidth  int
 	ResolutionHeight int
-	AudioLevel       float64 `gorm:"type:decimal"`
+	AudioLevel       float64
 	ConnectionType   string
 	IceCandidateType string
 }

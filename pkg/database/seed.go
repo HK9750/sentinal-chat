@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/json"
@@ -15,7 +16,6 @@ import (
 
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
-	"gorm.io/gorm"
 )
 
 // SeedConfig holds configuration for seeding the database
@@ -75,14 +75,12 @@ func Seed(cfg *SeedConfig) (*SeedResult, error) {
 	}
 
 	if cfg.CreateTestUsers {
-		// Create test users
 		testUsers, err := seedTestUsers(cfg.TestUserCount)
 		if err != nil {
 			return nil, fmt.Errorf("failed to seed test users: %w", err)
 		}
 		result.TestUsers = testUsers
 
-		// Create sample conversations
 		if len(testUsers) >= 2 {
 			devices, err := seedDevices(testUsers)
 			if err != nil {
@@ -101,7 +99,6 @@ func Seed(cfg *SeedConfig) (*SeedResult, error) {
 			}
 			result.Conversations = convs
 
-			// Create sample messages
 			msgs, err := seedMessages(convs, testUsers, deviceMap)
 			if err != nil {
 				return nil, fmt.Errorf("failed to seed messages: %w", err)
@@ -109,11 +106,9 @@ func Seed(cfg *SeedConfig) (*SeedResult, error) {
 			result.Messages = msgs
 		}
 
-		// Create sample broadcast lists
 		if err := seedBroadcasts(testUsers); err != nil {
 			return nil, fmt.Errorf("failed to seed broadcasts: %w", err)
 		}
-
 	}
 
 	log.Println("Database seeding completed successfully!")
@@ -141,7 +136,7 @@ func seedAdminUser(cfg *SeedConfig) (*user.User, error) {
 		Username:     sql.NullString{String: cfg.AdminUsername, Valid: true},
 		PasswordHash: string(hashedPassword),
 		DisplayName:  cfg.AdminDisplayName,
-		Role:         "SUPER_ADMIN", // System-wide admin role
+		Role:         "SUPER_ADMIN",
 		Bio:          "System Administrator",
 		IsActive:     true,
 		IsVerified:   true,
@@ -150,21 +145,36 @@ func seedAdminUser(cfg *SeedConfig) (*user.User, error) {
 		UpdatedAt:    time.Now(),
 	}
 
-	err = DB.Transaction(func(tx *gorm.DB) error {
-		// Check if admin already exists
+	ctx := context.Background()
+	err = WithTx(ctx, DB, func(tx *sql.Tx) error {
 		var existing user.User
-		if err := tx.Where("email = ?", cfg.AdminEmail).First(&existing).Error; err == nil {
+		if err := tx.QueryRowContext(ctx, "SELECT id FROM users WHERE email = $1", cfg.AdminEmail).Scan(&existing.ID); err == nil {
 			log.Println("Admin user already exists, skipping creation")
-			*adminUser = existing
+			adminUser.ID = existing.ID
 			return nil
 		}
 
-		// Create admin user
-		if err := tx.Create(adminUser).Error; err != nil {
+		_, err := tx.ExecContext(ctx, `
+            INSERT INTO users (id, email, username, password_hash, display_name, role, bio, is_active, is_verified, is_online, created_at, updated_at)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+        `,
+			adminUser.ID,
+			adminUser.Email,
+			adminUser.Username,
+			adminUser.PasswordHash,
+			adminUser.DisplayName,
+			adminUser.Role,
+			adminUser.Bio,
+			adminUser.IsActive,
+			adminUser.IsVerified,
+			adminUser.IsOnline,
+			adminUser.CreatedAt,
+			adminUser.UpdatedAt,
+		)
+		if err != nil {
 			return err
 		}
 
-		// Create admin settings
 		settings := &user.UserSettings{
 			UserID:                  adminUser.ID,
 			PrivacyLastSeen:         "CONTACTS",
@@ -182,7 +192,30 @@ func seedAdminUser(cfg *SeedConfig) (*user.User, error) {
 			MediaAutoDownloadMobile: false,
 			UpdatedAt:               time.Now(),
 		}
-		return tx.Create(settings).Error
+		_, err = tx.ExecContext(ctx, `
+            INSERT INTO user_settings (
+                user_id, privacy_last_seen, privacy_profile_photo, privacy_about, privacy_groups,
+                read_receipts, notifications_enabled, notification_sound, notification_vibrate,
+                theme, language, enter_to_send, media_auto_download_wifi, media_auto_download_mobile, updated_at
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+        `,
+			settings.UserID,
+			settings.PrivacyLastSeen,
+			settings.PrivacyProfilePhoto,
+			settings.PrivacyAbout,
+			settings.PrivacyGroups,
+			settings.ReadReceipts,
+			settings.NotificationsEnabled,
+			settings.NotificationSound,
+			settings.NotificationVibrate,
+			settings.Theme,
+			settings.Language,
+			settings.EnterToSend,
+			settings.MediaAutoDownloadWiFi,
+			settings.MediaAutoDownloadMobile,
+			settings.UpdatedAt,
+		)
+		return err
 	})
 
 	if err != nil {
@@ -220,14 +253,14 @@ func seedTestUsers(count int) ([]*user.User, error) {
 		return nil, err
 	}
 
+	ctx := context.Background()
 	for i := 0; i < count && i < len(testUserData); i++ {
 		data := testUserData[i]
 
-		// Check if user exists
-		var existing user.User
-		if DB.Where("email = ?", data.email).First(&existing).Error == nil {
+		var existingID uuid.UUID
+		if err := DB.QueryRowContext(ctx, "SELECT id FROM users WHERE email = $1", data.email).Scan(&existingID); err == nil {
 			log.Printf("Test user %s already exists, skipping", data.email)
-			users = append(users, &existing)
+			users = append(users, &user.User{ID: existingID, Email: sql.NullString{String: data.email, Valid: true}})
 			continue
 		}
 
@@ -238,17 +271,21 @@ func seedTestUsers(count int) ([]*user.User, error) {
 			PhoneNumber:  sql.NullString{String: data.phone, Valid: true},
 			PasswordHash: string(hashedPassword),
 			DisplayName:  data.displayName,
-			Role:         "USER", // Regular user role
+			Role:         "USER",
 			Bio:          data.bio,
 			IsActive:     true,
 			IsVerified:   true,
-			IsOnline:     i%2 == 0, // Some users online
+			IsOnline:     i%2 == 0,
 			CreatedAt:    time.Now(),
 			UpdatedAt:    time.Now(),
 		}
 
-		err := DB.Transaction(func(tx *gorm.DB) error {
-			if err := tx.Create(newUser).Error; err != nil {
+		err := WithTx(ctx, DB, func(tx *sql.Tx) error {
+			_, err := tx.ExecContext(ctx, `
+                INSERT INTO users (id, email, username, phone_number, password_hash, display_name, role, bio, is_active, is_verified, is_online, created_at, updated_at)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+            `, newUser.ID, newUser.Email, newUser.Username, newUser.PhoneNumber, newUser.PasswordHash, newUser.DisplayName, newUser.Role, newUser.Bio, newUser.IsActive, newUser.IsVerified, newUser.IsOnline, newUser.CreatedAt, newUser.UpdatedAt)
+			if err != nil {
 				return err
 			}
 
@@ -264,9 +301,14 @@ func seedTestUsers(count int) ([]*user.User, error) {
 				Language:             "en",
 				UpdatedAt:            time.Now(),
 			}
-			return tx.Create(settings).Error
+			_, err = tx.ExecContext(ctx, `
+                INSERT INTO user_settings (
+                    user_id, privacy_last_seen, privacy_profile_photo, privacy_about, privacy_groups,
+                    read_receipts, notifications_enabled, theme, language, updated_at
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+            `, settings.UserID, settings.PrivacyLastSeen, settings.PrivacyProfilePhoto, settings.PrivacyAbout, settings.PrivacyGroups, settings.ReadReceipts, settings.NotificationsEnabled, settings.Theme, settings.Language, settings.UpdatedAt)
+			return err
 		})
-
 		if err != nil {
 			return nil, fmt.Errorf("failed to create test user %s: %w", data.email, err)
 		}
@@ -282,25 +324,28 @@ func seedTestUsers(count int) ([]*user.User, error) {
 func seedConversations(users []*user.User) ([]*conversation.Conversation, error) {
 	conversations := make([]*conversation.Conversation, 0)
 
-	// Create a DM conversation between first two users
 	if len(users) >= 2 {
 		emptyJSON := "{}"
 		dmConv := &conversation.Conversation{
 			ID:               uuid.New(),
 			Type:             "DM",
 			DisappearingMode: "OFF",
-			GroupPermissions: &emptyJSON, // Empty JSON object for JSONB field
+			GroupPermissions: &emptyJSON,
 			CreatedBy:        uuid.NullUUID{UUID: users[0].ID, Valid: true},
 			CreatedAt:        time.Now(),
 			UpdatedAt:        time.Now(),
 		}
 
-		err := DB.Transaction(func(tx *gorm.DB) error {
-			if err := tx.Create(dmConv).Error; err != nil {
+		ctx := context.Background()
+		err := WithTx(ctx, DB, func(tx *sql.Tx) error {
+			_, err := tx.ExecContext(ctx, `
+                INSERT INTO conversations (id, type, subject, description, avatar_url, expiry_seconds, disappearing_mode, message_expiry_seconds, group_permissions, invite_link, invite_link_revoked_at, created_by, created_at, updated_at)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+            `, dmConv.ID, dmConv.Type, dmConv.Subject, dmConv.Description, dmConv.AvatarURL, dmConv.ExpirySeconds, dmConv.DisappearingMode, dmConv.MessageExpirySeconds, dmConv.GroupPermissions, dmConv.InviteLink, dmConv.InviteLinkRevokedAt, dmConv.CreatedBy, dmConv.CreatedAt, dmConv.UpdatedAt)
+			if err != nil {
 				return err
 			}
 
-			// Add participants
 			for _, u := range users[:2] {
 				participant := &conversation.Participant{
 					ConversationID:   dmConv.ID,
@@ -308,20 +353,22 @@ func seedConversations(users []*user.User) ([]*conversation.Conversation, error)
 					Role:             "MEMBER",
 					JoinedAt:         time.Now(),
 					LastReadSequence: 0,
-					Permissions:      &emptyJSON, // Empty JSON object for JSONB field
+					Permissions:      &emptyJSON,
 				}
-				if err := tx.Create(participant).Error; err != nil {
+				_, err := tx.ExecContext(ctx, `
+                    INSERT INTO participants (conversation_id, user_id, role, joined_at, added_by, muted_until, pinned_at, archived, last_read_sequence, permissions)
+                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+                `, participant.ConversationID, participant.UserID, participant.Role, participant.JoinedAt, participant.AddedBy, participant.MutedUntil, participant.PinnedAt, participant.Archived, participant.LastReadSequence, participant.Permissions)
+				if err != nil {
 					return err
 				}
 			}
 
-			// Create conversation sequence
-			seq := &conversation.ConversationSequence{
-				ConversationID: dmConv.ID,
-				LastSequence:   0,
-				UpdatedAt:      time.Now(),
-			}
-			return tx.Create(seq).Error
+			_, err = tx.ExecContext(ctx, `
+                INSERT INTO conversation_sequences (conversation_id, last_sequence, updated_at)
+                VALUES ($1,$2,$3)
+            `, dmConv.ID, int64(0), time.Now())
+			return err
 		})
 
 		if err != nil {
@@ -331,7 +378,6 @@ func seedConversations(users []*user.User) ([]*conversation.Conversation, error)
 		log.Printf("DM conversation seeded: %s", dmConv.ID)
 	}
 
-	// Create a group conversation
 	if len(users) >= 3 {
 		groupPerms, _ := json.Marshal(map[string]interface{}{
 			"send_messages":   true,
@@ -353,41 +399,47 @@ func seedConversations(users []*user.User) ([]*conversation.Conversation, error)
 			UpdatedAt:        time.Now(),
 		}
 
-		err := DB.Transaction(func(tx *gorm.DB) error {
-			if err := tx.Create(groupConv).Error; err != nil {
+		ctx := context.Background()
+		err := WithTx(ctx, DB, func(tx *sql.Tx) error {
+			_, err := tx.ExecContext(ctx, `
+                INSERT INTO conversations (id, type, subject, description, avatar_url, expiry_seconds, disappearing_mode, message_expiry_seconds, group_permissions, invite_link, invite_link_revoked_at, created_by, created_at, updated_at)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+            `, groupConv.ID, groupConv.Type, groupConv.Subject, groupConv.Description, groupConv.AvatarURL, groupConv.ExpirySeconds, groupConv.DisappearingMode, groupConv.MessageExpirySeconds, groupConv.GroupPermissions, groupConv.InviteLink, groupConv.InviteLinkRevokedAt, groupConv.CreatedBy, groupConv.CreatedAt, groupConv.UpdatedAt)
+			if err != nil {
 				return err
 			}
 
-			// Add participants with different roles
 			roles := []string{"OWNER", "ADMIN", "MEMBER"}
 			for i, u := range users {
 				if i >= len(roles) {
 					break
 				}
-				emptyJson2 := "{}"
+				emptyJSON := "{}"
 				participant := &conversation.Participant{
 					ConversationID:   groupConv.ID,
 					UserID:           u.ID,
 					Role:             roles[i],
 					JoinedAt:         time.Now(),
 					LastReadSequence: 0,
-					Permissions:      &emptyJson2, // Empty JSON object for JSONB field
+					Permissions:      &emptyJSON,
 				}
 				if i > 0 {
 					participant.AddedBy = uuid.NullUUID{UUID: users[0].ID, Valid: true}
 				}
-				if err := tx.Create(participant).Error; err != nil {
+				_, err := tx.ExecContext(ctx, `
+                    INSERT INTO participants (conversation_id, user_id, role, joined_at, added_by, muted_until, pinned_at, archived, last_read_sequence, permissions)
+                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+                `, participant.ConversationID, participant.UserID, participant.Role, participant.JoinedAt, participant.AddedBy, participant.MutedUntil, participant.PinnedAt, participant.Archived, participant.LastReadSequence, participant.Permissions)
+				if err != nil {
 					return err
 				}
 			}
 
-			// Create conversation sequence
-			seq := &conversation.ConversationSequence{
-				ConversationID: groupConv.ID,
-				LastSequence:   0,
-				UpdatedAt:      time.Now(),
-			}
-			return tx.Create(seq).Error
+			_, err = tx.ExecContext(ctx, `
+                INSERT INTO conversation_sequences (conversation_id, last_sequence, updated_at)
+                VALUES ($1,$2,$3)
+            `, groupConv.ID, int64(0), time.Now())
+			return err
 		})
 
 		if err != nil {
@@ -440,10 +492,12 @@ func seedMessages(convs []*conversation.Conversation, users []*user.User, device
 				MentionCount:   0,
 				CreatedAt:      time.Now().Add(time.Duration(i) * time.Minute),
 			}
-
 			msg.Metadata = string(mustJSON(map[string]interface{}{"e2ee": true, "sample": true}))
 
-			if err := DB.Create(msg).Error; err != nil {
+			if _, err := DB.Exec(`
+                INSERT INTO messages (id, conversation_id, sender_id, type, metadata, is_forwarded, mention_count, created_at)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+            `, msg.ID, msg.ConversationID, msg.SenderID, msg.Type, msg.Metadata, msg.IsForwarded, msg.MentionCount, msg.CreatedAt); err != nil {
 				return nil, fmt.Errorf("failed to create message: %w", err)
 			}
 
@@ -459,55 +513,47 @@ func seedMessages(convs []*conversation.Conversation, users []*user.User, device
 }
 
 type identityKeySeed struct {
-	ID        uuid.UUID `gorm:"type:uuid;primaryKey"`
-	UserID    uuid.UUID `gorm:"type:uuid;not null"`
-	DeviceID  uuid.UUID `gorm:"type:uuid;not null"`
-	PublicKey []byte    `gorm:"not null"`
-	IsActive  bool      `gorm:"default:true"`
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	DeviceID  uuid.UUID
+	PublicKey []byte
+	IsActive  bool
 	CreatedAt time.Time
 }
-
-func (identityKeySeed) TableName() string { return "identity_keys" }
 
 type signedPreKeySeed struct {
-	ID        uuid.UUID `gorm:"type:uuid;primaryKey"`
-	UserID    uuid.UUID `gorm:"type:uuid;not null"`
-	DeviceID  uuid.UUID `gorm:"type:uuid;not null"`
-	KeyID     int       `gorm:"not null"`
-	PublicKey []byte    `gorm:"not null"`
-	Signature []byte    `gorm:"not null"`
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	DeviceID  uuid.UUID
+	KeyID     int
+	PublicKey []byte
+	Signature []byte
 	CreatedAt time.Time
-	IsActive  bool `gorm:"default:true"`
+	IsActive  bool
 }
 
-func (signedPreKeySeed) TableName() string { return "signed_prekeys" }
-
 type oneTimePreKeySeed struct {
-	ID                 uuid.UUID `gorm:"type:uuid;primaryKey"`
-	UserID             uuid.UUID `gorm:"type:uuid;not null"`
-	DeviceID           uuid.UUID `gorm:"type:uuid;not null"`
-	KeyID              int       `gorm:"not null"`
-	PublicKey          []byte    `gorm:"not null"`
+	ID                 uuid.UUID
+	UserID             uuid.UUID
+	DeviceID           uuid.UUID
+	KeyID              int
+	PublicKey          []byte
 	UploadedAt         time.Time
 	ConsumedAt         sql.NullTime
 	ConsumedBy         uuid.NullUUID
-	ConsumedByDeviceID uuid.NullUUID `gorm:"type:uuid"`
+	ConsumedByDeviceID uuid.NullUUID
 }
-
-func (oneTimePreKeySeed) TableName() string { return "onetime_prekeys" }
 
 type messageCiphertextSeed struct {
-	ID                uuid.UUID     `gorm:"type:uuid;primaryKey"`
-	MessageID         uuid.UUID     `gorm:"type:uuid;not null"`
-	RecipientUserID   uuid.UUID     `gorm:"type:uuid;not null"`
-	RecipientDeviceID uuid.UUID     `gorm:"type:uuid;not null"`
-	SenderDeviceID    uuid.NullUUID `gorm:"type:uuid"`
-	Ciphertext        []byte        `gorm:"not null"`
-	Header            string        `gorm:"type:jsonb"`
+	ID                uuid.UUID
+	MessageID         uuid.UUID
+	RecipientUserID   uuid.UUID
+	RecipientDeviceID uuid.UUID
+	SenderDeviceID    uuid.NullUUID
+	Ciphertext        []byte
+	Header            string
 	CreatedAt         time.Time
 }
-
-func (messageCiphertextSeed) TableName() string { return "message_ciphertexts" }
 
 func seedDevices(users []*user.User) (map[uuid.UUID][]user.Device, error) {
 	deviceMap := make(map[uuid.UUID][]user.Device)
@@ -523,7 +569,10 @@ func seedDevices(users []*user.User) (map[uuid.UUID][]user.Device, error) {
 				RegisteredAt: time.Now(),
 				LastSeenAt:   sql.NullTime{Time: time.Now(), Valid: true},
 			}
-			if err := DB.Create(&device).Error; err != nil {
+			if _, err := DB.Exec(`
+                INSERT INTO devices (id, user_id, device_id, device_name, device_type, is_active, registered_at, last_seen_at)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+            `, device.ID, device.UserID, device.DeviceID, device.DeviceName, device.DeviceType, device.IsActive, device.RegisteredAt, device.LastSeenAt); err != nil {
 				return nil, err
 			}
 			deviceMap[u.ID] = append(deviceMap[u.ID], device)
@@ -543,7 +592,10 @@ func seedEncryptionKeys(deviceMap map[uuid.UUID][]user.Device) error {
 				IsActive:  true,
 				CreatedAt: time.Now(),
 			}
-			if err := DB.Create(&identity).Error; err != nil {
+			if _, err := DB.Exec(`
+                INSERT INTO identity_keys (id, user_id, device_id, public_key, is_active, created_at)
+                VALUES ($1,$2,$3,$4,$5,$6)
+            `, identity.ID, identity.UserID, identity.DeviceID, identity.PublicKey, identity.IsActive, identity.CreatedAt); err != nil {
 				return err
 			}
 
@@ -557,7 +609,10 @@ func seedEncryptionKeys(deviceMap map[uuid.UUID][]user.Device) error {
 				IsActive:  true,
 				CreatedAt: time.Now(),
 			}
-			if err := DB.Create(&signed).Error; err != nil {
+			if _, err := DB.Exec(`
+                INSERT INTO signed_prekeys (id, user_id, device_id, key_id, public_key, signature, created_at, is_active)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+            `, signed.ID, signed.UserID, signed.DeviceID, signed.KeyID, signed.PublicKey, signed.Signature, signed.CreatedAt, signed.IsActive); err != nil {
 				return err
 			}
 
@@ -570,7 +625,10 @@ func seedEncryptionKeys(deviceMap map[uuid.UUID][]user.Device) error {
 					PublicKey:  randomBytes(32),
 					UploadedAt: time.Now(),
 				}
-				if err := DB.Create(&prekey).Error; err != nil {
+				if _, err := DB.Exec(`
+                    INSERT INTO onetime_prekeys (id, user_id, device_id, key_id, public_key, uploaded_at)
+                    VALUES ($1,$2,$3,$4,$5,$6)
+                `, prekey.ID, prekey.UserID, prekey.DeviceID, prekey.KeyID, prekey.PublicKey, prekey.UploadedAt); err != nil {
 					return err
 				}
 			}
@@ -581,7 +639,20 @@ func seedEncryptionKeys(deviceMap map[uuid.UUID][]user.Device) error {
 
 func seedMessageCiphertexts(msg *message.Message, deviceMap map[uuid.UUID][]user.Device) error {
 	var participants []conversation.Participant
-	if err := DB.Where("conversation_id = ?", msg.ConversationID).Find(&participants).Error; err != nil {
+	rows, err := DB.Query("SELECT conversation_id, user_id FROM participants WHERE conversation_id = $1", msg.ConversationID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var p conversation.Participant
+		if err := rows.Scan(&p.ConversationID, &p.UserID); err != nil {
+			return err
+		}
+		participants = append(participants, p)
+	}
+	if err := rows.Err(); err != nil {
 		return err
 	}
 
@@ -609,7 +680,10 @@ func seedMessageCiphertexts(msg *message.Message, deviceMap map[uuid.UUID][]user
 				Header:            header,
 				CreatedAt:         time.Now(),
 			}
-			if err := DB.Create(&ciphertext).Error; err != nil {
+			if _, err := DB.Exec(`
+                INSERT INTO message_ciphertexts (id, message_id, recipient_user_id, recipient_device_id, sender_device_id, ciphertext, header, created_at)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+            `, ciphertext.ID, ciphertext.MessageID, ciphertext.RecipientUserID, ciphertext.RecipientDeviceID, ciphertext.SenderDeviceID, ciphertext.Ciphertext, ciphertext.Header, ciphertext.CreatedAt); err != nil {
 				return err
 			}
 		}
@@ -645,19 +719,26 @@ func seedBroadcasts(users []*user.User) error {
 		CreatedAt:   time.Now(),
 	}
 
-	err := DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(broadcastList).Error; err != nil {
+	ctx := context.Background()
+	err := WithTx(ctx, DB, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+            INSERT INTO broadcast_lists (id, owner_id, name, description, created_at)
+            VALUES ($1,$2,$3,$4,$5)
+        `, broadcastList.ID, broadcastList.OwnerID, broadcastList.Name, broadcastList.Description, broadcastList.CreatedAt)
+		if err != nil {
 			return err
 		}
 
-		// Add recipients
 		for _, u := range users[1:] {
 			recipient := &broadcast.BroadcastRecipient{
 				BroadcastID: broadcastList.ID,
 				UserID:      u.ID,
 				AddedAt:     time.Now(),
 			}
-			if err := tx.Create(recipient).Error; err != nil {
+			if _, err := tx.ExecContext(ctx, `
+                INSERT INTO broadcast_recipients (broadcast_id, user_id, added_at)
+                VALUES ($1,$2,$3)
+            `, recipient.BroadcastID, recipient.UserID, recipient.AddedAt); err != nil {
 				return err
 			}
 		}

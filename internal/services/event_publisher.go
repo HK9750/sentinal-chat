@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 	"sentinal-chat/internal/domain/outbox"
 	"sentinal-chat/internal/events"
 	"sentinal-chat/internal/repository"
@@ -22,7 +21,7 @@ func NewEventPublisher(outboxRepo repository.OutboxRepository) *EventPublisher {
 }
 
 // PublishMessageNew creates an outbox event for a new message
-func (p *EventPublisher) PublishMessageNew(ctx context.Context, tx *gorm.DB, msgID, convID, senderID uuid.UUID) error {
+func (p *EventPublisher) PublishMessageNew(ctx context.Context, tx repository.DBTX, msgID, convID, senderID uuid.UUID) error {
 	event := &events.MessageNewEvent{
 		BaseEvent: events.BaseEvent{
 			EventTypeVal: events.EventMessageNew,
@@ -39,7 +38,7 @@ func (p *EventPublisher) PublishMessageNew(ctx context.Context, tx *gorm.DB, msg
 }
 
 // PublishTypingStarted creates a typing indicator event
-func (p *EventPublisher) PublishTypingStarted(ctx context.Context, tx *gorm.DB, convID, userID uuid.UUID, displayName string) error {
+func (p *EventPublisher) PublishTypingStarted(ctx context.Context, tx repository.DBTX, convID, userID uuid.UUID, displayName string) error {
 	event := &events.TypingEvent{
 		BaseEvent: events.BaseEvent{
 			EventTypeVal: events.EventTypingStarted,
@@ -57,7 +56,7 @@ func (p *EventPublisher) PublishTypingStarted(ctx context.Context, tx *gorm.DB, 
 }
 
 // PublishTypingStopped creates a typing stopped event
-func (p *EventPublisher) PublishTypingStopped(ctx context.Context, tx *gorm.DB, convID, userID uuid.UUID, displayName string) error {
+func (p *EventPublisher) PublishTypingStopped(ctx context.Context, tx repository.DBTX, convID, userID uuid.UUID, displayName string) error {
 	event := &events.TypingEvent{
 		BaseEvent: events.BaseEvent{
 			EventTypeVal: events.EventTypingStopped,
@@ -75,7 +74,7 @@ func (p *EventPublisher) PublishTypingStopped(ctx context.Context, tx *gorm.DB, 
 }
 
 // PublishMessageRead creates an event when message is marked as read
-func (p *EventPublisher) PublishMessageRead(ctx context.Context, tx *gorm.DB, msgID, convID, readerID uuid.UUID) error {
+func (p *EventPublisher) PublishMessageRead(ctx context.Context, tx repository.DBTX, msgID, convID, readerID uuid.UUID) error {
 	event := &events.MessageReadEvent{
 		BaseEvent: events.BaseEvent{
 			EventTypeVal: events.EventMessageRead,
@@ -92,7 +91,7 @@ func (p *EventPublisher) PublishMessageRead(ctx context.Context, tx *gorm.DB, ms
 }
 
 // PublishMessageDelivered creates an event when message is delivered
-func (p *EventPublisher) PublishMessageDelivered(ctx context.Context, tx *gorm.DB, msgID, convID, recipientID uuid.UUID) error {
+func (p *EventPublisher) PublishMessageDelivered(ctx context.Context, tx repository.DBTX, msgID, convID, recipientID uuid.UUID) error {
 	event := &events.MessageDeliveredEvent{
 		BaseEvent: events.BaseEvent{
 			EventTypeVal: events.EventMessageDelivered,
@@ -109,7 +108,7 @@ func (p *EventPublisher) PublishMessageDelivered(ctx context.Context, tx *gorm.D
 }
 
 // PublishPresenceOnline creates an event when user comes online
-func (p *EventPublisher) PublishPresenceOnline(ctx context.Context, tx *gorm.DB, userID uuid.UUID) error {
+func (p *EventPublisher) PublishPresenceOnline(ctx context.Context, tx repository.DBTX, userID uuid.UUID) error {
 	event := &events.PresenceEvent{
 		BaseEvent: events.BaseEvent{
 			EventTypeVal: events.EventPresenceOnline,
@@ -125,7 +124,7 @@ func (p *EventPublisher) PublishPresenceOnline(ctx context.Context, tx *gorm.DB,
 }
 
 // PublishPresenceOffline creates an event when user goes offline
-func (p *EventPublisher) PublishPresenceOffline(ctx context.Context, tx *gorm.DB, userID uuid.UUID) error {
+func (p *EventPublisher) PublishPresenceOffline(ctx context.Context, tx repository.DBTX, userID uuid.UUID) error {
 	event := &events.PresenceEvent{
 		BaseEvent: events.BaseEvent{
 			EventTypeVal: events.EventPresenceOffline,
@@ -141,7 +140,7 @@ func (p *EventPublisher) PublishPresenceOffline(ctx context.Context, tx *gorm.DB
 }
 
 // PublishCallOffer creates an event for WebRTC offer
-func (p *EventPublisher) PublishCallOffer(ctx context.Context, tx *gorm.DB, callID, fromID, toID uuid.UUID, sdp string) error {
+func (p *EventPublisher) PublishCallOffer(ctx context.Context, tx repository.DBTX, callID, fromID, toID uuid.UUID, sdp string) error {
 	event := &events.CallSignalingEvent{
 		BaseEvent: events.BaseEvent{
 			EventTypeVal: events.EventCallOffer,
@@ -159,7 +158,7 @@ func (p *EventPublisher) PublishCallOffer(ctx context.Context, tx *gorm.DB, call
 }
 
 // PublishCallAnswer creates an event for WebRTC answer
-func (p *EventPublisher) PublishCallAnswer(ctx context.Context, tx *gorm.DB, callID, fromID, toID uuid.UUID, sdp string) error {
+func (p *EventPublisher) PublishCallAnswer(ctx context.Context, tx repository.DBTX, callID, fromID, toID uuid.UUID, sdp string) error {
 	event := &events.CallSignalingEvent{
 		BaseEvent: events.BaseEvent{
 			EventTypeVal: events.EventCallAnswer,
@@ -177,7 +176,7 @@ func (p *EventPublisher) PublishCallAnswer(ctx context.Context, tx *gorm.DB, cal
 }
 
 // PublishCallICE creates an event for ICE candidate
-func (p *EventPublisher) PublishCallICE(ctx context.Context, tx *gorm.DB, callID, fromID, toID uuid.UUID, candidate string) error {
+func (p *EventPublisher) PublishCallICE(ctx context.Context, tx repository.DBTX, callID, fromID, toID uuid.UUID, candidate string) error {
 	event := &events.CallSignalingEvent{
 		BaseEvent: events.BaseEvent{
 			EventTypeVal: events.EventCallICE,
@@ -195,7 +194,7 @@ func (p *EventPublisher) PublishCallICE(ctx context.Context, tx *gorm.DB, callID
 }
 
 // PublishCallEnded creates an event when call ends
-func (p *EventPublisher) PublishCallEnded(ctx context.Context, tx *gorm.DB, callID, convID, endedBy uuid.UUID, reason string, duration int) error {
+func (p *EventPublisher) PublishCallEnded(ctx context.Context, tx repository.DBTX, callID, convID, endedBy uuid.UUID, reason string, duration int) error {
 	event := &events.CallEndedEvent{
 		BaseEvent: events.BaseEvent{
 			EventTypeVal: events.EventCallEnded,
@@ -214,18 +213,22 @@ func (p *EventPublisher) PublishCallEnded(ctx context.Context, tx *gorm.DB, call
 }
 
 // saveToOutbox serializes the event and creates an outbox record within the transaction
-func (p *EventPublisher) saveToOutbox(ctx context.Context, tx *gorm.DB, eventType events.EventType, aggregateType, aggregateID string, event interface{}) error {
+func (p *EventPublisher) saveToOutbox(ctx context.Context, tx repository.DBTX, eventType events.EventType, aggregateType, aggregateID string, event interface{}) error {
 	payload, err := json.Marshal(event)
 	if err != nil {
 		return err
 	}
 
 	outboxEvent := &outbox.OutboxEvent{
+		ID:            uuid.New(),
 		EventType:     string(eventType),
 		AggregateType: aggregateType,
 		AggregateID:   aggregateID,
 		Payload:       payload,
 		Status:        outbox.StatusPending,
+		RetryCount:    0,
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
 	}
 
 	return p.outboxRepo.Create(ctx, tx, outboxEvent)

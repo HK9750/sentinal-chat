@@ -9,18 +9,18 @@ import (
 
 // BroadcastList represents broadcast_lists
 type BroadcastList struct {
-	ID          uuid.UUID `gorm:"type:uuid;primaryKey;default:uuid_generate_v4()"`
-	OwnerID     uuid.UUID `gorm:"type:uuid;not null"`
-	Name        string    `gorm:"not null"`
+	ID          uuid.UUID
+	OwnerID     uuid.UUID
+	Name        string
 	Description sql.NullString
-	CreatedAt   time.Time `gorm:"default:now()"`
+	CreatedAt   time.Time
 }
 
 // BroadcastRecipient represents broadcast_recipients
 type BroadcastRecipient struct {
-	BroadcastID uuid.UUID `gorm:"type:uuid;primaryKey"`
-	UserID      uuid.UUID `gorm:"type:uuid;primaryKey"`
-	AddedAt     time.Time `gorm:"default:now()"`
+	BroadcastID uuid.UUID
+	UserID      uuid.UUID
+	AddedAt     time.Time
 }
 
 func (BroadcastList) TableName() string {

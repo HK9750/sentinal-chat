@@ -13,12 +13,11 @@ import (
 	sentinal_errors "sentinal-chat/pkg/errors"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 )
 
 // MessageService handles message operations and E2EE ciphertext management.
 type MessageService struct {
-	db               *gorm.DB
+	db               repository.DBTX
 	messageRepo      repository.MessageRepository
 	conversationRepo repository.ConversationRepository
 	eventPublisher   *EventPublisher
@@ -44,7 +43,7 @@ type SendMessageInput struct {
 }
 
 // NewMessageService creates a message service with all dependencies.
-func NewMessageService(db *gorm.DB, messageRepo repository.MessageRepository, conversationRepo repository.ConversationRepository, eventPublisher *EventPublisher, commandExecutor *CommandExecutor) *MessageService {
+func NewMessageService(db repository.DBTX, messageRepo repository.MessageRepository, conversationRepo repository.ConversationRepository, eventPublisher *EventPublisher, commandExecutor *CommandExecutor) *MessageService {
 	return &MessageService{
 		db:               db,
 		messageRepo:      messageRepo,
@@ -128,7 +127,7 @@ func (s *MessageService) MarkAsRead(ctx context.Context, messageID, userID uuid.
 		return s.messageRepo.MarkAsRead(ctx, messageID, userID)
 	}
 
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	return repository.WithTx(ctx, s.db, func(tx repository.DBTX) error {
 		msgRepo := repository.NewMessageRepository(tx)
 		if err := msgRepo.MarkAsRead(ctx, messageID, userID); err != nil {
 			return err
@@ -154,7 +153,7 @@ func (s *MessageService) MarkAsDelivered(ctx context.Context, messageID, userID 
 		return s.messageRepo.MarkAsDelivered(ctx, messageID, userID)
 	}
 
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	return repository.WithTx(ctx, s.db, func(tx repository.DBTX) error {
 		msgRepo := repository.NewMessageRepository(tx)
 		if err := msgRepo.MarkAsDelivered(ctx, messageID, userID); err != nil {
 			return err
@@ -368,7 +367,7 @@ func (s *MessageService) executeSendMessage(ctx context.Context, input SendMessa
 	}
 
 	var result message.Message
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := repository.WithTx(ctx, s.db, func(tx repository.DBTX) error {
 		msgRepo := repository.NewMessageRepository(tx)
 		prevMsgRepo := s.messageRepo
 		s.messageRepo = msgRepo
@@ -471,16 +470,18 @@ func (s *MessageService) lookupUserIDByDevice(ctx context.Context, deviceID uuid
 	if s.db == nil {
 		return uuid.Nil, sentinal_errors.ErrInvalidInput
 	}
-	var row struct {
-		UserID uuid.UUID
-	}
-	if err := s.db.WithContext(ctx).Table("devices").Select("user_id").Where("id = ?", deviceID).Scan(&row).Error; err != nil {
+	var userID uuid.UUID
+	row := s.db.QueryRowContext(ctx, "SELECT user_id FROM devices WHERE id = $1", deviceID)
+	if err := row.Scan(&userID); err != nil {
+		if err == sql.ErrNoRows {
+			return uuid.Nil, sentinal_errors.ErrNotFound
+		}
 		return uuid.Nil, err
 	}
-	if row.UserID == uuid.Nil {
+	if userID == uuid.Nil {
 		return uuid.Nil, sentinal_errors.ErrNotFound
 	}
-	return row.UserID, nil
+	return userID, nil
 }
 
 func msgTypeOrDefault(value string) string {

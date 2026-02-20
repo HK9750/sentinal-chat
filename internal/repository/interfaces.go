@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 
 	"sentinal-chat/internal/domain/broadcast"
 	"sentinal-chat/internal/domain/call"
@@ -255,7 +254,7 @@ type UploadRepository interface {
 }
 
 type OutboxRepository interface {
-	Create(ctx context.Context, tx *gorm.DB, event *outbox.OutboxEvent) error
+	Create(ctx context.Context, tx DBTX, event *outbox.OutboxEvent) error
 	GetPending(ctx context.Context, limit int) ([]outbox.OutboxEvent, error)
 	MarkProcessing(ctx context.Context, id string) error
 	MarkCompleted(ctx context.Context, id string) error

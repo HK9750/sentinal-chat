@@ -4,7 +4,6 @@ package services
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"time"
 
 	"sentinal-chat/internal/domain/conversation"
@@ -12,12 +11,11 @@ import (
 	sentinal_errors "sentinal-chat/pkg/errors"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 )
 
 // ConversationService manages chat conversations and participants.
 type ConversationService struct {
-	db             *gorm.DB
+	db             repository.DBTX
 	repo           repository.ConversationRepository
 	eventPublisher *EventPublisher
 }
@@ -32,7 +30,7 @@ type CreateConversationInput struct {
 }
 
 // NewConversationService creates a conversation service with dependencies.
-func NewConversationService(db *gorm.DB, repo repository.ConversationRepository, eventPublisher *EventPublisher) *ConversationService {
+func NewConversationService(db repository.DBTX, repo repository.ConversationRepository, eventPublisher *EventPublisher) *ConversationService {
 	return &ConversationService{db: db, repo: repo, eventPublisher: eventPublisher}
 }
 
@@ -50,7 +48,7 @@ func (s *ConversationService) Create(ctx context.Context, input CreateConversati
 	if len(input.ParticipantIDs) == 0 {
 		return conversation.Conversation{}, sentinal_errors.ErrInvalidInput
 	}
-	fmt.Println("input",input);
+	// fmt.Println("input", input)
 	return s.executeCreate(ctx, input)
 }
 
@@ -61,7 +59,7 @@ func (s *ConversationService) executeCreate(ctx context.Context, input CreateCon
 	}
 
 	var result conversation.Conversation
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := repository.WithTx(ctx, s.db, func(tx repository.DBTX) error {
 		convRepo := repository.NewConversationRepository(tx)
 		prevRepo := s.repo
 		s.repo = convRepo
@@ -225,7 +223,7 @@ func (s *ConversationService) StartTyping(ctx context.Context, conversationID, u
 		return nil
 	}
 
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	return repository.WithTx(ctx, s.db, func(tx repository.DBTX) error {
 		return s.eventPublisher.PublishTypingStarted(ctx, tx, conversationID, userID, displayName)
 	})
 }
@@ -235,7 +233,7 @@ func (s *ConversationService) StopTyping(ctx context.Context, conversationID, us
 		return nil
 	}
 
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	return repository.WithTx(ctx, s.db, func(tx repository.DBTX) error {
 		return s.eventPublisher.PublishTypingStopped(ctx, tx, conversationID, userID, displayName)
 	})
 }

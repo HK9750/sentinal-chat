@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"time"
 
@@ -9,50 +10,43 @@ import (
 	sentinal_errors "sentinal-chat/pkg/errors"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 )
 
 type PostgresEncryptionRepository struct {
-	db *gorm.DB
+	db DBTX
 }
 
-func NewEncryptionRepository(db *gorm.DB) EncryptionRepository {
+func NewEncryptionRepository(db DBTX) EncryptionRepository {
 	return &PostgresEncryptionRepository{db: db}
 }
 
 func (r *PostgresEncryptionRepository) IsDeviceOwnedByUser(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID) (bool, error) {
 	var count int64
-	err := r.db.WithContext(ctx).
-		Table("devices").
-		Where("id = ? AND user_id = ? AND is_active = true", deviceID, userID).
-		Count(&count).Error
-	if err != nil {
+	if err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM devices WHERE id = $1 AND user_id = $2 AND is_active = true", deviceID, userID).Scan(&count); err != nil {
 		return false, err
 	}
 	return count > 0, nil
 }
 
 func (r *PostgresEncryptionRepository) CreateIdentityKey(ctx context.Context, k *encryption.IdentityKey) error {
-	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// Remove any existing identity key for this user+device to handle retries
-		tx.Where("user_id = ? AND device_id = ?", k.UserID, k.DeviceID).
-			Delete(&encryption.IdentityKey{})
-
-		// Insert the new key
-		if err := tx.Create(k).Error; err != nil {
-			return err
-		}
-		return nil
+	return WithTx(ctx, r.db, func(tx DBTX) error {
+		_, _ = tx.ExecContext(ctx, "DELETE FROM identity_keys WHERE user_id = $1 AND device_id = $2", k.UserID, k.DeviceID)
+		_, err := tx.ExecContext(ctx, `
+            INSERT INTO identity_keys (id, user_id, device_id, public_key, is_active, created_at)
+            VALUES ($1,$2,$3,$4,$5,$6)
+        `, k.ID, k.UserID, k.DeviceID, k.PublicKey, k.IsActive, k.CreatedAt)
+		return err
 	})
 }
 
 func (r *PostgresEncryptionRepository) GetIdentityKey(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID) (encryption.IdentityKey, error) {
 	var k encryption.IdentityKey
-	err := r.db.WithContext(ctx).
-		Where("user_id = ? AND device_id = ? AND is_active = true", userID, deviceID).
-		First(&k).Error
+	err := r.db.QueryRowContext(ctx, `
+        SELECT id, user_id, device_id, public_key, is_active, created_at
+        FROM identity_keys WHERE user_id = $1 AND device_id = $2 AND is_active = true
+    `, userID, deviceID).Scan(&k.ID, &k.UserID, &k.DeviceID, &k.PublicKey, &k.IsActive, &k.CreatedAt)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+		if errors.Is(err, sql.ErrNoRows) {
 			return encryption.IdentityKey{}, sentinal_errors.ErrNotFound
 		}
 		return encryption.IdentityKey{}, err
@@ -62,58 +56,73 @@ func (r *PostgresEncryptionRepository) GetIdentityKey(ctx context.Context, userI
 
 func (r *PostgresEncryptionRepository) GetUserIdentityKeys(ctx context.Context, userID uuid.UUID) ([]encryption.IdentityKey, error) {
 	var keys []encryption.IdentityKey
-	err := r.db.WithContext(ctx).
-		Where("user_id = ? AND is_active = true", userID).
-		Find(&keys).Error
+	rows, err := r.db.QueryContext(ctx, `
+        SELECT id, user_id, device_id, public_key, is_active, created_at
+        FROM identity_keys WHERE user_id = $1 AND is_active = true
+    `, userID)
 	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var k encryption.IdentityKey
+		if err := rows.Scan(&k.ID, &k.UserID, &k.DeviceID, &k.PublicKey, &k.IsActive, &k.CreatedAt); err != nil {
+			return nil, err
+		}
+		keys = append(keys, k)
+	}
+	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	return keys, nil
 }
 
 func (r *PostgresEncryptionRepository) DeactivateIdentityKey(ctx context.Context, id uuid.UUID) error {
-	res := r.db.WithContext(ctx).
-		Model(&encryption.IdentityKey{}).
-		Where("id = ?", id).
-		Update("is_active", false)
-	if res.Error != nil {
-		return res.Error
+	res, err := r.db.ExecContext(ctx, "UPDATE identity_keys SET is_active = false WHERE id = $1", id)
+	if err != nil {
+		return err
 	}
-	if res.RowsAffected == 0 {
+	rows, err := res.RowsAffected()
+	if err == nil && rows == 0 {
 		return sentinal_errors.ErrNotFound
 	}
-	return nil
+	return err
 }
 
 func (r *PostgresEncryptionRepository) DeleteIdentityKey(ctx context.Context, id uuid.UUID) error {
-	res := r.db.WithContext(ctx).Delete(&encryption.IdentityKey{}, "id = ?", id)
-	if res.Error != nil {
-		return res.Error
+	res, err := r.db.ExecContext(ctx, "DELETE FROM identity_keys WHERE id = $1", id)
+	if err != nil {
+		return err
 	}
-	if res.RowsAffected == 0 {
+	rows, err := res.RowsAffected()
+	if err == nil && rows == 0 {
 		return sentinal_errors.ErrNotFound
 	}
-	return nil
+	return err
 }
 
 func (r *PostgresEncryptionRepository) CreateSignedPreKey(ctx context.Context, k *encryption.SignedPreKey) error {
-	res := r.db.WithContext(ctx).Create(k)
-	if res.Error != nil {
-		if errors.Is(res.Error, gorm.ErrDuplicatedKey) {
+	_, err := r.db.ExecContext(ctx, `
+        INSERT INTO signed_prekeys (id, user_id, device_id, key_id, public_key, signature, created_at, is_active)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+    `, k.ID, k.UserID, k.DeviceID, k.KeyID, k.PublicKey, k.Signature, k.CreatedAt, k.IsActive)
+	if err != nil {
+		if isUniqueViolation(err) {
 			return sentinal_errors.ErrAlreadyExists
 		}
-		return res.Error
+		return err
 	}
 	return nil
 }
 
 func (r *PostgresEncryptionRepository) GetSignedPreKey(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID, keyID int) (encryption.SignedPreKey, error) {
 	var k encryption.SignedPreKey
-	err := r.db.WithContext(ctx).
-		Where("user_id = ? AND device_id = ? AND key_id = ?", userID, deviceID, keyID).
-		First(&k).Error
+	err := r.db.QueryRowContext(ctx, `
+        SELECT id, user_id, device_id, key_id, public_key, signature, created_at, is_active
+        FROM signed_prekeys WHERE user_id = $1 AND device_id = $2 AND key_id = $3
+    `, userID, deviceID, keyID).Scan(&k.ID, &k.UserID, &k.DeviceID, &k.KeyID, &k.PublicKey, &k.Signature, &k.CreatedAt, &k.IsActive)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+		if errors.Is(err, sql.ErrNoRows) {
 			return encryption.SignedPreKey{}, sentinal_errors.ErrNotFound
 		}
 		return encryption.SignedPreKey{}, err
@@ -123,12 +132,13 @@ func (r *PostgresEncryptionRepository) GetSignedPreKey(ctx context.Context, user
 
 func (r *PostgresEncryptionRepository) GetActiveSignedPreKey(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID) (encryption.SignedPreKey, error) {
 	var k encryption.SignedPreKey
-	err := r.db.WithContext(ctx).
-		Where("user_id = ? AND device_id = ? AND is_active = true", userID, deviceID).
-		Order("created_at DESC").
-		First(&k).Error
+	err := r.db.QueryRowContext(ctx, `
+        SELECT id, user_id, device_id, key_id, public_key, signature, created_at, is_active
+        FROM signed_prekeys WHERE user_id = $1 AND device_id = $2 AND is_active = true
+        ORDER BY created_at DESC LIMIT 1
+    `, userID, deviceID).Scan(&k.ID, &k.UserID, &k.DeviceID, &k.KeyID, &k.PublicKey, &k.Signature, &k.CreatedAt, &k.IsActive)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+		if errors.Is(err, sql.ErrNoRows) {
 			return encryption.SignedPreKey{}, sentinal_errors.ErrNotFound
 		}
 		return encryption.SignedPreKey{}, err
@@ -137,70 +147,82 @@ func (r *PostgresEncryptionRepository) GetActiveSignedPreKey(ctx context.Context
 }
 
 func (r *PostgresEncryptionRepository) RotateSignedPreKey(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID, newKey *encryption.SignedPreKey) error {
-	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// Deactivate old keys
-		if err := tx.Model(&encryption.SignedPreKey{}).
-			Where("user_id = ? AND device_id = ? AND is_active = true", userID, deviceID).
-			Update("is_active", false).Error; err != nil {
+	return WithTx(ctx, r.db, func(tx DBTX) error {
+		if _, err := tx.ExecContext(ctx, "UPDATE signed_prekeys SET is_active = false WHERE user_id = $1 AND device_id = $2 AND is_active = true", userID, deviceID); err != nil {
 			return err
 		}
-
-		// Create new key
-		return tx.Create(newKey).Error
+		_, err := tx.ExecContext(ctx, `
+            INSERT INTO signed_prekeys (id, user_id, device_id, key_id, public_key, signature, created_at, is_active)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+        `, newKey.ID, newKey.UserID, newKey.DeviceID, newKey.KeyID, newKey.PublicKey, newKey.Signature, newKey.CreatedAt, newKey.IsActive)
+		return err
 	})
 }
 
 func (r *PostgresEncryptionRepository) DeactivateSignedPreKey(ctx context.Context, id uuid.UUID) error {
-	res := r.db.WithContext(ctx).
-		Model(&encryption.SignedPreKey{}).
-		Where("id = ?", id).
-		Update("is_active", false)
-	if res.Error != nil {
-		return res.Error
+	res, err := r.db.ExecContext(ctx, "UPDATE signed_prekeys SET is_active = false WHERE id = $1", id)
+	if err != nil {
+		return err
 	}
-	if res.RowsAffected == 0 {
+	rows, err := res.RowsAffected()
+	if err == nil && rows == 0 {
 		return sentinal_errors.ErrNotFound
 	}
-	return nil
+	return err
 }
 
 func (r *PostgresEncryptionRepository) UploadOneTimePreKeys(ctx context.Context, keys []encryption.OneTimePreKey) error {
 	if len(keys) == 0 {
 		return nil
 	}
-	res := r.db.WithContext(ctx).Create(&keys)
-	if res.Error != nil {
-		return res.Error
-	}
-	return nil
+	return WithTx(ctx, r.db, func(tx DBTX) error {
+		for _, k := range keys {
+			_, err := tx.ExecContext(ctx, `
+                INSERT INTO onetime_prekeys (id, user_id, device_id, key_id, public_key, uploaded_at, consumed_at, consumed_by, consumed_by_device_id)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+            `, k.ID, k.UserID, k.DeviceID, k.KeyID, k.PublicKey, k.UploadedAt, k.ConsumedAt, k.ConsumedBy, k.ConsumedByDeviceID)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func (r *PostgresEncryptionRepository) ConsumeOneTimePreKey(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID, consumedBy uuid.UUID, consumedByDeviceID uuid.UUID) (encryption.OneTimePreKey, error) {
 	var key encryption.OneTimePreKey
-
-	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// Find an unconsumed key
-		err := tx.Where("user_id = ? AND device_id = ? AND consumed_at IS NULL", userID, deviceID).
-			Order("uploaded_at ASC").
-			First(&key).Error
+	err := WithTx(ctx, r.db, func(tx DBTX) error {
+		err := tx.QueryRowContext(ctx, `
+            SELECT id, user_id, device_id, key_id, public_key, uploaded_at, consumed_at, consumed_by, consumed_by_device_id
+            FROM onetime_prekeys
+            WHERE user_id = $1 AND device_id = $2 AND consumed_at IS NULL
+            ORDER BY uploaded_at ASC LIMIT 1
+        `, userID, deviceID).Scan(
+			&key.ID,
+			&key.UserID,
+			&key.DeviceID,
+			&key.KeyID,
+			&key.PublicKey,
+			&key.UploadedAt,
+			&key.ConsumedAt,
+			&key.ConsumedBy,
+			&key.ConsumedByDeviceID,
+		)
 		if err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
+			if errors.Is(err, sql.ErrNoRows) {
 				return sentinal_errors.ErrNotFound
 			}
 			return err
 		}
 
-		// Mark as consumed
 		now := time.Now()
-		return tx.Model(&encryption.OneTimePreKey{}).
-			Where("id = ?", key.ID).
-			Updates(map[string]interface{}{
-				"consumed_at":           now,
-				"consumed_by":           consumedBy,
-				"consumed_by_device_id": consumedByDeviceID,
-			}).Error
+		_, err = tx.ExecContext(ctx, `
+            UPDATE onetime_prekeys
+            SET consumed_at = $1, consumed_by = $2, consumed_by_device_id = $3
+            WHERE id = $4
+        `, now, consumedBy, consumedByDeviceID, key.ID)
+		return err
 	})
-
 	if err != nil {
 		return encryption.OneTimePreKey{}, err
 	}
@@ -209,32 +231,27 @@ func (r *PostgresEncryptionRepository) ConsumeOneTimePreKey(ctx context.Context,
 
 func (r *PostgresEncryptionRepository) GetAvailablePreKeyCount(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID) (int64, error) {
 	var count int64
-	err := r.db.WithContext(ctx).
-		Model(&encryption.OneTimePreKey{}).
-		Where("user_id = ? AND device_id = ? AND consumed_at IS NULL", userID, deviceID).
-		Count(&count).Error
-	if err != nil {
+	if err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM onetime_prekeys WHERE user_id = $1 AND device_id = $2 AND consumed_at IS NULL", userID, deviceID).Scan(&count); err != nil {
 		return 0, err
 	}
 	return count, nil
 }
 
 func (r *PostgresEncryptionRepository) DeleteConsumedPreKeys(ctx context.Context, olderThan time.Time) (int64, error) {
-	res := r.db.WithContext(ctx).
-		Delete(&encryption.OneTimePreKey{}, "consumed_at IS NOT NULL AND consumed_at < ?", olderThan)
-	if res.Error != nil {
-		return 0, res.Error
+	res, err := r.db.ExecContext(ctx, "DELETE FROM onetime_prekeys WHERE consumed_at IS NOT NULL AND consumed_at < $1", olderThan)
+	if err != nil {
+		return 0, err
 	}
-	return res.RowsAffected, nil
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return rows, nil
 }
 
 func (r *PostgresEncryptionRepository) HasActiveKeys(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID) (bool, error) {
 	var count int64
-	err := r.db.WithContext(ctx).
-		Model(&encryption.IdentityKey{}).
-		Where("user_id = ? AND device_id = ? AND is_active = true", userID, deviceID).
-		Count(&count).Error
-	if err != nil {
+	if err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM identity_keys WHERE user_id = $1 AND device_id = $2 AND is_active = true", userID, deviceID).Scan(&count); err != nil {
 		return false, err
 	}
 	return count > 0, nil

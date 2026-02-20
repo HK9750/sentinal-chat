@@ -8,12 +8,12 @@ import (
 
 // MessageUserState represents message_user_states
 type MessageUserState struct {
-	MessageID uuid.UUID `gorm:"type:uuid;primaryKey"`
-	UserID    uuid.UUID `gorm:"type:uuid;primaryKey"`
-	IsDeleted bool      `gorm:"default:false"`
+	MessageID uuid.UUID
+	UserID    uuid.UUID
+	IsDeleted bool
 	DeletedAt sql.NullTime
-	IsStarred bool `gorm:"default:false"`
-	IsPinned  bool `gorm:"default:false"`
+	IsStarred bool
+	IsPinned  bool
 }
 
 func (MessageUserState) TableName() string {

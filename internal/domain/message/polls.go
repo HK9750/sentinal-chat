@@ -9,28 +9,28 @@ import (
 
 // Poll represents polls
 type Poll struct {
-	ID             uuid.UUID     `gorm:"type:uuid;primaryKey;default:uuid_generate_v4()"`
-	MessageID      uuid.NullUUID `gorm:"type:uuid"`
-	Question       string        `gorm:"not null"`
-	AllowsMultiple bool          `gorm:"default:false"`
+	ID             uuid.UUID
+	MessageID      uuid.NullUUID
+	Question       string
+	AllowsMultiple bool
 	ClosesAt       sql.NullTime
-	CreatedAt      time.Time `gorm:"default:now()"`
+	CreatedAt      time.Time
 }
 
 // PollOption represents poll_options
 type PollOption struct {
-	ID         uuid.UUID `gorm:"type:uuid;primaryKey;default:uuid_generate_v4()"`
-	PollID     uuid.UUID `gorm:"type:uuid;not null"`
-	OptionText string    `gorm:"not null"`
-	Position   int       `gorm:"not null"`
+	ID         uuid.UUID
+	PollID     uuid.UUID
+	OptionText string
+	Position   int
 }
 
 // PollVote represents poll_votes
 type PollVote struct {
-	PollID   uuid.UUID `gorm:"type:uuid;primaryKey"`
-	OptionID uuid.UUID `gorm:"type:uuid;primaryKey"`
-	UserID   uuid.UUID `gorm:"type:uuid;primaryKey"`
-	VotedAt  time.Time `gorm:"default:now()"`
+	PollID   uuid.UUID
+	OptionID uuid.UUID
+	UserID   uuid.UUID
+	VotedAt  time.Time
 }
 
 func (Poll) TableName() string {

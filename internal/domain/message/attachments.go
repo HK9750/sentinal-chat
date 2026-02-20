@@ -9,25 +9,25 @@ import (
 
 // LinkPreview represents link_previews
 type LinkPreview struct {
-	ID          uuid.UUID `gorm:"type:uuid;primaryKey;default:uuid_generate_v4()"`
-	URL         string    `gorm:"not null"`
-	URLHash     string    `gorm:"not null"`
+	ID          uuid.UUID
+	URL         string
+	URLHash     string
 	Title       sql.NullString
 	Description sql.NullString
 	ImageURL    sql.NullString
 	SiteName    sql.NullString
-	FetchedAt   time.Time `gorm:"default:now()"`
+	FetchedAt   time.Time
 }
 
 // Attachment represents attachments
 type Attachment struct {
-	ID                uuid.UUID     `gorm:"type:uuid;primaryKey;default:uuid_generate_v4()"`
-	UploaderID        uuid.NullUUID `gorm:"type:uuid"`
-	URL               string        `gorm:"not null"`
+	ID                uuid.UUID
+	UploaderID        uuid.NullUUID
+	URL               string
 	Filename          sql.NullString
-	MimeType          string `gorm:"not null"`
-	SizeBytes         int64  `gorm:"not null"`
-	ViewOnce          bool   `gorm:"default:false"`
+	MimeType          string
+	SizeBytes         int64
+	ViewOnce          bool
 	ViewedAt          sql.NullTime
 	ThumbnailURL      sql.NullString
 	Width             sql.NullInt32
@@ -35,13 +35,13 @@ type Attachment struct {
 	DurationSeconds   sql.NullInt32
 	EncryptionKeyHash sql.NullString
 	EncryptionIV      sql.NullString
-	CreatedAt         time.Time `gorm:"default:now()"`
+	CreatedAt         time.Time
 }
 
 // MessageAttachment represents message_attachments
 type MessageAttachment struct {
-	MessageID    uuid.UUID `gorm:"type:uuid;primaryKey"`
-	AttachmentID uuid.UUID `gorm:"type:uuid;primaryKey"`
+	MessageID    uuid.UUID
+	AttachmentID uuid.UUID
 }
 
 func (LinkPreview) TableName() string {

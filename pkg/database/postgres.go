@@ -1,39 +1,32 @@
 package database
 
 import (
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"sentinal-chat/config"
-	"sentinal-chat/internal/domain/broadcast"
-	"sentinal-chat/internal/domain/call"
-	"sentinal-chat/internal/domain/command"
-	"sentinal-chat/internal/domain/conversation"
-	"sentinal-chat/internal/domain/encryption"
-	"sentinal-chat/internal/domain/message"
-	"sentinal-chat/internal/domain/outbox"
-	"sentinal-chat/internal/domain/upload"
 	"sentinal-chat/internal/domain/user"
 
 	"github.com/google/uuid"
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"golang.org/x/crypto/bcrypt"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
 // Singleton instance variables
 var (
-	DB     *gorm.DB // Kept for backward compatibility - use GetInstance() for new code
+	DB     *sql.DB
 	dbOnce sync.Once
 	dbCfg  *DatabaseConfig
 )
@@ -43,7 +36,6 @@ type DatabaseConfig struct {
 	MaxIdleConns    int
 	MaxOpenConns    int
 	ConnMaxLifetime time.Duration
-	LogLevel        logger.LogLevel
 }
 
 // DefaultDatabaseConfig returns sensible default database configuration
@@ -52,14 +44,12 @@ func DefaultDatabaseConfig() *DatabaseConfig {
 		MaxIdleConns:    10,
 		MaxOpenConns:    100,
 		ConnMaxLifetime: time.Hour,
-		LogLevel:        logger.Silent,
 	}
 }
 
 // GetInstance returns the singleton database instance.
 // Panics if Connect() has not been called.
-// This is the recommended way to access the database in new code.
-func GetInstance() *gorm.DB {
+func GetInstance() *sql.DB {
 	if DB == nil {
 		panic("database not initialized. Call Connect() first")
 	}
@@ -86,22 +76,20 @@ func ConnectWithOptions(cfg *config.Config, config *DatabaseConfig) {
 			cfg.DBHost, cfg.DBUser, cfg.DBPassword, cfg.DBName, cfg.DBPort)
 
 		var err error
-		DB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{
-			Logger: logger.Default.LogMode(config.LogLevel),
-		})
+		DB, err = sql.Open("pgx", dsn)
 		if err != nil {
 			log.Fatalf("Failed to connect to database: %v", err)
 		}
 
-		sqlDB, err := DB.DB()
-		if err != nil {
-			log.Fatalf("Failed to get generic database object: %v", err)
-		}
+		DB.SetMaxIdleConns(config.MaxIdleConns)
+		DB.SetMaxOpenConns(config.MaxOpenConns)
+		DB.SetConnMaxLifetime(config.ConnMaxLifetime)
 
-		// Connection pool settings
-		sqlDB.SetMaxIdleConns(config.MaxIdleConns)
-		sqlDB.SetMaxOpenConns(config.MaxOpenConns)
-		sqlDB.SetConnMaxLifetime(config.ConnMaxLifetime)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := DB.PingContext(ctx); err != nil {
+			log.Fatalf("Failed to ping database: %v", err)
+		}
 
 		log.Println("Database connection established (singleton)")
 	})
@@ -109,26 +97,44 @@ func ConnectWithOptions(cfg *config.Config, config *DatabaseConfig) {
 
 // GetDB returns the current database instance.
 // Kept for backward compatibility - use GetInstance() for new code.
-func GetDB() *gorm.DB {
+func GetDB() *sql.DB {
 	return GetInstance()
+}
+
+// WithTx executes fn within a database transaction.
+func WithTx(ctx context.Context, db *sql.DB, fn func(*sql.Tx) error) error {
+	if db == nil {
+		return errors.New("database not initialized")
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+
+	if err := fn(tx); err != nil {
+		if rollbackErr := tx.Rollback(); rollbackErr != nil {
+			return fmt.Errorf("tx error: %v (rollback error: %w)", err, rollbackErr)
+		}
+		return err
+	}
+
+	return tx.Commit()
 }
 
 // Ping checks if the database connection is alive
 func Ping() error {
-	sqlDB, err := DB.DB()
-	if err != nil {
-		return fmt.Errorf("failed to get underlying db: %w", err)
+	if DB == nil {
+		return errors.New("database not initialized")
 	}
-	return sqlDB.Ping()
+	return DB.Ping()
 }
 
 // Close closes the database connection
 func Close() error {
-	sqlDB, err := DB.DB()
-	if err != nil {
-		return fmt.Errorf("failed to get underlying db: %w", err)
+	if DB == nil {
+		return nil
 	}
-	return sqlDB.Close()
+	return DB.Close()
 }
 
 // ========================================
@@ -143,6 +149,9 @@ func ApplyRawMigrations(migrationsDir string) error {
 
 // ApplyRawMigrationsFiltered applies migrations matching the given suffix
 func ApplyRawMigrationsFiltered(migrationsDir, suffix string) error {
+	if DB == nil {
+		return errors.New("database not initialized")
+	}
 	files, err := os.ReadDir(migrationsDir)
 	if err != nil {
 		return fmt.Errorf("failed to read migrations directory: %w", err)
@@ -165,7 +174,7 @@ func ApplyRawMigrationsFiltered(migrationsDir, suffix string) error {
 		}
 
 		log.Printf("Applying migration: %s", fileName)
-		if err := DB.Exec(string(content)).Error; err != nil {
+		if _, err := DB.Exec(string(content)); err != nil {
 			return fmt.Errorf("failed to execute migration %s: %w", fileName, err)
 		}
 		log.Printf("Successfully applied migration: %s", fileName)
@@ -175,6 +184,9 @@ func ApplyRawMigrationsFiltered(migrationsDir, suffix string) error {
 
 // RollbackMigrations applies down migrations in reverse order
 func RollbackMigrations(migrationsDir string) error {
+	if DB == nil {
+		return errors.New("database not initialized")
+	}
 	files, err := os.ReadDir(migrationsDir)
 	if err != nil {
 		return fmt.Errorf("failed to read migrations directory: %w", err)
@@ -197,7 +209,7 @@ func RollbackMigrations(migrationsDir string) error {
 		}
 
 		log.Printf("Rolling back migration: %s", fileName)
-		if err := DB.Exec(string(content)).Error; err != nil {
+		if _, err := DB.Exec(string(content)); err != nil {
 			return fmt.Errorf("failed to rollback migration %s: %w", fileName, err)
 		}
 		log.Printf("Successfully rolled back migration: %s", fileName)
@@ -205,98 +217,14 @@ func RollbackMigrations(migrationsDir string) error {
 	return nil
 }
 
-// MigrateDB runs GORM AutoMigrate for all domain entities
-func MigrateDB(db *gorm.DB) error {
-	log.Println("Starting GORM AutoMigrate...")
-
-	entities := []interface{}{
-		// User domain
-		&user.User{},
-		&user.UserSettings{},
-		&user.Device{},
-		&user.PushToken{},
-		&user.UserSession{},
-		&user.UserContact{},
-
-		// Conversation domain
-		&conversation.Conversation{},
-		&conversation.Participant{},
-		&conversation.ConversationSequence{},
-		&conversation.ChatLabel{},
-		&conversation.ConversationLabel{},
-		&conversation.ConversationClear{},
-
-		// Message domain
-		&message.Message{},
-		&message.MessageReaction{},
-		&message.MessageReceipt{},
-		&message.MessageMention{},
-		&message.StarredMessage{},
-		&message.Attachment{},
-		&message.MessageAttachment{},
-		&message.LinkPreview{},
-		&message.Poll{},
-		&message.PollOption{},
-		&message.PollVote{},
-		&message.MessageUserState{},
-
-		// Call domain
-		&call.Call{},
-		&call.CallParticipant{},
-		&call.CallQualityMetric{},
-
-		// Encryption domain
-		&encryption.IdentityKey{},
-		&encryption.SignedPreKey{},
-		&encryption.OneTimePreKey{},
-
-		// Broadcast domain
-		&broadcast.BroadcastList{},
-		&broadcast.BroadcastRecipient{},
-
-		// Upload domain
-		&upload.UploadSession{},
-
-		// Outbox domain
-		&outbox.OutboxEvent{},
-
-		// Command domain
-		&command.CommandLog{},
-		&command.ScheduledMessage{},
-		&command.MessageVersion{},
-	}
-
-	if err := db.AutoMigrate(entities...); err != nil {
-		return fmt.Errorf("failed to auto migrate: %w", err)
-	}
-
-	log.Println("GORM AutoMigrate completed successfully")
-	return nil
-}
-
 // RunFullMigration runs raw SQL migrations (contains complete schema)
-// Note: Since raw SQL migrations already define complete schema,
-// GORM AutoMigrate is not needed and would cause conflicts
 func RunFullMigration(migrationsDir string) error {
-	// Apply raw SQL migrations (extensions, types, functions, tables)
 	log.Println("Applying raw SQL migrations...")
 	if err := ApplyRawMigrations(migrationsDir); err != nil {
 		return fmt.Errorf("raw migrations failed: %w", err)
 	}
 
 	log.Println("Full migration completed successfully")
-	return nil
-}
-
-// RunGORMOnlyMigration runs GORM AutoMigrate without raw SQL migrations
-// Use this when you don't have raw SQL migrations and want GORM to create tables
-func RunGORMOnlyMigration() error {
-	log.Println("Running GORM AutoMigrate...")
-	if err := MigrateDB(DB); err != nil {
-		return fmt.Errorf("GORM migration failed: %w", err)
-	}
-
-	log.Println("GORM migration completed successfully")
 	return nil
 }
 
@@ -315,7 +243,6 @@ type CreateAdminUserInput struct {
 
 // CreateAdminUser creates an admin user with the given credentials
 func CreateAdminUser(input CreateAdminUserInput) (*user.User, error) {
-	// Hash the password
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
 	if err != nil {
 		return nil, fmt.Errorf("failed to hash password: %w", err)
@@ -329,19 +256,32 @@ func CreateAdminUser(input CreateAdminUserInput) (*user.User, error) {
 		PasswordHash: string(hashedPassword),
 		DisplayName:  input.DisplayName,
 		IsActive:     true,
-		IsVerified:   true, // Admin is auto-verified
+		IsVerified:   true,
 		CreatedAt:    time.Now(),
 		UpdatedAt:    time.Now(),
 	}
 
-	// Create user in transaction
-	err = DB.Transaction(func(tx *gorm.DB) error {
-		// Create user
-		if err := tx.Create(adminUser).Error; err != nil {
+	ctx := context.Background()
+	if err := WithTx(ctx, DB, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+            INSERT INTO users (id, email, username, phone_number, password_hash, display_name, is_active, is_verified, created_at, updated_at)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+        `,
+			adminUser.ID,
+			adminUser.Email,
+			adminUser.Username,
+			adminUser.PhoneNumber,
+			adminUser.PasswordHash,
+			adminUser.DisplayName,
+			adminUser.IsActive,
+			adminUser.IsVerified,
+			adminUser.CreatedAt,
+			adminUser.UpdatedAt,
+		)
+		if err != nil {
 			return fmt.Errorf("failed to create admin user: %w", err)
 		}
 
-		// Create default settings for admin
 		settings := &user.UserSettings{
 			UserID:               adminUser.ID,
 			PrivacyLastSeen:      "CONTACTS",
@@ -354,14 +294,30 @@ func CreateAdminUser(input CreateAdminUserInput) (*user.User, error) {
 			Language:             "en",
 			UpdatedAt:            time.Now(),
 		}
-		if err := tx.Create(settings).Error; err != nil {
+
+		_, err = tx.ExecContext(ctx, `
+            INSERT INTO user_settings (
+                user_id, privacy_last_seen, privacy_profile_photo, privacy_about, privacy_groups,
+                read_receipts, notifications_enabled, theme, language, updated_at
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+        `,
+			settings.UserID,
+			settings.PrivacyLastSeen,
+			settings.PrivacyProfilePhoto,
+			settings.PrivacyAbout,
+			settings.PrivacyGroups,
+			settings.ReadReceipts,
+			settings.NotificationsEnabled,
+			settings.Theme,
+			settings.Language,
+			settings.UpdatedAt,
+		)
+		if err != nil {
 			return fmt.Errorf("failed to create admin settings: %w", err)
 		}
 
 		return nil
-	})
-
-	if err != nil {
+	}); err != nil {
 		return nil, err
 	}
 
@@ -371,25 +327,63 @@ func CreateAdminUser(input CreateAdminUserInput) (*user.User, error) {
 
 // GetOrCreateAdminUser gets an existing admin user or creates one if it doesn't exist
 func GetOrCreateAdminUser(input CreateAdminUserInput) (*user.User, bool, error) {
-	var existingUser user.User
+	ctx := context.Background()
+	var existing user.User
+	var err error
 
-	// Check if user exists by email or username
-	query := DB.Where("email = ?", input.Email)
 	if input.Username != "" {
-		query = query.Or("username = ?", input.Username)
+		err = DB.QueryRowContext(ctx, `
+            SELECT id, phone_number, username, email, password_hash, display_name, role, bio, avatar_url,
+                   is_online, last_seen_at, is_active, is_verified, created_at, updated_at
+            FROM users WHERE email = $1 OR username = $2 LIMIT 1
+        `, input.Email, input.Username).Scan(
+			&existing.ID,
+			&existing.PhoneNumber,
+			&existing.Username,
+			&existing.Email,
+			&existing.PasswordHash,
+			&existing.DisplayName,
+			&existing.Role,
+			&existing.Bio,
+			&existing.AvatarURL,
+			&existing.IsOnline,
+			&existing.LastSeenAt,
+			&existing.IsActive,
+			&existing.IsVerified,
+			&existing.CreatedAt,
+			&existing.UpdatedAt,
+		)
+	} else {
+		err = DB.QueryRowContext(ctx, `
+            SELECT id, phone_number, username, email, password_hash, display_name, role, bio, avatar_url,
+                   is_online, last_seen_at, is_active, is_verified, created_at, updated_at
+            FROM users WHERE email = $1 LIMIT 1
+        `, input.Email).Scan(
+			&existing.ID,
+			&existing.PhoneNumber,
+			&existing.Username,
+			&existing.Email,
+			&existing.PasswordHash,
+			&existing.DisplayName,
+			&existing.Role,
+			&existing.Bio,
+			&existing.AvatarURL,
+			&existing.IsOnline,
+			&existing.LastSeenAt,
+			&existing.IsActive,
+			&existing.IsVerified,
+			&existing.CreatedAt,
+			&existing.UpdatedAt,
+		)
 	}
 
-	err := query.First(&existingUser).Error
 	if err == nil {
-		// User exists
-		return &existingUser, false, nil
+		return &existing, false, nil
 	}
-
-	if err != gorm.ErrRecordNotFound {
+	if !errors.Is(err, sql.ErrNoRows) {
 		return nil, false, fmt.Errorf("failed to query user: %w", err)
 	}
 
-	// User doesn't exist, create new one
 	newUser, err := CreateAdminUser(input)
 	return newUser, true, err
 }
@@ -414,8 +408,24 @@ func CreateUserWithDefaults(input CreateAdminUserInput) (*user.User, error) {
 		UpdatedAt:    time.Now(),
 	}
 
-	err = DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(newUser).Error; err != nil {
+	ctx := context.Background()
+	if err := WithTx(ctx, DB, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+            INSERT INTO users (id, email, username, phone_number, password_hash, display_name, is_active, is_verified, created_at, updated_at)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+        `,
+			newUser.ID,
+			newUser.Email,
+			newUser.Username,
+			newUser.PhoneNumber,
+			newUser.PasswordHash,
+			newUser.DisplayName,
+			newUser.IsActive,
+			newUser.IsVerified,
+			newUser.CreatedAt,
+			newUser.UpdatedAt,
+		)
+		if err != nil {
 			return fmt.Errorf("failed to create user: %w", err)
 		}
 
@@ -431,14 +441,29 @@ func CreateUserWithDefaults(input CreateAdminUserInput) (*user.User, error) {
 			Language:             "en",
 			UpdatedAt:            time.Now(),
 		}
-		if err := tx.Create(settings).Error; err != nil {
+
+		_, err = tx.ExecContext(ctx, `
+            INSERT INTO user_settings (
+                user_id, privacy_last_seen, privacy_profile_photo, privacy_about, privacy_groups,
+                read_receipts, notifications_enabled, theme, language, updated_at
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+        `,
+			settings.UserID,
+			settings.PrivacyLastSeen,
+			settings.PrivacyProfilePhoto,
+			settings.PrivacyAbout,
+			settings.PrivacyGroups,
+			settings.ReadReceipts,
+			settings.NotificationsEnabled,
+			settings.Theme,
+			settings.Language,
+			settings.UpdatedAt,
+		)
+		if err != nil {
 			return fmt.Errorf("failed to create user settings: %w", err)
 		}
-
 		return nil
-	})
-
-	if err != nil {
+	}); err != nil {
 		return nil, err
 	}
 
@@ -477,6 +502,7 @@ func TruncateAllTables() error {
 		"message_mentions",
 		"message_receipts",
 		"message_reactions",
+		"message_ciphertexts",
 		"messages",
 		"conversation_sequences",
 		"participants",
@@ -487,55 +513,75 @@ func TruncateAllTables() error {
 		"devices",
 		"user_settings",
 		"users",
+		"outbox_events",
+		"command_logs",
+		"scheduled_messages",
+		"message_versions",
 	}
 
-	return DB.Transaction(func(tx *gorm.DB) error {
-		// Disable foreign key checks temporarily
-		if err := tx.Exec("SET session_replication_role = 'replica';").Error; err != nil {
+	ctx := context.Background()
+	return WithTx(ctx, DB, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, "SET session_replication_role = 'replica';"); err != nil {
 			return err
 		}
 
 		for _, table := range tables {
-			if err := tx.Exec(fmt.Sprintf("TRUNCATE TABLE %s CASCADE;", table)).Error; err != nil {
+			if _, err := tx.ExecContext(ctx, fmt.Sprintf("TRUNCATE TABLE %s CASCADE;", table)); err != nil {
 				log.Printf("Warning: failed to truncate table %s: %v", table, err)
 			}
 		}
 
-		// Re-enable foreign key checks
-		return tx.Exec("SET session_replication_role = 'origin';").Error
+		_, err := tx.ExecContext(ctx, "SET session_replication_role = 'origin';")
+		return err
 	})
 }
 
 // DropAllTables drops all tables (USE WITH EXTREME CAUTION)
 func DropAllTables() error {
-	return DB.Exec(`
-		DO $$ DECLARE
-			r RECORD;
-		BEGIN
-			FOR r IN (SELECT tablename FROM pg_tables WHERE schemaname = current_schema()) LOOP
-				EXECUTE 'DROP TABLE IF EXISTS ' || quote_ident(r.tablename) || ' CASCADE';
-			END LOOP;
-		END $$;
-	`).Error
+	if DB == nil {
+		return errors.New("database not initialized")
+	}
+	_, err := DB.Exec(`
+        DO $$ DECLARE
+            r RECORD;
+        BEGIN
+            FOR r IN (SELECT tablename FROM pg_tables WHERE schemaname = current_schema()) LOOP
+                EXECUTE 'DROP TABLE IF EXISTS ' || quote_ident(r.tablename) || ' CASCADE';
+            END LOOP;
+        END $$;
+    `)
+	return err
 }
 
 // TableExists checks if a table exists in the database
 func TableExists(tableName string) (bool, error) {
+	if DB == nil {
+		return false, errors.New("database not initialized")
+	}
 	var exists bool
-	err := DB.Raw(`
-		SELECT EXISTS (
-			SELECT FROM pg_tables
-			WHERE schemaname = 'public'
-			AND tablename = ?
-		);
-	`, tableName).Scan(&exists).Error
+	err := DB.QueryRow(`
+        SELECT EXISTS (
+            SELECT FROM pg_tables
+            WHERE schemaname = 'public'
+            AND tablename = $1
+        );
+    `, tableName).Scan(&exists)
 	return exists, err
 }
 
+var tableNamePattern = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
+
 // GetTableCount returns the number of rows in a table
 func GetTableCount(tableName string) (int64, error) {
+	if DB == nil {
+		return 0, errors.New("database not initialized")
+	}
+	if !tableNamePattern.MatchString(tableName) {
+		return 0, fmt.Errorf("invalid table name: %s", tableName)
+	}
 	var count int64
-	err := DB.Table(tableName).Count(&count).Error
+	query := fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName)
+	err := DB.QueryRow(query).Scan(&count)
 	return count, err
 }
 
@@ -562,12 +608,10 @@ func CheckPasswordHash(password, hash string) bool {
 
 // HealthCheck performs a comprehensive database health check
 func HealthCheck() error {
-	// Check connection
 	if err := Ping(); err != nil {
 		return fmt.Errorf("ping failed: %w", err)
 	}
 
-	// Check if core tables exist
 	coreTables := []string{"users", "conversations", "messages"}
 	for _, table := range coreTables {
 		exists, err := TableExists(table)

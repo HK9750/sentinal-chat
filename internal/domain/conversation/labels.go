@@ -9,27 +9,27 @@ import (
 
 // ChatLabel represents chat_labels
 type ChatLabel struct {
-	ID        uuid.UUID `gorm:"type:uuid;primaryKey;default:uuid_generate_v4()"`
-	UserID    uuid.UUID `gorm:"type:uuid;not null"`
-	Name      string    `gorm:"not null"`
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	Name      string
 	Color     sql.NullString
 	Position  sql.NullInt32
-	CreatedAt time.Time `gorm:"default:now()"`
+	CreatedAt time.Time
 }
 
 // ConversationLabel represents conversation_labels
 type ConversationLabel struct {
-	ConversationID uuid.UUID `gorm:"type:uuid;primaryKey"`
-	LabelID        uuid.UUID `gorm:"type:uuid;primaryKey"`
-	UserID         uuid.UUID `gorm:"type:uuid;primaryKey"`
-	CreatedAt      time.Time `gorm:"default:now()"`
+	ConversationID uuid.UUID
+	LabelID        uuid.UUID
+	UserID         uuid.UUID
+	CreatedAt      time.Time
 }
 
 // ConversationClear represents conversation_clears
 type ConversationClear struct {
-	ConversationID uuid.UUID `gorm:"type:uuid;primaryKey"`
-	UserID         uuid.UUID `gorm:"type:uuid;primaryKey"`
-	ClearedAt      time.Time `gorm:"default:now()"`
+	ConversationID uuid.UUID
+	UserID         uuid.UUID
+	ClearedAt      time.Time
 }
 
 func (ChatLabel) TableName() string {

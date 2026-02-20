@@ -8,16 +8,16 @@ import (
 
 // UploadSession represents upload_sessions
 type UploadSession struct {
-	ID            uuid.UUID `gorm:"type:uuid;primaryKey;default:uuid_generate_v4()"`
-	UploaderID    uuid.UUID `gorm:"type:uuid;not null"`
-	Filename      string    `gorm:"not null"`
-	MimeType      string    `gorm:"not null"`
-	SizeBytes     int64     `gorm:"not null"`
-	ChunkSize     int       `gorm:"not null"`
-	UploadedBytes int64     `gorm:"default:0"`
-	Status        string    `gorm:"type:upload_status;default:'IN_PROGRESS'"`
-	CreatedAt     time.Time `gorm:"default:now()"`
-	UpdatedAt     time.Time `gorm:"default:now()"`
+	ID            uuid.UUID
+	UploaderID    uuid.UUID
+	Filename      string
+	MimeType      string
+	SizeBytes     int64
+	ChunkSize     int
+	UploadedBytes int64
+	Status        string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 func (UploadSession) TableName() string {

@@ -19,16 +19,16 @@ const (
 
 // CommandLog stores command execution history
 type CommandLog struct {
-	ID              uuid.UUID `gorm:"type:uuid;primary_key;default:gen_random_uuid()"`
-	CommandType     string    `gorm:"type:varchar(50);not null"`
-	UserID          uuid.UUID `gorm:"type:uuid;not null"`
-	Status          Status    `gorm:"type:varchar(20);not null;default:'PENDING'"`
-	Payload         []byte    `gorm:"type:jsonb;not null"`
-	Result          []byte    `gorm:"type:jsonb"`
-	UndoData        []byte    `gorm:"type:jsonb"`
-	ErrorMessage    string    `gorm:"type:text"`
-	ExecutionTimeMs int       `gorm:"type:int"`
-	CreatedAt       time.Time `gorm:"not null;default:now()"`
+	ID              uuid.UUID
+	CommandType     string
+	UserID          uuid.UUID
+	Status          Status
+	Payload         []byte
+	Result          []byte
+	UndoData        []byte
+	ErrorMessage    string
+	ExecutionTimeMs int
+	CreatedAt       time.Time
 	ExecutedAt      *time.Time
 	UndoneAt        *time.Time
 }
@@ -40,15 +40,15 @@ func (CommandLog) TableName() string {
 
 // ScheduledMessage for delayed delivery
 type ScheduledMessage struct {
-	ID             uuid.UUID `gorm:"type:uuid;primary_key;default:gen_random_uuid()"`
-	MessageID      uuid.UUID `gorm:"type:uuid;not null"`
-	ConversationID uuid.UUID `gorm:"type:uuid;not null"`
-	SenderID       uuid.UUID `gorm:"type:uuid;not null"`
-	Content        string    `gorm:"type:text;not null"`
-	ScheduledFor   time.Time `gorm:"not null"`
-	Timezone       string    `gorm:"type:varchar(50);default:'UTC'"`
-	Status         string    `gorm:"type:varchar(20);default:'PENDING'"`
-	CreatedAt      time.Time `gorm:"default:now()"`
+	ID             uuid.UUID
+	MessageID      uuid.UUID
+	ConversationID uuid.UUID
+	SenderID       uuid.UUID
+	Content        string
+	ScheduledFor   time.Time
+	Timezone       string
+	Status         string
+	CreatedAt      time.Time
 	SentAt         *time.Time
 }
 
@@ -59,12 +59,12 @@ func (ScheduledMessage) TableName() string {
 
 // MessageVersion for edit history
 type MessageVersion struct {
-	ID            uuid.UUID `gorm:"type:uuid;primary_key;default:gen_random_uuid()"`
-	MessageID     uuid.UUID `gorm:"type:uuid;not null"`
-	Content       string    `gorm:"type:text;not null"`
-	EditedBy      uuid.UUID `gorm:"type:uuid;not null"`
-	EditedAt      time.Time `gorm:"not null;default:now()"`
-	VersionNumber int       `gorm:"not null"`
+	ID            uuid.UUID
+	MessageID     uuid.UUID
+	Content       string
+	EditedBy      uuid.UUID
+	EditedAt      time.Time
+	VersionNumber int
 }
 
 // TableName returns the database table name

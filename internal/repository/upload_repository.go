@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"time"
 
@@ -9,33 +10,49 @@ import (
 	sentinal_errors "sentinal-chat/pkg/errors"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 )
 
 type PostgresUploadRepository struct {
-	db *gorm.DB
+	db DBTX
 }
 
-func NewUploadRepository(db *gorm.DB) UploadRepository {
+func NewUploadRepository(db DBTX) UploadRepository {
 	return &PostgresUploadRepository{db: db}
 }
 
 func (r *PostgresUploadRepository) Create(ctx context.Context, u *upload.UploadSession) error {
-	res := r.db.WithContext(ctx).Create(u)
-	if res.Error != nil {
-		if errors.Is(res.Error, gorm.ErrDuplicatedKey) {
+	_, err := r.db.ExecContext(ctx, `
+        INSERT INTO upload_sessions (id, uploader_id, filename, mime_type, size_bytes, chunk_size, uploaded_bytes, status, created_at, updated_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+    `, u.ID, u.UploaderID, u.Filename, u.MimeType, u.SizeBytes, u.ChunkSize, u.UploadedBytes, u.Status, u.CreatedAt, u.UpdatedAt)
+	if err != nil {
+		if isUniqueViolation(err) {
 			return sentinal_errors.ErrAlreadyExists
 		}
-		return res.Error
+		return err
 	}
 	return nil
 }
 
 func (r *PostgresUploadRepository) GetByID(ctx context.Context, id uuid.UUID) (upload.UploadSession, error) {
 	var u upload.UploadSession
-	err := r.db.WithContext(ctx).Where("id = ?", id).First(&u).Error
+	err := r.db.QueryRowContext(ctx, `
+        SELECT id, uploader_id, filename, mime_type, size_bytes, chunk_size, uploaded_bytes, status, created_at, updated_at
+        FROM upload_sessions WHERE id = $1
+    `, id).Scan(
+		&u.ID,
+		&u.UploaderID,
+		&u.Filename,
+		&u.MimeType,
+		&u.SizeBytes,
+		&u.ChunkSize,
+		&u.UploadedBytes,
+		&u.Status,
+		&u.CreatedAt,
+		&u.UpdatedAt,
+	)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+		if errors.Is(err, sql.ErrNoRows) {
 			return upload.UploadSession{}, sentinal_errors.ErrNotFound
 		}
 		return upload.UploadSession{}, err
@@ -45,34 +62,64 @@ func (r *PostgresUploadRepository) GetByID(ctx context.Context, id uuid.UUID) (u
 
 func (r *PostgresUploadRepository) Update(ctx context.Context, u upload.UploadSession) error {
 	u.UpdatedAt = time.Now()
-	res := r.db.WithContext(ctx).Save(&u)
-	if res.Error != nil {
-		return res.Error
+	res, err := r.db.ExecContext(ctx, `
+        UPDATE upload_sessions
+        SET uploader_id = $1, filename = $2, mime_type = $3, size_bytes = $4, chunk_size = $5,
+            uploaded_bytes = $6, status = $7, updated_at = $8
+        WHERE id = $9
+    `, u.UploaderID, u.Filename, u.MimeType, u.SizeBytes, u.ChunkSize, u.UploadedBytes, u.Status, u.UpdatedAt, u.ID)
+	if err != nil {
+		return err
 	}
-	if res.RowsAffected == 0 {
+	rows, err := res.RowsAffected()
+	if err == nil && rows == 0 {
 		return sentinal_errors.ErrNotFound
 	}
-	return nil
+	return err
 }
 
 func (r *PostgresUploadRepository) Delete(ctx context.Context, id uuid.UUID) error {
-	res := r.db.WithContext(ctx).Delete(&upload.UploadSession{}, "id = ?", id)
-	if res.Error != nil {
-		return res.Error
+	res, err := r.db.ExecContext(ctx, "DELETE FROM upload_sessions WHERE id = $1", id)
+	if err != nil {
+		return err
 	}
-	if res.RowsAffected == 0 {
+	rows, err := res.RowsAffected()
+	if err == nil && rows == 0 {
 		return sentinal_errors.ErrNotFound
 	}
-	return nil
+	return err
 }
 
 func (r *PostgresUploadRepository) GetUserUploadSessions(ctx context.Context, uploaderID uuid.UUID) ([]upload.UploadSession, error) {
 	var sessions []upload.UploadSession
-	err := r.db.WithContext(ctx).
-		Where("uploader_id = ?", uploaderID).
-		Order("created_at DESC").
-		Find(&sessions).Error
+	rows, err := r.db.QueryContext(ctx, `
+        SELECT id, uploader_id, filename, mime_type, size_bytes, chunk_size, uploaded_bytes, status, created_at, updated_at
+        FROM upload_sessions WHERE uploader_id = $1
+        ORDER BY created_at DESC
+    `, uploaderID)
 	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var u upload.UploadSession
+		if err := rows.Scan(
+			&u.ID,
+			&u.UploaderID,
+			&u.Filename,
+			&u.MimeType,
+			&u.SizeBytes,
+			&u.ChunkSize,
+			&u.UploadedBytes,
+			&u.Status,
+			&u.CreatedAt,
+			&u.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		sessions = append(sessions, u)
+	}
+	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	return sessions, nil
@@ -80,11 +127,34 @@ func (r *PostgresUploadRepository) GetUserUploadSessions(ctx context.Context, up
 
 func (r *PostgresUploadRepository) GetInProgressUploads(ctx context.Context, uploaderID uuid.UUID) ([]upload.UploadSession, error) {
 	var sessions []upload.UploadSession
-	err := r.db.WithContext(ctx).
-		Where("uploader_id = ? AND status = 'IN_PROGRESS'", uploaderID).
-		Order("created_at DESC").
-		Find(&sessions).Error
+	rows, err := r.db.QueryContext(ctx, `
+        SELECT id, uploader_id, filename, mime_type, size_bytes, chunk_size, uploaded_bytes, status, created_at, updated_at
+        FROM upload_sessions WHERE uploader_id = $1 AND status = 'IN_PROGRESS'
+        ORDER BY created_at DESC
+    `, uploaderID)
 	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var u upload.UploadSession
+		if err := rows.Scan(
+			&u.ID,
+			&u.UploaderID,
+			&u.Filename,
+			&u.MimeType,
+			&u.SizeBytes,
+			&u.ChunkSize,
+			&u.UploadedBytes,
+			&u.Status,
+			&u.CreatedAt,
+			&u.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		sessions = append(sessions, u)
+	}
+	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	return sessions, nil
@@ -94,83 +164,142 @@ func (r *PostgresUploadRepository) GetCompletedUploads(ctx context.Context, uplo
 	var sessions []upload.UploadSession
 	var total int64
 
-	q := r.db.WithContext(ctx).
-		Model(&upload.UploadSession{}).
-		Where("uploader_id = ? AND status = 'COMPLETED'", uploaderID)
-
-	if err := q.Count(&total).Error; err != nil {
+	if err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM upload_sessions WHERE uploader_id = $1 AND status = 'COMPLETED'", uploaderID).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
 	offset := (page - 1) * limit
-	if err := q.Order("updated_at DESC").Offset(offset).Limit(limit).Find(&sessions).Error; err != nil {
+	rows, err := r.db.QueryContext(ctx, `
+        SELECT id, uploader_id, filename, mime_type, size_bytes, chunk_size, uploaded_bytes, status, created_at, updated_at
+        FROM upload_sessions
+        WHERE uploader_id = $1 AND status = 'COMPLETED'
+        ORDER BY updated_at DESC
+        OFFSET $2 LIMIT $3
+    `, uploaderID, offset, limit)
+	if err != nil {
 		return nil, 0, err
 	}
-
+	defer rows.Close()
+	for rows.Next() {
+		var u upload.UploadSession
+		if err := rows.Scan(
+			&u.ID,
+			&u.UploaderID,
+			&u.Filename,
+			&u.MimeType,
+			&u.SizeBytes,
+			&u.ChunkSize,
+			&u.UploadedBytes,
+			&u.Status,
+			&u.CreatedAt,
+			&u.UpdatedAt,
+		); err != nil {
+			return nil, 0, err
+		}
+		sessions = append(sessions, u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
 	return sessions, total, nil
 }
 
 func (r *PostgresUploadRepository) UpdateProgress(ctx context.Context, sessionID uuid.UUID, uploadedBytes int64) error {
-	res := r.db.WithContext(ctx).
-		Model(&upload.UploadSession{}).
-		Where("id = ?", sessionID).
-		Updates(map[string]interface{}{
-			"uploaded_bytes": uploadedBytes,
-			"updated_at":     time.Now(),
-		})
-	if res.Error != nil {
-		return res.Error
+	res, err := r.db.ExecContext(ctx, `
+        UPDATE upload_sessions
+        SET uploaded_bytes = $1, updated_at = $2
+        WHERE id = $3
+    `, uploadedBytes, time.Now(), sessionID)
+	if err != nil {
+		return err
 	}
-	if res.RowsAffected == 0 {
+	rows, err := res.RowsAffected()
+	if err == nil && rows == 0 {
 		return sentinal_errors.ErrNotFound
 	}
-	return nil
+	return err
 }
 
 func (r *PostgresUploadRepository) MarkCompleted(ctx context.Context, sessionID uuid.UUID) error {
-	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	return WithTx(ctx, r.db, func(tx DBTX) error {
 		var session upload.UploadSession
-		if err := tx.Where("id = ?", sessionID).First(&session).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
+		err := tx.QueryRowContext(ctx, `
+            SELECT id, uploader_id, filename, mime_type, size_bytes, chunk_size, uploaded_bytes, status, created_at, updated_at
+            FROM upload_sessions WHERE id = $1
+        `, sessionID).Scan(
+			&session.ID,
+			&session.UploaderID,
+			&session.Filename,
+			&session.MimeType,
+			&session.SizeBytes,
+			&session.ChunkSize,
+			&session.UploadedBytes,
+			&session.Status,
+			&session.CreatedAt,
+			&session.UpdatedAt,
+		)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
 				return sentinal_errors.ErrNotFound
 			}
 			return err
 		}
 
-		return tx.Model(&upload.UploadSession{}).
-			Where("id = ?", sessionID).
-			Updates(map[string]interface{}{
-				"status":         "COMPLETED",
-				"uploaded_bytes": session.SizeBytes,
-				"updated_at":     time.Now(),
-			}).Error
+		_, err = tx.ExecContext(ctx, `
+            UPDATE upload_sessions
+            SET status = 'COMPLETED', uploaded_bytes = $1, updated_at = $2
+            WHERE id = $3
+        `, session.SizeBytes, time.Now(), sessionID)
+		return err
 	})
 }
 
 func (r *PostgresUploadRepository) MarkFailed(ctx context.Context, sessionID uuid.UUID) error {
-	res := r.db.WithContext(ctx).
-		Model(&upload.UploadSession{}).
-		Where("id = ?", sessionID).
-		Updates(map[string]interface{}{
-			"status":     "FAILED",
-			"updated_at": time.Now(),
-		})
-	if res.Error != nil {
-		return res.Error
+	res, err := r.db.ExecContext(ctx, `
+        UPDATE upload_sessions
+        SET status = 'FAILED', updated_at = $1
+        WHERE id = $2
+    `, time.Now(), sessionID)
+	if err != nil {
+		return err
 	}
-	if res.RowsAffected == 0 {
+	rows, err := res.RowsAffected()
+	if err == nil && rows == 0 {
 		return sentinal_errors.ErrNotFound
 	}
-	return nil
+	return err
 }
 
 func (r *PostgresUploadRepository) GetStaleUploads(ctx context.Context, olderThan time.Duration) ([]upload.UploadSession, error) {
 	var sessions []upload.UploadSession
 	cutoff := time.Now().Add(-olderThan)
-	err := r.db.WithContext(ctx).
-		Where("status = 'IN_PROGRESS' AND updated_at < ?", cutoff).
-		Find(&sessions).Error
+	rows, err := r.db.QueryContext(ctx, `
+        SELECT id, uploader_id, filename, mime_type, size_bytes, chunk_size, uploaded_bytes, status, created_at, updated_at
+        FROM upload_sessions WHERE status = 'IN_PROGRESS' AND updated_at < $1
+    `, cutoff)
 	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var u upload.UploadSession
+		if err := rows.Scan(
+			&u.ID,
+			&u.UploaderID,
+			&u.Filename,
+			&u.MimeType,
+			&u.SizeBytes,
+			&u.ChunkSize,
+			&u.UploadedBytes,
+			&u.Status,
+			&u.CreatedAt,
+			&u.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		sessions = append(sessions, u)
+	}
+	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	return sessions, nil
@@ -178,10 +307,13 @@ func (r *PostgresUploadRepository) GetStaleUploads(ctx context.Context, olderTha
 
 func (r *PostgresUploadRepository) DeleteStaleUploads(ctx context.Context, olderThan time.Duration) (int64, error) {
 	cutoff := time.Now().Add(-olderThan)
-	res := r.db.WithContext(ctx).
-		Delete(&upload.UploadSession{}, "status = 'IN_PROGRESS' AND updated_at < ?", cutoff)
-	if res.Error != nil {
-		return 0, res.Error
+	res, err := r.db.ExecContext(ctx, "DELETE FROM upload_sessions WHERE status = 'IN_PROGRESS' AND updated_at < $1", cutoff)
+	if err != nil {
+		return 0, err
 	}
-	return res.RowsAffected, nil
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return rows, nil
 }
