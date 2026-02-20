@@ -15,14 +15,16 @@ type CreateUploadRequest struct {
 
 // CreateUploadResponse is returned after creating an upload session
 type CreateUploadResponse struct {
-	ID          string `json:"id"`
-	FileName    string `json:"file_name"`
-	FileSize    int64  `json:"file_size"`
-	ContentType string `json:"content_type"`
-	UploaderID  string `json:"uploader_id"`
-	Status      string `json:"status"`
-	UploadURL   string `json:"upload_url,omitempty"`
-	CreatedAt   string `json:"created_at"`
+	ID          string            `json:"id"`
+	FileName    string            `json:"file_name"`
+	FileSize    int64             `json:"file_size"`
+	ContentType string            `json:"content_type"`
+	UploaderID  string            `json:"uploader_id"`
+	Status      string            `json:"status"`
+	UploadURL   string            `json:"upload_url,omitempty"`
+	UploadKey   string            `json:"upload_key,omitempty"`
+	Headers     map[string]string `json:"headers,omitempty"`
+	CreatedAt   string            `json:"created_at"`
 }
 
 // UpdateUploadRequest is used for PUT /uploads/:id
@@ -89,6 +91,12 @@ func FromUploadSession(s upload.UploadSession) UploadDTO {
 		Status:        s.Status,
 		UploadedBytes: s.UploadedBytes,
 		CreatedAt:     s.CreatedAt.Format(time.RFC3339),
+	}
+	if s.FileURL.Valid {
+		dto.FileURL = s.FileURL.String
+	}
+	if s.CompletedAt.Valid {
+		dto.CompletedAt = s.CompletedAt.Time.Format(time.RFC3339)
 	}
 	return dto
 }

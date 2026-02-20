@@ -407,6 +407,9 @@ CREATE TABLE IF NOT EXISTS upload_sessions (
   chunk_size INTEGER NOT NULL,
   uploaded_bytes BIGINT DEFAULT 0,
   status upload_status DEFAULT 'IN_PROGRESS',
+  object_key TEXT,
+  file_url TEXT,
+  completed_at TIMESTAMP,
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW()
 );
@@ -450,4 +453,3 @@ CREATE TABLE IF NOT EXISTS message_versions (
   edited_at TIMESTAMP DEFAULT NOW(),
   version_number INT NOT NULL
 );
-

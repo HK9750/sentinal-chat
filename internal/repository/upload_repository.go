@@ -22,9 +22,9 @@ func NewUploadRepository(db DBTX) UploadRepository {
 
 func (r *PostgresUploadRepository) Create(ctx context.Context, u *upload.UploadSession) error {
 	_, err := r.db.ExecContext(ctx, `
-        INSERT INTO upload_sessions (id, uploader_id, filename, mime_type, size_bytes, chunk_size, uploaded_bytes, status, created_at, updated_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-    `, u.ID, u.UploaderID, u.Filename, u.MimeType, u.SizeBytes, u.ChunkSize, u.UploadedBytes, u.Status, u.CreatedAt, u.UpdatedAt)
+        INSERT INTO upload_sessions (id, uploader_id, filename, mime_type, size_bytes, chunk_size, uploaded_bytes, status, object_key, file_url, completed_at, created_at, updated_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+    `, u.ID, u.UploaderID, u.Filename, u.MimeType, u.SizeBytes, u.ChunkSize, u.UploadedBytes, u.Status, u.ObjectKey, u.FileURL, u.CompletedAt, u.CreatedAt, u.UpdatedAt)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return sentinal_errors.ErrAlreadyExists
@@ -37,7 +37,7 @@ func (r *PostgresUploadRepository) Create(ctx context.Context, u *upload.UploadS
 func (r *PostgresUploadRepository) GetByID(ctx context.Context, id uuid.UUID) (upload.UploadSession, error) {
 	var u upload.UploadSession
 	err := r.db.QueryRowContext(ctx, `
-        SELECT id, uploader_id, filename, mime_type, size_bytes, chunk_size, uploaded_bytes, status, created_at, updated_at
+        SELECT id, uploader_id, filename, mime_type, size_bytes, chunk_size, uploaded_bytes, status, object_key, file_url, completed_at, created_at, updated_at
         FROM upload_sessions WHERE id = $1
     `, id).Scan(
 		&u.ID,
@@ -48,6 +48,9 @@ func (r *PostgresUploadRepository) GetByID(ctx context.Context, id uuid.UUID) (u
 		&u.ChunkSize,
 		&u.UploadedBytes,
 		&u.Status,
+		&u.ObjectKey,
+		&u.FileURL,
+		&u.CompletedAt,
 		&u.CreatedAt,
 		&u.UpdatedAt,
 	)
@@ -65,9 +68,9 @@ func (r *PostgresUploadRepository) Update(ctx context.Context, u upload.UploadSe
 	res, err := r.db.ExecContext(ctx, `
         UPDATE upload_sessions
         SET uploader_id = $1, filename = $2, mime_type = $3, size_bytes = $4, chunk_size = $5,
-            uploaded_bytes = $6, status = $7, updated_at = $8
-        WHERE id = $9
-    `, u.UploaderID, u.Filename, u.MimeType, u.SizeBytes, u.ChunkSize, u.UploadedBytes, u.Status, u.UpdatedAt, u.ID)
+            uploaded_bytes = $6, status = $7, object_key = $8, file_url = $9, completed_at = $10, updated_at = $11
+        WHERE id = $12
+    `, u.UploaderID, u.Filename, u.MimeType, u.SizeBytes, u.ChunkSize, u.UploadedBytes, u.Status, u.ObjectKey, u.FileURL, u.CompletedAt, u.UpdatedAt, u.ID)
 	if err != nil {
 		return err
 	}
@@ -93,7 +96,7 @@ func (r *PostgresUploadRepository) Delete(ctx context.Context, id uuid.UUID) err
 func (r *PostgresUploadRepository) GetUserUploadSessions(ctx context.Context, uploaderID uuid.UUID) ([]upload.UploadSession, error) {
 	var sessions []upload.UploadSession
 	rows, err := r.db.QueryContext(ctx, `
-        SELECT id, uploader_id, filename, mime_type, size_bytes, chunk_size, uploaded_bytes, status, created_at, updated_at
+        SELECT id, uploader_id, filename, mime_type, size_bytes, chunk_size, uploaded_bytes, status, object_key, file_url, completed_at, created_at, updated_at
         FROM upload_sessions WHERE uploader_id = $1
         ORDER BY created_at DESC
     `, uploaderID)
@@ -112,6 +115,9 @@ func (r *PostgresUploadRepository) GetUserUploadSessions(ctx context.Context, up
 			&u.ChunkSize,
 			&u.UploadedBytes,
 			&u.Status,
+			&u.ObjectKey,
+			&u.FileURL,
+			&u.CompletedAt,
 			&u.CreatedAt,
 			&u.UpdatedAt,
 		); err != nil {
@@ -128,7 +134,7 @@ func (r *PostgresUploadRepository) GetUserUploadSessions(ctx context.Context, up
 func (r *PostgresUploadRepository) GetInProgressUploads(ctx context.Context, uploaderID uuid.UUID) ([]upload.UploadSession, error) {
 	var sessions []upload.UploadSession
 	rows, err := r.db.QueryContext(ctx, `
-        SELECT id, uploader_id, filename, mime_type, size_bytes, chunk_size, uploaded_bytes, status, created_at, updated_at
+        SELECT id, uploader_id, filename, mime_type, size_bytes, chunk_size, uploaded_bytes, status, object_key, file_url, completed_at, created_at, updated_at
         FROM upload_sessions WHERE uploader_id = $1 AND status = 'IN_PROGRESS'
         ORDER BY created_at DESC
     `, uploaderID)
@@ -147,6 +153,9 @@ func (r *PostgresUploadRepository) GetInProgressUploads(ctx context.Context, upl
 			&u.ChunkSize,
 			&u.UploadedBytes,
 			&u.Status,
+			&u.ObjectKey,
+			&u.FileURL,
+			&u.CompletedAt,
 			&u.CreatedAt,
 			&u.UpdatedAt,
 		); err != nil {
@@ -170,7 +179,7 @@ func (r *PostgresUploadRepository) GetCompletedUploads(ctx context.Context, uplo
 
 	offset := (page - 1) * limit
 	rows, err := r.db.QueryContext(ctx, `
-        SELECT id, uploader_id, filename, mime_type, size_bytes, chunk_size, uploaded_bytes, status, created_at, updated_at
+        SELECT id, uploader_id, filename, mime_type, size_bytes, chunk_size, uploaded_bytes, status, object_key, file_url, completed_at, created_at, updated_at
         FROM upload_sessions
         WHERE uploader_id = $1 AND status = 'COMPLETED'
         ORDER BY updated_at DESC
@@ -191,6 +200,9 @@ func (r *PostgresUploadRepository) GetCompletedUploads(ctx context.Context, uplo
 			&u.ChunkSize,
 			&u.UploadedBytes,
 			&u.Status,
+			&u.ObjectKey,
+			&u.FileURL,
+			&u.CompletedAt,
 			&u.CreatedAt,
 			&u.UpdatedAt,
 		); err != nil {
@@ -224,7 +236,7 @@ func (r *PostgresUploadRepository) MarkCompleted(ctx context.Context, sessionID 
 	return WithTx(ctx, r.db, func(tx DBTX) error {
 		var session upload.UploadSession
 		err := tx.QueryRowContext(ctx, `
-            SELECT id, uploader_id, filename, mime_type, size_bytes, chunk_size, uploaded_bytes, status, created_at, updated_at
+            SELECT id, uploader_id, filename, mime_type, size_bytes, chunk_size, uploaded_bytes, status, object_key, file_url, completed_at, created_at, updated_at
             FROM upload_sessions WHERE id = $1
         `, sessionID).Scan(
 			&session.ID,
@@ -235,6 +247,9 @@ func (r *PostgresUploadRepository) MarkCompleted(ctx context.Context, sessionID 
 			&session.ChunkSize,
 			&session.UploadedBytes,
 			&session.Status,
+			&session.ObjectKey,
+			&session.FileURL,
+			&session.CompletedAt,
 			&session.CreatedAt,
 			&session.UpdatedAt,
 		)
@@ -245,11 +260,12 @@ func (r *PostgresUploadRepository) MarkCompleted(ctx context.Context, sessionID 
 			return err
 		}
 
+		completedAt := time.Now()
 		_, err = tx.ExecContext(ctx, `
             UPDATE upload_sessions
-            SET status = 'COMPLETED', uploaded_bytes = $1, updated_at = $2
-            WHERE id = $3
-        `, session.SizeBytes, time.Now(), sessionID)
+            SET status = 'COMPLETED', uploaded_bytes = $1, completed_at = $2, updated_at = $3
+            WHERE id = $4
+        `, session.SizeBytes, completedAt, completedAt, sessionID)
 		return err
 	})
 }
@@ -274,7 +290,7 @@ func (r *PostgresUploadRepository) GetStaleUploads(ctx context.Context, olderTha
 	var sessions []upload.UploadSession
 	cutoff := time.Now().Add(-olderThan)
 	rows, err := r.db.QueryContext(ctx, `
-        SELECT id, uploader_id, filename, mime_type, size_bytes, chunk_size, uploaded_bytes, status, created_at, updated_at
+        SELECT id, uploader_id, filename, mime_type, size_bytes, chunk_size, uploaded_bytes, status, object_key, file_url, completed_at, created_at, updated_at
         FROM upload_sessions WHERE status = 'IN_PROGRESS' AND updated_at < $1
     `, cutoff)
 	if err != nil {
@@ -292,6 +308,9 @@ func (r *PostgresUploadRepository) GetStaleUploads(ctx context.Context, olderTha
 			&u.ChunkSize,
 			&u.UploadedBytes,
 			&u.Status,
+			&u.ObjectKey,
+			&u.FileURL,
+			&u.CompletedAt,
 			&u.CreatedAt,
 			&u.UpdatedAt,
 		); err != nil {

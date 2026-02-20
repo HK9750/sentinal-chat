@@ -22,6 +22,13 @@ type Config struct {
 	RedisHost      string
 	RedisPort      string
 	RedisPassword  string
+	S3Region       string
+	S3Bucket       string
+	S3AccessKeyID  string
+	S3SecretKey    string
+	S3Endpoint     string
+	S3PublicBase   string
+	S3PresignTTL   int
 }
 
 func LoadConfig() *Config {
@@ -44,6 +51,13 @@ func LoadConfig() *Config {
 		RedisHost:      getEnv("REDIS_HOST", "localhost"),
 		RedisPort:      getEnv("REDIS_PORT", "6379"),
 		RedisPassword:  getEnv("REDIS_PASSWORD", ""),
+		S3Region:       getEnv("S3_REGION", ""),
+		S3Bucket:       getEnv("S3_BUCKET", ""),
+		S3AccessKeyID:  getEnv("S3_ACCESS_KEY_ID", ""),
+		S3SecretKey:    getEnv("S3_SECRET_ACCESS_KEY", ""),
+		S3Endpoint:     getEnv("S3_ENDPOINT", ""),
+		S3PublicBase:   getEnv("S3_PUBLIC_BASE_URL", ""),
+		S3PresignTTL:   getEnvAsInt("S3_PRESIGN_TTL_SECONDS", 900),
 	}
 }
 

@@ -1,6 +1,7 @@
 package upload
 
 import (
+	"database/sql"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,6 +17,9 @@ type UploadSession struct {
 	ChunkSize     int
 	UploadedBytes int64
 	Status        string
+	ObjectKey     string
+	FileURL       sql.NullString
+	CompletedAt   sql.NullTime
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 }

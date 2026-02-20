@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"log"
+	"time"
 
 	"sentinal-chat/config"
 	"sentinal-chat/internal/events"
@@ -10,6 +12,7 @@ import (
 	"sentinal-chat/internal/repository"
 	"sentinal-chat/internal/server"
 	"sentinal-chat/internal/services"
+	"sentinal-chat/internal/storage"
 	"sentinal-chat/pkg/database"
 	"sentinal-chat/pkg/logger"
 )
@@ -92,7 +95,22 @@ func main() {
 	messageService := services.NewMessageService(database.GetDB(), messageRepo, conversationRepo, eventPublisher, commandExecutor)
 	conversationService := services.NewConversationService(database.GetDB(), conversationRepo, eventPublisher)
 	userService := services.NewUserService(userRepo)
-	uploadService := services.NewUploadService(uploadRepo)
+	var uploadS3Service *services.UploadS3Service
+	if cfg.S3Region != "" && cfg.S3Bucket != "" {
+		s3Client, err := storage.NewClient(context.Background(), storage.S3Config{
+			Region:     cfg.S3Region,
+			Bucket:     cfg.S3Bucket,
+			AccessKey:  cfg.S3AccessKeyID,
+			SecretKey:  cfg.S3SecretKey,
+			Endpoint:   cfg.S3Endpoint,
+			PublicBase: cfg.S3PublicBase,
+			PresignTTL: time.Duration(cfg.S3PresignTTL) * time.Second,
+		})
+		if err != nil {
+			log.Fatalf("Failed to initialize S3 client: %v", err)
+		}
+		uploadS3Service = services.NewUploadS3Service(uploadRepo, s3Client)
+	}
 	encryptionService := services.NewEncryptionService(encryptionRepo)
 	broadcastService := services.NewBroadcastService(broadcastRepo)
 	callService := services.NewCallService(database.GetDB(), callRepo, signalingStore, eventPublisher)
@@ -109,7 +127,7 @@ func main() {
 	messageHandler := handler.NewMessageHandler(messageService)
 	conversationHandler := handler.NewConversationHandler(conversationService)
 	userHandler := handler.NewUserHandler(userService)
-	uploadHandler := handler.NewUploadHandler(uploadService)
+	uploadHandler := handler.NewUploadHandler(uploadS3Service)
 	encryptionHandler := handler.NewEncryptionHandler(encryptionService)
 	broadcastHandler := handler.NewBroadcastHandler(broadcastService)
 	callHandler := handler.NewCallHandler(callService)
