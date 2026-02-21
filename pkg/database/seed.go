@@ -569,10 +569,12 @@ func seedDevices(users []*user.User) (map[uuid.UUID][]user.Device, error) {
 				RegisteredAt: time.Now(),
 				LastSeenAt:   sql.NullTime{Time: time.Now(), Valid: true},
 			}
-			if _, err := DB.Exec(`
+			if err := DB.QueryRow(`
                 INSERT INTO devices (id, user_id, device_id, device_name, device_type, is_active, registered_at, last_seen_at)
                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-            `, device.ID, device.UserID, device.DeviceID, device.DeviceName, device.DeviceType, device.IsActive, device.RegisteredAt, device.LastSeenAt); err != nil {
+                ON CONFLICT (user_id, device_id) DO UPDATE SET last_seen_at = EXCLUDED.last_seen_at
+                RETURNING id
+            `, device.ID, device.UserID, device.DeviceID, device.DeviceName, device.DeviceType, device.IsActive, device.RegisteredAt, device.LastSeenAt).Scan(&device.ID); err != nil {
 				return nil, err
 			}
 			deviceMap[u.ID] = append(deviceMap[u.ID], device)
@@ -595,6 +597,7 @@ func seedEncryptionKeys(deviceMap map[uuid.UUID][]user.Device) error {
 			if _, err := DB.Exec(`
                 INSERT INTO identity_keys (id, user_id, device_id, public_key, is_active, created_at)
                 VALUES ($1,$2,$3,$4,$5,$6)
+                ON CONFLICT (user_id, device_id) DO UPDATE SET public_key = EXCLUDED.public_key, is_active = EXCLUDED.is_active
             `, identity.ID, identity.UserID, identity.DeviceID, identity.PublicKey, identity.IsActive, identity.CreatedAt); err != nil {
 				return err
 			}
@@ -612,6 +615,7 @@ func seedEncryptionKeys(deviceMap map[uuid.UUID][]user.Device) error {
 			if _, err := DB.Exec(`
                 INSERT INTO signed_prekeys (id, user_id, device_id, key_id, public_key, signature, created_at, is_active)
                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+                ON CONFLICT (device_id, key_id) DO UPDATE SET public_key = EXCLUDED.public_key, signature = EXCLUDED.signature, is_active = EXCLUDED.is_active
             `, signed.ID, signed.UserID, signed.DeviceID, signed.KeyID, signed.PublicKey, signed.Signature, signed.CreatedAt, signed.IsActive); err != nil {
 				return err
 			}
@@ -628,6 +632,7 @@ func seedEncryptionKeys(deviceMap map[uuid.UUID][]user.Device) error {
 				if _, err := DB.Exec(`
                     INSERT INTO onetime_prekeys (id, user_id, device_id, key_id, public_key, uploaded_at)
                     VALUES ($1,$2,$3,$4,$5,$6)
+                    ON CONFLICT (device_id, key_id) DO NOTHING
                 `, prekey.ID, prekey.UserID, prekey.DeviceID, prekey.KeyID, prekey.PublicKey, prekey.UploadedAt); err != nil {
 					return err
 				}
@@ -683,6 +688,7 @@ func seedMessageCiphertexts(msg *message.Message, deviceMap map[uuid.UUID][]user
 			if _, err := DB.Exec(`
                 INSERT INTO message_ciphertexts (id, message_id, recipient_user_id, recipient_device_id, sender_device_id, ciphertext, header, created_at)
                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+                ON CONFLICT (message_id, recipient_device_id) DO NOTHING
             `, ciphertext.ID, ciphertext.MessageID, ciphertext.RecipientUserID, ciphertext.RecipientDeviceID, ciphertext.SenderDeviceID, ciphertext.Ciphertext, ciphertext.Header, ciphertext.CreatedAt); err != nil {
 				return err
 			}
@@ -738,6 +744,7 @@ func seedBroadcasts(users []*user.User) error {
 			if _, err := tx.ExecContext(ctx, `
                 INSERT INTO broadcast_recipients (broadcast_id, user_id, added_at)
                 VALUES ($1,$2,$3)
+                ON CONFLICT (broadcast_id, user_id) DO NOTHING
             `, recipient.BroadcastID, recipient.UserID, recipient.AddedAt); err != nil {
 				return err
 			}

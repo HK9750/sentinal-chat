@@ -74,6 +74,7 @@ func (r *PostgresUserRepository) GetAllUsers(ctx context.Context, page, limit in
 
 	for rows.Next() {
 		var u user.User
+		var role, bio, avatarURL sql.NullString
 		if err := rows.Scan(
 			&u.ID,
 			&u.PhoneNumber,
@@ -81,9 +82,9 @@ func (r *PostgresUserRepository) GetAllUsers(ctx context.Context, page, limit in
 			&u.Email,
 			&u.PasswordHash,
 			&u.DisplayName,
-			&u.Role,
-			&u.Bio,
-			&u.AvatarURL,
+			&role,
+			&bio,
+			&avatarURL,
 			&u.IsOnline,
 			&u.LastSeenAt,
 			&u.IsActive,
@@ -93,6 +94,9 @@ func (r *PostgresUserRepository) GetAllUsers(ctx context.Context, page, limit in
 		); err != nil {
 			return nil, 0, err
 		}
+		u.Role = role.String
+		u.Bio = bio.String
+		u.AvatarURL = avatarURL.String
 		users = append(users, u)
 	}
 	if err := rows.Err(); err != nil {
@@ -104,6 +108,7 @@ func (r *PostgresUserRepository) GetAllUsers(ctx context.Context, page, limit in
 
 func (r *PostgresUserRepository) GetUserByID(ctx context.Context, id uuid.UUID) (user.User, error) {
 	var u user.User
+	var role, bio, avatarURL sql.NullString
 	err := r.db.QueryRowContext(ctx, `
         SELECT id, phone_number, username, email, password_hash, display_name, role, bio, avatar_url,
                is_online, last_seen_at, is_active, is_verified, created_at, updated_at
@@ -115,9 +120,9 @@ func (r *PostgresUserRepository) GetUserByID(ctx context.Context, id uuid.UUID) 
 		&u.Email,
 		&u.PasswordHash,
 		&u.DisplayName,
-		&u.Role,
-		&u.Bio,
-		&u.AvatarURL,
+		&role,
+		&bio,
+		&avatarURL,
 		&u.IsOnline,
 		&u.LastSeenAt,
 		&u.IsActive,
@@ -125,7 +130,13 @@ func (r *PostgresUserRepository) GetUserByID(ctx context.Context, id uuid.UUID) 
 		&u.CreatedAt,
 		&u.UpdatedAt,
 	)
+	if err == nil {
+		u.Role = role.String
+		u.Bio = bio.String
+		u.AvatarURL = avatarURL.String
+	}
 	if err != nil {
+
 		if errors.Is(err, sql.ErrNoRows) {
 			return user.User{}, sentinal_errors.ErrNotFound
 		}
@@ -181,6 +192,7 @@ func (r *PostgresUserRepository) DeleteUser(ctx context.Context, id uuid.UUID) e
 
 func (r *PostgresUserRepository) GetUserByEmail(ctx context.Context, email string) (user.User, error) {
 	var u user.User
+	var role, bio, avatarURL sql.NullString
 	err := r.db.QueryRowContext(ctx, `
         SELECT id, phone_number, username, email, password_hash, display_name, role, bio, avatar_url,
                is_online, last_seen_at, is_active, is_verified, created_at, updated_at
@@ -192,9 +204,9 @@ func (r *PostgresUserRepository) GetUserByEmail(ctx context.Context, email strin
 		&u.Email,
 		&u.PasswordHash,
 		&u.DisplayName,
-		&u.Role,
-		&u.Bio,
-		&u.AvatarURL,
+		&role,
+		&bio,
+		&avatarURL,
 		&u.IsOnline,
 		&u.LastSeenAt,
 		&u.IsActive,
@@ -202,7 +214,13 @@ func (r *PostgresUserRepository) GetUserByEmail(ctx context.Context, email strin
 		&u.CreatedAt,
 		&u.UpdatedAt,
 	)
+	if err == nil {
+		u.Role = role.String
+		u.Bio = bio.String
+		u.AvatarURL = avatarURL.String
+	}
 	if err != nil {
+
 		if errors.Is(err, sql.ErrNoRows) {
 			return user.User{}, sentinal_errors.ErrNotFound
 		}
@@ -213,6 +231,7 @@ func (r *PostgresUserRepository) GetUserByEmail(ctx context.Context, email strin
 
 func (r *PostgresUserRepository) GetUserByUsername(ctx context.Context, username string) (user.User, error) {
 	var u user.User
+	var role, bio, avatarURL sql.NullString
 	err := r.db.QueryRowContext(ctx, `
         SELECT id, phone_number, username, email, password_hash, display_name, role, bio, avatar_url,
                is_online, last_seen_at, is_active, is_verified, created_at, updated_at
@@ -224,9 +243,9 @@ func (r *PostgresUserRepository) GetUserByUsername(ctx context.Context, username
 		&u.Email,
 		&u.PasswordHash,
 		&u.DisplayName,
-		&u.Role,
-		&u.Bio,
-		&u.AvatarURL,
+		&role,
+		&bio,
+		&avatarURL,
 		&u.IsOnline,
 		&u.LastSeenAt,
 		&u.IsActive,
@@ -234,7 +253,13 @@ func (r *PostgresUserRepository) GetUserByUsername(ctx context.Context, username
 		&u.CreatedAt,
 		&u.UpdatedAt,
 	)
+	if err == nil {
+		u.Role = role.String
+		u.Bio = bio.String
+		u.AvatarURL = avatarURL.String
+	}
 	if err != nil {
+
 		if errors.Is(err, sql.ErrNoRows) {
 			return user.User{}, sentinal_errors.ErrNotFound
 		}
@@ -245,6 +270,7 @@ func (r *PostgresUserRepository) GetUserByUsername(ctx context.Context, username
 
 func (r *PostgresUserRepository) GetUserByPhoneNumber(ctx context.Context, phone string) (user.User, error) {
 	var u user.User
+	var role, bio, avatarURL sql.NullString
 	err := r.db.QueryRowContext(ctx, `
         SELECT id, phone_number, username, email, password_hash, display_name, role, bio, avatar_url,
                is_online, last_seen_at, is_active, is_verified, created_at, updated_at
@@ -256,9 +282,9 @@ func (r *PostgresUserRepository) GetUserByPhoneNumber(ctx context.Context, phone
 		&u.Email,
 		&u.PasswordHash,
 		&u.DisplayName,
-		&u.Role,
-		&u.Bio,
-		&u.AvatarURL,
+		&role,
+		&bio,
+		&avatarURL,
 		&u.IsOnline,
 		&u.LastSeenAt,
 		&u.IsActive,
@@ -266,7 +292,13 @@ func (r *PostgresUserRepository) GetUserByPhoneNumber(ctx context.Context, phone
 		&u.CreatedAt,
 		&u.UpdatedAt,
 	)
+	if err == nil {
+		u.Role = role.String
+		u.Bio = bio.String
+		u.AvatarURL = avatarURL.String
+	}
 	if err != nil {
+
 		if errors.Is(err, sql.ErrNoRows) {
 			return user.User{}, sentinal_errors.ErrNotFound
 		}
@@ -303,6 +335,7 @@ func (r *PostgresUserRepository) SearchUsers(ctx context.Context, query string, 
 
 	for rows.Next() {
 		var u user.User
+		var role, bio, avatarURL sql.NullString
 		if err := rows.Scan(
 			&u.ID,
 			&u.PhoneNumber,
@@ -310,9 +343,9 @@ func (r *PostgresUserRepository) SearchUsers(ctx context.Context, query string, 
 			&u.Email,
 			&u.PasswordHash,
 			&u.DisplayName,
-			&u.Role,
-			&u.Bio,
-			&u.AvatarURL,
+			&role,
+			&bio,
+			&avatarURL,
 			&u.IsOnline,
 			&u.LastSeenAt,
 			&u.IsActive,
@@ -322,6 +355,9 @@ func (r *PostgresUserRepository) SearchUsers(ctx context.Context, query string, 
 		); err != nil {
 			return nil, 0, err
 		}
+		u.Role = role.String
+		u.Bio = bio.String
+		u.AvatarURL = avatarURL.String
 		users = append(users, u)
 	}
 	if err := rows.Err(); err != nil {
@@ -487,6 +523,8 @@ func (r *PostgresUserRepository) GetBlockedContacts(ctx context.Context, userID 
 
 func (r *PostgresUserRepository) GetUserSettings(ctx context.Context, userID uuid.UUID) (user.UserSettings, error) {
 	var s user.UserSettings
+	var privacyLastSeen, privacyProfilePhoto, privacyAbout, privacyGroups, notificationSound, theme, language sql.NullString
+	var readReceipts, notificationsEnabled, notificationVibrate, enterToSend, mediaAutoDownloadWiFi, mediaAutoDownloadMobile sql.NullBool
 	err := r.db.QueryRowContext(ctx, `
         SELECT user_id, privacy_last_seen, privacy_profile_photo, privacy_about, privacy_groups,
                read_receipts, notifications_enabled, notification_sound, notification_vibrate,
@@ -494,21 +532,36 @@ func (r *PostgresUserRepository) GetUserSettings(ctx context.Context, userID uui
         FROM user_settings WHERE user_id = $1
     `, userID).Scan(
 		&s.UserID,
-		&s.PrivacyLastSeen,
-		&s.PrivacyProfilePhoto,
-		&s.PrivacyAbout,
-		&s.PrivacyGroups,
-		&s.ReadReceipts,
-		&s.NotificationsEnabled,
-		&s.NotificationSound,
-		&s.NotificationVibrate,
-		&s.Theme,
-		&s.Language,
-		&s.EnterToSend,
-		&s.MediaAutoDownloadWiFi,
-		&s.MediaAutoDownloadMobile,
+		&privacyLastSeen,
+		&privacyProfilePhoto,
+		&privacyAbout,
+		&privacyGroups,
+		&readReceipts,
+		&notificationsEnabled,
+		&notificationSound,
+		&notificationVibrate,
+		&theme,
+		&language,
+		&enterToSend,
+		&mediaAutoDownloadWiFi,
+		&mediaAutoDownloadMobile,
 		&s.UpdatedAt,
 	)
+	if err == nil {
+		s.PrivacyLastSeen = privacyLastSeen.String
+		s.PrivacyProfilePhoto = privacyProfilePhoto.String
+		s.PrivacyAbout = privacyAbout.String
+		s.PrivacyGroups = privacyGroups.String
+		s.ReadReceipts = readReceipts.Bool
+		s.NotificationsEnabled = notificationsEnabled.Bool
+		s.NotificationSound = notificationSound.String
+		s.NotificationVibrate = notificationVibrate.Bool
+		s.Theme = theme.String
+		s.Language = language.String
+		s.EnterToSend = enterToSend.Bool
+		s.MediaAutoDownloadWiFi = mediaAutoDownloadWiFi.Bool
+		s.MediaAutoDownloadMobile = mediaAutoDownloadMobile.Bool
+	}
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return user.UserSettings{}, sentinal_errors.ErrNotFound
@@ -728,11 +781,15 @@ func (r *PostgresUserRepository) CreateSession(ctx context.Context, s *user.User
 
 func (r *PostgresUserRepository) GetSessionByID(ctx context.Context, sessionID uuid.UUID) (user.UserSession, error) {
 	var s user.UserSession
+	var deviceID uuid.NullUUID
 	err := r.db.QueryRowContext(ctx, `
         SELECT id, user_id, device_id, refresh_token_hash, expires_at, is_revoked, created_at
         FROM user_sessions
         WHERE id = $1 AND is_revoked = false AND expires_at > NOW()
-    `, sessionID).Scan(&s.ID, &s.UserID, &s.DeviceID, &s.RefreshTokenHash, &s.ExpiresAt, &s.IsRevoked, &s.CreatedAt)
+    `, sessionID).Scan(&s.ID, &s.UserID, &deviceID, &s.RefreshTokenHash, &s.ExpiresAt, &s.IsRevoked, &s.CreatedAt)
+	if err == nil && deviceID.Valid {
+		s.DeviceID = &deviceID.UUID
+	}
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return user.UserSession{}, sentinal_errors.ErrNotFound
@@ -760,10 +817,13 @@ func (r *PostgresUserRepository) GetUserSessions(ctx context.Context, userID uui
 	for rows.Next() {
 		var s user.UserSession
 		var device user.Device
+		var deviceID uuid.NullUUID
+		var deviceName, deviceType sql.NullString
+		var isActive sql.NullBool
 		if err := rows.Scan(
 			&s.ID,
 			&s.UserID,
-			&s.DeviceID,
+			&deviceID,
 			&s.RefreshTokenHash,
 			&s.ExpiresAt,
 			&s.IsRevoked,
@@ -771,15 +831,19 @@ func (r *PostgresUserRepository) GetUserSessions(ctx context.Context, userID uui
 			&device.ID,
 			&device.UserID,
 			&device.DeviceID,
-			&device.DeviceName,
-			&device.DeviceType,
-			&device.IsActive,
+			&deviceName,
+			&deviceType,
+			&isActive,
 			&device.RegisteredAt,
 			&device.LastSeenAt,
 		); err != nil {
 			return nil, err
 		}
-		if s.DeviceID != nil {
+		device.DeviceName = deviceName.String
+		device.DeviceType = deviceType.String
+		device.IsActive = isActive.Bool
+		if deviceID.Valid {
+			s.DeviceID = &deviceID.UUID
 			s.Device = &device
 		}
 		sessions = append(sessions, s)

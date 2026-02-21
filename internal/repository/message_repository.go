@@ -82,6 +82,7 @@ func (r *PostgresMessageRepository) CreateCiphertext(ctx context.Context, c *mes
 
 func (r *PostgresMessageRepository) GetByID(ctx context.Context, id uuid.UUID) (message.Message, error) {
 	var m message.Message
+	var metadata sql.NullString
 	err := r.db.QueryRowContext(ctx, `
         SELECT id, conversation_id, sender_id, client_message_id, idempotency_key, seq_id, type, metadata,
                is_forwarded, forwarded_from_msg_id, reply_to_msg_id, poll_id, link_preview_id, mention_count,
@@ -95,7 +96,7 @@ func (r *PostgresMessageRepository) GetByID(ctx context.Context, id uuid.UUID) (
 		&m.IdempotencyKey,
 		&m.SeqID,
 		&m.Type,
-		&m.Metadata,
+		&metadata,
 		&m.IsForwarded,
 		&m.ForwardedFromMsgID,
 		&m.ReplyToMsgID,
@@ -107,7 +108,11 @@ func (r *PostgresMessageRepository) GetByID(ctx context.Context, id uuid.UUID) (
 		&m.DeletedAt,
 		&m.ExpiresAt,
 	)
+	if err == nil {
+		m.Metadata = metadata.String
+	}
 	if err != nil {
+
 		if errors.Is(err, sql.ErrNoRows) {
 			return message.Message{}, sentinal_errors.ErrNotFound
 		}
@@ -205,6 +210,7 @@ func (r *PostgresMessageRepository) GetConversationMessages(ctx context.Context,
 
 	for rows.Next() {
 		var m message.Message
+		var metadata sql.NullString
 		if err := rows.Scan(
 			&m.ID,
 			&m.ConversationID,
@@ -213,7 +219,7 @@ func (r *PostgresMessageRepository) GetConversationMessages(ctx context.Context,
 			&m.IdempotencyKey,
 			&m.SeqID,
 			&m.Type,
-			&m.Metadata,
+			&metadata,
 			&m.IsForwarded,
 			&m.ForwardedFromMsgID,
 			&m.ReplyToMsgID,
@@ -232,6 +238,7 @@ func (r *PostgresMessageRepository) GetConversationMessages(ctx context.Context,
 		); err != nil {
 			return nil, err
 		}
+		m.Metadata = metadata.String
 		messages = append(messages, m)
 	}
 	if err := rows.Err(); err != nil {
@@ -257,6 +264,7 @@ func (r *PostgresMessageRepository) GetMessagesBySeqRange(ctx context.Context, c
 
 	for rows.Next() {
 		var m message.Message
+		var metadata sql.NullString
 		if err := rows.Scan(
 			&m.ID,
 			&m.ConversationID,
@@ -265,7 +273,7 @@ func (r *PostgresMessageRepository) GetMessagesBySeqRange(ctx context.Context, c
 			&m.IdempotencyKey,
 			&m.SeqID,
 			&m.Type,
-			&m.Metadata,
+			&metadata,
 			&m.IsForwarded,
 			&m.ForwardedFromMsgID,
 			&m.ReplyToMsgID,
@@ -279,6 +287,7 @@ func (r *PostgresMessageRepository) GetMessagesBySeqRange(ctx context.Context, c
 		); err != nil {
 			return nil, err
 		}
+		m.Metadata = metadata.String
 		messages = append(messages, m)
 	}
 	if err := rows.Err(); err != nil {
@@ -306,6 +315,7 @@ func (r *PostgresMessageRepository) GetUnreadMessages(ctx context.Context, conve
 
 	for rows.Next() {
 		var m message.Message
+		var metadata sql.NullString
 		if err := rows.Scan(
 			&m.ID,
 			&m.ConversationID,
@@ -314,7 +324,7 @@ func (r *PostgresMessageRepository) GetUnreadMessages(ctx context.Context, conve
 			&m.IdempotencyKey,
 			&m.SeqID,
 			&m.Type,
-			&m.Metadata,
+			&metadata,
 			&m.IsForwarded,
 			&m.ForwardedFromMsgID,
 			&m.ReplyToMsgID,
@@ -328,6 +338,7 @@ func (r *PostgresMessageRepository) GetUnreadMessages(ctx context.Context, conve
 		); err != nil {
 			return nil, err
 		}
+		m.Metadata = metadata.String
 		messages = append(messages, m)
 	}
 	if err := rows.Err(); err != nil {
@@ -358,6 +369,7 @@ func (r *PostgresMessageRepository) GetMessagesByType(ctx context.Context, conve
 
 	for rows.Next() {
 		var m message.Message
+		var metadata sql.NullString
 		if err := rows.Scan(
 			&m.ID,
 			&m.ConversationID,
@@ -366,7 +378,7 @@ func (r *PostgresMessageRepository) GetMessagesByType(ctx context.Context, conve
 			&m.IdempotencyKey,
 			&m.SeqID,
 			&m.Type,
-			&m.Metadata,
+			&metadata,
 			&m.IsForwarded,
 			&m.ForwardedFromMsgID,
 			&m.ReplyToMsgID,
@@ -380,6 +392,7 @@ func (r *PostgresMessageRepository) GetMessagesByType(ctx context.Context, conve
 		); err != nil {
 			return nil, err
 		}
+		m.Metadata = metadata.String
 		messages = append(messages, m)
 	}
 	if err := rows.Err(); err != nil {
@@ -390,6 +403,7 @@ func (r *PostgresMessageRepository) GetMessagesByType(ctx context.Context, conve
 
 func (r *PostgresMessageRepository) GetLatestMessage(ctx context.Context, conversationID uuid.UUID) (message.Message, error) {
 	var m message.Message
+	var metadata sql.NullString
 	err := r.db.QueryRowContext(ctx, `
         SELECT id, conversation_id, sender_id, client_message_id, idempotency_key, seq_id, type, metadata,
                is_forwarded, forwarded_from_msg_id, reply_to_msg_id, poll_id, link_preview_id, mention_count,
@@ -406,7 +420,7 @@ func (r *PostgresMessageRepository) GetLatestMessage(ctx context.Context, conver
 		&m.IdempotencyKey,
 		&m.SeqID,
 		&m.Type,
-		&m.Metadata,
+		&metadata,
 		&m.IsForwarded,
 		&m.ForwardedFromMsgID,
 		&m.ReplyToMsgID,
@@ -418,7 +432,11 @@ func (r *PostgresMessageRepository) GetLatestMessage(ctx context.Context, conver
 		&m.DeletedAt,
 		&m.ExpiresAt,
 	)
+	if err == nil {
+		m.Metadata = metadata.String
+	}
 	if err != nil {
+
 		if errors.Is(err, sql.ErrNoRows) {
 			return message.Message{}, sentinal_errors.ErrNotFound
 		}
@@ -452,6 +470,7 @@ func (r *PostgresMessageRepository) GetMessageCountSince(ctx context.Context, co
 
 func (r *PostgresMessageRepository) GetByIdempotencyKey(ctx context.Context, key string) (message.Message, error) {
 	var m message.Message
+	var metadata sql.NullString
 	err := r.db.QueryRowContext(ctx, `
         SELECT id, conversation_id, sender_id, client_message_id, idempotency_key, seq_id, type, metadata,
                is_forwarded, forwarded_from_msg_id, reply_to_msg_id, poll_id, link_preview_id, mention_count,
@@ -465,7 +484,7 @@ func (r *PostgresMessageRepository) GetByIdempotencyKey(ctx context.Context, key
 		&m.IdempotencyKey,
 		&m.SeqID,
 		&m.Type,
-		&m.Metadata,
+		&metadata,
 		&m.IsForwarded,
 		&m.ForwardedFromMsgID,
 		&m.ReplyToMsgID,
@@ -477,7 +496,11 @@ func (r *PostgresMessageRepository) GetByIdempotencyKey(ctx context.Context, key
 		&m.DeletedAt,
 		&m.ExpiresAt,
 	)
+	if err == nil {
+		m.Metadata = metadata.String
+	}
 	if err != nil {
+
 		if errors.Is(err, sql.ErrNoRows) {
 			return message.Message{}, sentinal_errors.ErrNotFound
 		}
@@ -488,6 +511,7 @@ func (r *PostgresMessageRepository) GetByIdempotencyKey(ctx context.Context, key
 
 func (r *PostgresMessageRepository) GetByClientMessageID(ctx context.Context, clientMsgID string) (message.Message, error) {
 	var m message.Message
+	var metadata sql.NullString
 	err := r.db.QueryRowContext(ctx, `
         SELECT id, conversation_id, sender_id, client_message_id, idempotency_key, seq_id, type, metadata,
                is_forwarded, forwarded_from_msg_id, reply_to_msg_id, poll_id, link_preview_id, mention_count,
@@ -501,7 +525,7 @@ func (r *PostgresMessageRepository) GetByClientMessageID(ctx context.Context, cl
 		&m.IdempotencyKey,
 		&m.SeqID,
 		&m.Type,
-		&m.Metadata,
+		&metadata,
 		&m.IsForwarded,
 		&m.ForwardedFromMsgID,
 		&m.ReplyToMsgID,
@@ -513,7 +537,11 @@ func (r *PostgresMessageRepository) GetByClientMessageID(ctx context.Context, cl
 		&m.DeletedAt,
 		&m.ExpiresAt,
 	)
+	if err == nil {
+		m.Metadata = metadata.String
+	}
 	if err != nil {
+
 		if errors.Is(err, sql.ErrNoRows) {
 			return message.Message{}, sentinal_errors.ErrNotFound
 		}
