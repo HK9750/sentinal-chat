@@ -13,6 +13,15 @@ type UploadIdentityKeyRequest struct {
 	PublicKey string `json:"public_key" binding:"required"`
 }
 
+// SetupEncryptionRequest is used for POST /encryption/setup to initialize all keys
+type SetupEncryptionRequest struct {
+	UserID       string                   `json:"user_id" binding:"required"`
+	DeviceID     string                   `json:"device_id" binding:"required"`
+	IdentityKey  string                   `json:"identity_key" binding:"required"`
+	SignedPreKey SignedPreKeyUploadDTO    `json:"signed_prekey" binding:"required"`
+	OneTimeKeys  []OneTimePreKeyUploadDTO `json:"one_time_keys" binding:"required"`
+}
+
 // UploadIdentityKeyResponse is returned after uploading an identity key
 type UploadIdentityKeyResponse struct {
 	ID        string `json:"id"`

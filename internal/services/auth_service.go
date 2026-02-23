@@ -104,6 +104,13 @@ type AccessClaims struct {
 	jwt.RegisteredClaims
 }
 
+var (
+	ROLE_USER        = "USER"
+	ROLE_ADMIN       = "ADMIN"
+	ROLE_MODERATOR   = "MODERATOR"
+	ROLE_SUPER_ADMIN = "SUPER_ADMIN"
+)
+
 func (s *AuthService) Register(ctx context.Context, in RegisterInput) (AuthResponse, error) {
 	if err := validateRegister(in); err != nil {
 		return AuthResponse{}, err
@@ -124,6 +131,7 @@ func (s *AuthService) Register(ctx context.Context, in RegisterInput) (AuthRespo
 		Username:     toNullString(in.Username),
 		PhoneNumber:  toNullString(in.PhoneNumber),
 		PasswordHash: hash,
+		Role:         ROLE_USER,
 		DisplayName:  in.DisplayName,
 		IsActive:     true,
 		IsVerified:   false,

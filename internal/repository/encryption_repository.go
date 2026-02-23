@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	"sentinal-chat/internal/domain/encryption"
@@ -28,13 +29,55 @@ func (r *PostgresEncryptionRepository) IsDeviceOwnedByUser(ctx context.Context, 
 	return count > 0, nil
 }
 
+func (r *PostgresEncryptionRepository) SetupEncryption(ctx context.Context, identityKey *encryption.IdentityKey, signedPreKey *encryption.SignedPreKey, oneTimePreKeys []encryption.OneTimePreKey) error {
+	return WithTx(ctx, r.db, func(tx DBTX) error {
+		// 1. Identity Key
+		_, _ = tx.ExecContext(ctx, "DELETE FROM identity_keys WHERE user_id = $1 AND device_id = $2", identityKey.UserID, identityKey.DeviceID)
+		err := tx.QueryRowContext(ctx, `
+            INSERT INTO identity_keys (user_id, device_id, public_key, is_active, created_at)
+            VALUES ($1,$2,$3,$4,$5) RETURNING id
+        `, identityKey.UserID, identityKey.DeviceID, identityKey.PublicKey, identityKey.IsActive, identityKey.CreatedAt).Scan(&identityKey.ID)
+		if err != nil {
+			return err
+		}
+
+		fmt.Println("After Identity Key Insert")
+
+		// 2. Signed PreKey
+		_, _ = tx.ExecContext(ctx, "UPDATE signed_prekeys SET is_active = false WHERE user_id = $1 AND device_id = $2 AND is_active = true", signedPreKey.UserID, signedPreKey.DeviceID)
+		err = tx.QueryRowContext(ctx, `
+            INSERT INTO signed_prekeys (user_id, device_id, key_id, public_key, signature, created_at, is_active)
+            VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id
+        `, signedPreKey.UserID, signedPreKey.DeviceID, signedPreKey.KeyID, signedPreKey.PublicKey, signedPreKey.Signature, signedPreKey.CreatedAt, signedPreKey.IsActive).Scan(&signedPreKey.ID)
+		if err != nil {
+			return err
+		}
+
+		fmt.Println("After Signed PreKey Insert")
+
+		// 3. One Time PreKeys
+		_, _ = tx.ExecContext(ctx, "DELETE FROM onetime_prekeys WHERE user_id = $1 AND device_id = $2", identityKey.UserID, identityKey.DeviceID)
+		for i, k := range oneTimePreKeys {
+			err := tx.QueryRowContext(ctx, `
+                INSERT INTO onetime_prekeys (user_id, device_id, key_id, public_key, uploaded_at, consumed_at, consumed_by, consumed_by_device_id)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id
+            `, k.UserID, k.DeviceID, k.KeyID, k.PublicKey, k.UploadedAt, k.ConsumedAt, k.ConsumedBy, k.ConsumedByDeviceID).Scan(&oneTimePreKeys[i].ID)
+			if err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+}
+
 func (r *PostgresEncryptionRepository) CreateIdentityKey(ctx context.Context, k *encryption.IdentityKey) error {
 	return WithTx(ctx, r.db, func(tx DBTX) error {
 		_, _ = tx.ExecContext(ctx, "DELETE FROM identity_keys WHERE user_id = $1 AND device_id = $2", k.UserID, k.DeviceID)
-		_, err := tx.ExecContext(ctx, `
-            INSERT INTO identity_keys (id, user_id, device_id, public_key, is_active, created_at)
-            VALUES ($1,$2,$3,$4,$5,$6)
-        `, k.ID, k.UserID, k.DeviceID, k.PublicKey, k.IsActive, k.CreatedAt)
+		err := tx.QueryRowContext(ctx, `
+            INSERT INTO identity_keys (user_id, device_id, public_key, is_active, created_at)
+            VALUES ($1,$2,$3,$4,$5) RETURNING id
+        `, k.UserID, k.DeviceID, k.PublicKey, k.IsActive, k.CreatedAt).Scan(&k.ID)
 		return err
 	})
 }
@@ -102,10 +145,10 @@ func (r *PostgresEncryptionRepository) DeleteIdentityKey(ctx context.Context, id
 }
 
 func (r *PostgresEncryptionRepository) CreateSignedPreKey(ctx context.Context, k *encryption.SignedPreKey) error {
-	_, err := r.db.ExecContext(ctx, `
-        INSERT INTO signed_prekeys (id, user_id, device_id, key_id, public_key, signature, created_at, is_active)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-    `, k.ID, k.UserID, k.DeviceID, k.KeyID, k.PublicKey, k.Signature, k.CreatedAt, k.IsActive)
+	err := r.db.QueryRowContext(ctx, `
+        INSERT INTO signed_prekeys (user_id, device_id, key_id, public_key, signature, created_at, is_active)
+        VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id
+    `, k.UserID, k.DeviceID, k.KeyID, k.PublicKey, k.Signature, k.CreatedAt, k.IsActive).Scan(&k.ID)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return sentinal_errors.ErrAlreadyExists
@@ -151,10 +194,10 @@ func (r *PostgresEncryptionRepository) RotateSignedPreKey(ctx context.Context, u
 		if _, err := tx.ExecContext(ctx, "UPDATE signed_prekeys SET is_active = false WHERE user_id = $1 AND device_id = $2 AND is_active = true", userID, deviceID); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `
-            INSERT INTO signed_prekeys (id, user_id, device_id, key_id, public_key, signature, created_at, is_active)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-        `, newKey.ID, newKey.UserID, newKey.DeviceID, newKey.KeyID, newKey.PublicKey, newKey.Signature, newKey.CreatedAt, newKey.IsActive)
+		err := tx.QueryRowContext(ctx, `
+            INSERT INTO signed_prekeys (user_id, device_id, key_id, public_key, signature, created_at, is_active)
+            VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id
+        `, newKey.UserID, newKey.DeviceID, newKey.KeyID, newKey.PublicKey, newKey.Signature, newKey.CreatedAt, newKey.IsActive).Scan(&newKey.ID)
 		return err
 	})
 }
@@ -176,11 +219,15 @@ func (r *PostgresEncryptionRepository) UploadOneTimePreKeys(ctx context.Context,
 		return nil
 	}
 	return WithTx(ctx, r.db, func(tx DBTX) error {
-		for _, k := range keys {
-			_, err := tx.ExecContext(ctx, `
-                INSERT INTO onetime_prekeys (id, user_id, device_id, key_id, public_key, uploaded_at, consumed_at, consumed_by, consumed_by_device_id)
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-            `, k.ID, k.UserID, k.DeviceID, k.KeyID, k.PublicKey, k.UploadedAt, k.ConsumedAt, k.ConsumedBy, k.ConsumedByDeviceID)
+		for i, k := range keys {
+			err := tx.QueryRowContext(ctx, `
+                INSERT INTO onetime_prekeys (user_id, device_id, key_id, public_key, uploaded_at, consumed_at, consumed_by, consumed_by_device_id)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+                ON CONFLICT (device_id, key_id) DO UPDATE SET
+                    public_key = EXCLUDED.public_key,
+                    uploaded_at = EXCLUDED.uploaded_at
+                RETURNING id
+            `, k.UserID, k.DeviceID, k.KeyID, k.PublicKey, k.UploadedAt, k.ConsumedAt, k.ConsumedBy, k.ConsumedByDeviceID).Scan(&keys[i].ID)
 			if err != nil {
 				return err
 			}

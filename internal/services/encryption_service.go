@@ -38,6 +38,10 @@ func (s *EncryptionService) CreateIdentityKey(ctx context.Context, k *encryption
 	return s.repo.CreateIdentityKey(ctx, k)
 }
 
+func (s *EncryptionService) SetupEncryption(ctx context.Context, identityKey *encryption.IdentityKey, signedPreKey *encryption.SignedPreKey, oneTimePreKeys []encryption.OneTimePreKey) error {
+	return s.repo.SetupEncryption(ctx, identityKey, signedPreKey, oneTimePreKeys)
+}
+
 func (s *EncryptionService) GetIdentityKey(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID) (encryption.IdentityKey, error) {
 	return s.repo.GetIdentityKey(ctx, userID, deviceID)
 }

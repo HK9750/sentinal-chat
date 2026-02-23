@@ -418,22 +418,19 @@ func (s *MessageService) executeSendMessageDirect(ctx context.Context, input Sen
 	}
 	input.Metadata["e2ee"] = true
 
-	if err := s.messageRepo.Create(ctx, &msg); err != nil {
-		return message.Message{}, err
-	}
-
 	deviceID, ok := DeviceIDFromContext(ctx)
 	if !ok || !deviceID.Valid {
 		return message.Message{}, sentinal_errors.ErrInvalidInput
 	}
-
 	input.Metadata["sender_device_id"] = deviceID.UUID.String()
+
 	raw, err := json.Marshal(input.Metadata)
 	if err != nil {
 		return message.Message{}, err
 	}
 	msg.Metadata = string(raw)
-	if err := s.messageRepo.Update(ctx, msg); err != nil {
+
+	if err := s.messageRepo.Create(ctx, &msg); err != nil {
 		return message.Message{}, err
 	}
 

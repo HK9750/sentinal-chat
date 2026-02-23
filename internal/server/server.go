@@ -233,6 +233,7 @@ func (s *Server) SetupRoutes(handlers *Handlers, authService *services.AuthServi
 	if handlers.Encryption != nil {
 		enc := s.engine.Group("/v1/encryption")
 		enc.Use(middleware.AuthMiddleware(authService))
+		enc.POST("/setup", handlers.Encryption.SetupEncryption)
 		enc.POST("/identity", handlers.Encryption.UploadIdentityKey)
 		enc.GET("/identity", handlers.Encryption.GetIdentityKey)
 		enc.PUT("/identity/:id/deactivate", handlers.Encryption.DeactivateIdentityKey)

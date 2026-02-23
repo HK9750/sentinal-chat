@@ -215,6 +215,7 @@ type BroadcastRepository interface {
 
 type EncryptionRepository interface {
 	IsDeviceOwnedByUser(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID) (bool, error)
+	SetupEncryption(ctx context.Context, identityKey *encryption.IdentityKey, signedPreKey *encryption.SignedPreKey, oneTimePreKeys []encryption.OneTimePreKey) error
 	CreateIdentityKey(ctx context.Context, k *encryption.IdentityKey) error
 	GetIdentityKey(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID) (encryption.IdentityKey, error)
 	GetUserIdentityKeys(ctx context.Context, userID uuid.UUID) ([]encryption.IdentityKey, error)

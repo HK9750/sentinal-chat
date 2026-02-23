@@ -21,6 +21,89 @@ func NewEncryptionHandler(service *services.EncryptionService) *EncryptionHandle
 	return &EncryptionHandler{service: service}
 }
 
+func (h *EncryptionHandler) SetupEncryption(c *gin.Context) {
+	var req httpdto.SetupEncryptionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid request", "INVALID_REQUEST"))
+		return
+	}
+	userID, err := uuid.Parse(req.UserID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid user_id", "INVALID_REQUEST"))
+		return
+	}
+	deviceID, err := uuid.Parse(req.DeviceID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid device_id", "INVALID_REQUEST"))
+		return
+	}
+
+	identityPubKey, err := base64.StdEncoding.DecodeString(req.IdentityKey)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid identity public_key", "INVALID_REQUEST"))
+		return
+	}
+	identityKey := &encryption.IdentityKey{
+		UserID:    userID,
+		DeviceID:  deviceID,
+		PublicKey: identityPubKey,
+		IsActive:  true,
+	}
+
+	signedPubKey, err := base64.StdEncoding.DecodeString(req.SignedPreKey.PublicKey)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid signed prekey public_key", "INVALID_REQUEST"))
+		return
+	}
+	signedSignature, err := base64.StdEncoding.DecodeString(req.SignedPreKey.Signature)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid signed prekey signature", "INVALID_REQUEST"))
+		return
+	}
+	signedPreKey := &encryption.SignedPreKey{
+		UserID:    userID,
+		DeviceID:  deviceID,
+		KeyID:     req.SignedPreKey.KeyID,
+		PublicKey: signedPubKey,
+		Signature: signedSignature,
+		IsActive:  true,
+	}
+
+	oneTimePreKeys := make([]encryption.OneTimePreKey, 0, len(req.OneTimeKeys))
+	for _, k := range req.OneTimeKeys {
+		kUserID, err := uuid.Parse(k.UserID)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid onetime user_id", "INVALID_REQUEST"))
+			return
+		}
+		kDeviceID, err := uuid.Parse(k.DeviceID)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid onetime device_id", "INVALID_REQUEST"))
+			return
+		}
+		kPubKey, err := base64.StdEncoding.DecodeString(k.PublicKey)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid onetime public_key", "INVALID_REQUEST"))
+			return
+		}
+		oneTimePreKeys = append(oneTimePreKeys, encryption.OneTimePreKey{
+			UserID:    kUserID,
+			DeviceID:  kDeviceID,
+			KeyID:     k.KeyID,
+			PublicKey: kPubKey,
+		})
+	}
+
+	if err := h.service.SetupEncryption(c.Request.Context(), identityKey, signedPreKey, oneTimePreKeys); err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
+		return
+	}
+
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(gin.H{
+		"message": "Encryption setup successfully",
+	}))
+}
+
 func (h *EncryptionHandler) UploadIdentityKey(c *gin.Context) {
 	var req httpdto.UploadIdentityKeyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
