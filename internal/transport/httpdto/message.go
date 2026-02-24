@@ -51,12 +51,14 @@ type MessageDTO struct {
 	ID                string `json:"id"`
 	ConversationID    string `json:"conversation_id"`
 	SenderID          string `json:"sender_id"`
+	SenderDeviceID    string `json:"sender_device_id,omitempty"`
 	ClientMsgID       string `json:"client_message_id,omitempty"`
 	SequenceNumber    int64  `json:"sequence_number"`
 	IsDeleted         bool   `json:"is_deleted"`
 	IsEdited          bool   `json:"is_edited"`
 	Ciphertext        string `json:"ciphertext,omitempty"`
 	Header            string `json:"header,omitempty"`
+	Metadata          string `json:"metadata,omitempty"`
 	RecipientDeviceID string `json:"recipient_device_id,omitempty"`
 	CreatedAt         string `json:"created_at"`
 	UpdatedAt         string `json:"updated_at,omitempty"`
@@ -83,11 +85,17 @@ func FromMessage(m message.Message) MessageDTO {
 	if m.SeqID.Valid {
 		dto.SequenceNumber = m.SeqID.Int64
 	}
+	if m.SenderDeviceID.Valid {
+		dto.SenderDeviceID = m.SenderDeviceID.UUID.String()
+	}
 	if len(m.Ciphertext) > 0 {
 		dto.Ciphertext = base64.StdEncoding.EncodeToString(m.Ciphertext)
 	}
 	if m.Header != "" {
 		dto.Header = m.Header
+	}
+	if m.Metadata != "" {
+		dto.Metadata = m.Metadata
 	}
 	if m.RecipientDeviceID.Valid {
 		dto.RecipientDeviceID = m.RecipientDeviceID.UUID.String()

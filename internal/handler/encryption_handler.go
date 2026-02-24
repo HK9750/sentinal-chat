@@ -415,10 +415,6 @@ func (h *EncryptionHandler) GetKeyBundle(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, httpdto.NewErrorResponse("unauthorized", "UNAUTHORIZED"))
 		return
 	}
-	if consumerID == userID {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("cannot fetch bundle for self", "REQUEST_FAILED"))
-		return
-	}
 	consumerDeviceID, err := uuid.Parse(c.Query("consumer_device_id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid consumer_device_id", "INVALID_REQUEST"))

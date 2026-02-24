@@ -17,6 +17,7 @@ import (
 type ConversationService struct {
 	db             repository.DBTX
 	repo           repository.ConversationRepository
+	userRepo       repository.UserRepository
 	eventPublisher *EventPublisher
 }
 
@@ -30,8 +31,18 @@ type CreateConversationInput struct {
 }
 
 // NewConversationService creates a conversation service with dependencies.
-func NewConversationService(db repository.DBTX, repo repository.ConversationRepository, eventPublisher *EventPublisher) *ConversationService {
-	return &ConversationService{db: db, repo: repo, eventPublisher: eventPublisher}
+func NewConversationService(
+	db repository.DBTX,
+	repo repository.ConversationRepository,
+	userRepo repository.UserRepository,
+	eventPublisher *EventPublisher,
+) *ConversationService {
+	return &ConversationService{
+		db:             db,
+		repo:           repo,
+		userRepo:       userRepo,
+		eventPublisher: eventPublisher,
+	}
 }
 
 // Create validates input and creates a new conversation.
@@ -164,6 +175,37 @@ func (s *ConversationService) RemoveParticipant(ctx context.Context, conversatio
 
 func (s *ConversationService) GetParticipants(ctx context.Context, conversationID uuid.UUID) ([]conversation.Participant, error) {
 	return s.repo.GetParticipants(ctx, conversationID)
+}
+
+func (s *ConversationService) GetParticipantsWithDevices(
+	ctx context.Context,
+	conversationID uuid.UUID,
+) ([]conversation.Participant, map[uuid.UUID][]string, error) {
+	participants, err := s.repo.GetParticipants(ctx, conversationID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	deviceMap := make(map[uuid.UUID][]string, len(participants))
+	if s.userRepo == nil {
+		return participants, deviceMap, nil
+	}
+
+	for _, participant := range participants {
+		devices, err := s.userRepo.GetUserDevices(ctx, participant.UserID)
+		if err != nil {
+			return nil, nil, err
+		}
+		deviceIDs := make([]string, 0, len(devices))
+		for _, device := range devices {
+			deviceIDs = append(deviceIDs, device.ID.String())
+		}
+		if len(deviceIDs) > 0 {
+			deviceMap[participant.UserID] = deviceIDs
+		}
+	}
+
+	return participants, deviceMap, nil
 }
 
 func (s *ConversationService) GetParticipant(ctx context.Context, conversationID, userID uuid.UUID) (conversation.Participant, error) {

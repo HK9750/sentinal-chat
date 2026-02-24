@@ -280,14 +280,30 @@ func (h *ConversationHandler) ListParticipants(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid conversation id", "INVALID_REQUEST"))
 		return
 	}
-	items, err := h.service.GetParticipants(c.Request.Context(), conversationID)
+	items, deviceMap, err := h.service.GetParticipantsWithDevices(c.Request.Context(), conversationID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
 		return
 	}
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.ParticipantsResponse{
-		Participants: httpdto.FromParticipantSlice(items),
-	}))
+
+	participants := httpdto.FromParticipantSlice(items)
+	for i := range participants {
+		if devices, ok := deviceMap[items[i].UserID]; ok {
+			participants[i].DeviceIDs = devices
+		}
+	}
+
+	response := httpdto.ParticipantsResponse{
+		Participants: participants,
+	}
+	if len(deviceMap) > 0 {
+		response.DeviceMap = make(map[string][]string, len(deviceMap))
+		for userID, deviceIDs := range deviceMap {
+			response.DeviceMap[userID.String()] = deviceIDs
+		}
+	}
+
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(response))
 }
 
 func (h *ConversationHandler) UpdateParticipantRole(c *gin.Context) {

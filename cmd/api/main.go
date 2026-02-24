@@ -93,7 +93,12 @@ func main() {
 	//Services
 	authService := services.NewAuthService(userRepo, cfg)
 	messageService := services.NewMessageService(database.GetDB(), messageRepo, conversationRepo, eventPublisher, commandExecutor)
-	conversationService := services.NewConversationService(database.GetDB(), conversationRepo, eventPublisher)
+	conversationService := services.NewConversationService(
+		database.GetDB(),
+		conversationRepo,
+		userRepo,
+		eventPublisher,
+	)
 	userService := services.NewUserService(userRepo)
 	var uploadS3Service *services.UploadS3Service
 	if cfg.S3Region != "" && cfg.S3Bucket != "" {

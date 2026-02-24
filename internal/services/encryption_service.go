@@ -105,9 +105,6 @@ func (s *EncryptionService) GetKeyBundle(ctx context.Context, userID uuid.UUID, 
 	} else if !owned {
 		return KeyBundle{}, sentinal_errors.ErrForbidden
 	}
-	if userID == consumerID {
-		return KeyBundle{}, sentinal_errors.ErrInvalidInput
-	}
 	identity, err := s.repo.GetIdentityKey(ctx, userID, deviceID)
 	if err != nil {
 		return KeyBundle{}, err

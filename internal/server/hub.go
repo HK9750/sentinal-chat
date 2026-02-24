@@ -312,8 +312,29 @@ type WebSocketEventHandler struct {
 }
 
 func (h *WebSocketEventHandler) Handle(ctx context.Context, event events.Event) error {
-	h.hub.broadcast <- &BroadcastMessage{
-		Event: event,
+	msg := &BroadcastMessage{Event: event}
+
+	switch e := event.(type) {
+	case *events.MessageNewEvent:
+		convID := e.ConversationID
+		msg.ConversationID = &convID
+	case *events.MessageReadEvent:
+		convID := e.ConversationID
+		msg.ConversationID = &convID
+	case *events.MessageDeliveredEvent:
+		msg.UserIDs = []uuid.UUID{e.RecipientID}
+	case *events.TypingEvent:
+		convID := e.ConversationID
+		msg.ConversationID = &convID
+	case *events.PresenceEvent:
+		msg.UserIDs = []uuid.UUID{e.UserID}
+	case *events.CallSignalingEvent:
+		msg.UserIDs = []uuid.UUID{e.ToID}
+	case *events.CallEndedEvent:
+		convID := e.ConversationID
+		msg.ConversationID = &convID
 	}
+
+	h.hub.broadcast <- msg
 	return nil
 }

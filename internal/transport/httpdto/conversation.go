@@ -91,15 +91,17 @@ type UpdateParticipantRoleRequest struct {
 
 // ParticipantsResponse is returned when listing participants
 type ParticipantsResponse struct {
-	Participants []ParticipantDTO `json:"participants"`
+	Participants []ParticipantDTO    `json:"participants"`
+	DeviceMap    map[string][]string `json:"device_map,omitempty"`
 }
 
 // ParticipantDTO represents a conversation participant in API responses
 type ParticipantDTO struct {
-	UserID   string `json:"user_id"`
-	Username string `json:"username,omitempty"`
-	Role     string `json:"role"`
-	JoinedAt string `json:"joined_at"`
+	UserID    string   `json:"user_id"`
+	Username  string   `json:"username,omitempty"`
+	Role      string   `json:"role"`
+	JoinedAt  string   `json:"joined_at"`
+	DeviceIDs []string `json:"device_ids,omitempty"`
 }
 
 // MuteConversationRequest is used for POST /conversations/:id/mute
