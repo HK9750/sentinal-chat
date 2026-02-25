@@ -157,7 +157,6 @@ func (h *EncryptionHandler) GetIdentityKey(c *gin.Context) {
 		return
 	}
 	identity := httpdto.FromIdentityKey(item)
-	identity.PublicKey = ""
 	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(identity))
 }
 

@@ -13,6 +13,7 @@ DROP INDEX IF EXISTS idx_receipts_message;
 DROP INDEX IF EXISTS idx_messages_expires;
 DROP INDEX IF EXISTS idx_messages_sender;
 DROP INDEX IF EXISTS idx_messages_conv_seq;
+DROP INDEX IF EXISTS idx_conversations_dm_unique_pair;
 DROP INDEX IF EXISTS idx_participants_role;
 DROP INDEX IF EXISTS idx_participants_conv;
 DROP INDEX IF EXISTS idx_participants_user;

@@ -24,8 +24,8 @@ func (r *PostgresConversationRepository) Create(ctx context.Context, c *conversa
 	_, err := r.db.ExecContext(ctx, `
         INSERT INTO conversations (
             id, type, subject, description, avatar_url, expiry_seconds, disappearing_mode, message_expiry_seconds,
-            group_permissions, invite_link, invite_link_revoked_at, created_by, created_at, updated_at
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+            group_permissions, invite_link, invite_link_revoked_at, created_by, dm_user_id_a, dm_user_id_b, created_at, updated_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
     `,
 		c.ID,
 		c.Type,
@@ -39,6 +39,8 @@ func (r *PostgresConversationRepository) Create(ctx context.Context, c *conversa
 		c.InviteLink,
 		c.InviteLinkRevokedAt,
 		c.CreatedBy,
+		c.DMUserIDA,
+		c.DMUserIDB,
 		c.CreatedAt,
 		c.UpdatedAt,
 	)
@@ -55,7 +57,8 @@ func (r *PostgresConversationRepository) GetByID(ctx context.Context, id uuid.UU
 	var c conversation.Conversation
 	err := r.db.QueryRowContext(ctx, `
         SELECT id, type, subject, description, avatar_url, expiry_seconds, disappearing_mode, message_expiry_seconds,
-               group_permissions, invite_link, invite_link_revoked_at, created_by, created_at, updated_at
+               group_permissions, invite_link, invite_link_revoked_at, created_by, dm_user_id_a, dm_user_id_b,
+               created_at, updated_at
         FROM conversations WHERE id = $1
     `, id).Scan(
 		&c.ID,
@@ -70,6 +73,8 @@ func (r *PostgresConversationRepository) GetByID(ctx context.Context, id uuid.UU
 		&c.InviteLink,
 		&c.InviteLinkRevokedAt,
 		&c.CreatedBy,
+		&c.DMUserIDA,
+		&c.DMUserIDB,
 		&c.CreatedAt,
 		&c.UpdatedAt,
 	)
@@ -90,12 +95,12 @@ func (r *PostgresConversationRepository) GetByID(ctx context.Context, id uuid.UU
 
 func (r *PostgresConversationRepository) Update(ctx context.Context, c conversation.Conversation) error {
 	res, err := r.db.ExecContext(ctx, `
-        UPDATE conversations
-        SET type = $1, subject = $2, description = $3, avatar_url = $4, expiry_seconds = $5, disappearing_mode = $6,
-            message_expiry_seconds = $7, group_permissions = $8, invite_link = $9, invite_link_revoked_at = $10,
-            created_by = $11, updated_at = $12
-        WHERE id = $13
-    `,
+	    UPDATE conversations
+	    SET type = $1, subject = $2, description = $3, avatar_url = $4, expiry_seconds = $5, disappearing_mode = $6,
+	        message_expiry_seconds = $7, group_permissions = $8, invite_link = $9, invite_link_revoked_at = $10,
+	        created_by = $11, dm_user_id_a = $12, dm_user_id_b = $13, updated_at = $14
+	    WHERE id = $15
+	`,
 		c.Type,
 		c.Subject,
 		c.Description,
@@ -107,6 +112,8 @@ func (r *PostgresConversationRepository) Update(ctx context.Context, c conversat
 		c.InviteLink,
 		c.InviteLinkRevokedAt,
 		c.CreatedBy,
+		c.DMUserIDA,
+		c.DMUserIDB,
 		c.UpdatedAt,
 		c.ID,
 	)
@@ -145,14 +152,14 @@ func (r *PostgresConversationRepository) GetUserConversations(ctx context.Contex
 
 	offset := (page - 1) * limit
 	rows, err := r.db.QueryContext(ctx, `
-        SELECT c.id, c.type, c.subject, c.description, c.avatar_url, c.expiry_seconds, c.disappearing_mode,
-               c.message_expiry_seconds, c.group_permissions, c.invite_link, c.invite_link_revoked_at, c.created_by,
-               c.created_at, c.updated_at
-        FROM conversations c
-        WHERE c.id IN (SELECT conversation_id FROM participants WHERE user_id = $1)
-        ORDER BY c.updated_at DESC
-        OFFSET $2 LIMIT $3
-    `, userID, offset, limit)
+	    SELECT c.id, c.type, c.subject, c.description, c.avatar_url, c.expiry_seconds, c.disappearing_mode,
+	           c.message_expiry_seconds, c.group_permissions, c.invite_link, c.invite_link_revoked_at, c.created_by,
+	           c.dm_user_id_a, c.dm_user_id_b, c.created_at, c.updated_at
+	    FROM conversations c
+	    WHERE c.id IN (SELECT conversation_id FROM participants WHERE user_id = $1)
+	    ORDER BY c.updated_at DESC
+	    OFFSET $2 LIMIT $3
+	`, userID, offset, limit)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -173,6 +180,8 @@ func (r *PostgresConversationRepository) GetUserConversations(ctx context.Contex
 			&c.InviteLink,
 			&c.InviteLinkRevokedAt,
 			&c.CreatedBy,
+			&c.DMUserIDA,
+			&c.DMUserIDB,
 			&c.CreatedAt,
 			&c.UpdatedAt,
 		); err != nil {
@@ -195,19 +204,15 @@ func (r *PostgresConversationRepository) GetUserConversations(ctx context.Contex
 func (r *PostgresConversationRepository) GetDirectConversation(ctx context.Context, userID1, userID2 uuid.UUID) (conversation.Conversation, error) {
 	var c conversation.Conversation
 	err := r.db.QueryRowContext(ctx, `
-        SELECT c.id, c.type, c.subject, c.description, c.avatar_url, c.expiry_seconds, c.disappearing_mode,
-               c.message_expiry_seconds, c.group_permissions, c.invite_link, c.invite_link_revoked_at, c.created_by,
-               c.created_at, c.updated_at
-        FROM conversations c
-        WHERE c.type = 'DM' AND c.id IN (
-            SELECT conversation_id
-            FROM participants
-            WHERE user_id IN ($1,$2)
-            GROUP BY conversation_id
-            HAVING COUNT(DISTINCT user_id) = 2
-        )
-        LIMIT 1
-    `, userID1, userID2).Scan(
+	    SELECT c.id, c.type, c.subject, c.description, c.avatar_url, c.expiry_seconds, c.disappearing_mode,
+	           c.message_expiry_seconds, c.group_permissions, c.invite_link, c.invite_link_revoked_at, c.created_by,
+	           c.dm_user_id_a, c.dm_user_id_b, c.created_at, c.updated_at
+	    FROM conversations c
+	    WHERE c.type = 'DM'
+	      AND c.dm_user_id_a = LEAST($1, $2)
+	      AND c.dm_user_id_b = GREATEST($1, $2)
+	    LIMIT 1
+	`, userID1, userID2).Scan(
 		&c.ID,
 		&c.Type,
 		&c.Subject,
@@ -220,6 +225,8 @@ func (r *PostgresConversationRepository) GetDirectConversation(ctx context.Conte
 		&c.InviteLink,
 		&c.InviteLinkRevokedAt,
 		&c.CreatedBy,
+		&c.DMUserIDA,
+		&c.DMUserIDB,
 		&c.CreatedAt,
 		&c.UpdatedAt,
 	)
@@ -240,13 +247,13 @@ func (r *PostgresConversationRepository) GetDirectConversation(ctx context.Conte
 func (r *PostgresConversationRepository) SearchConversations(ctx context.Context, userID uuid.UUID, query string) ([]conversation.Conversation, error) {
 	var conversations []conversation.Conversation
 	rows, err := r.db.QueryContext(ctx, `
-        SELECT c.id, c.type, c.subject, c.description, c.avatar_url, c.expiry_seconds, c.disappearing_mode,
-               c.message_expiry_seconds, c.group_permissions, c.invite_link, c.invite_link_revoked_at, c.created_by,
-               c.created_at, c.updated_at
-        FROM conversations c
-        WHERE c.id IN (SELECT conversation_id FROM participants WHERE user_id = $1)
-          AND c.subject ILIKE $2
-    `, userID, "%"+query+"%")
+	    SELECT c.id, c.type, c.subject, c.description, c.avatar_url, c.expiry_seconds, c.disappearing_mode,
+	           c.message_expiry_seconds, c.group_permissions, c.invite_link, c.invite_link_revoked_at, c.created_by,
+	           c.dm_user_id_a, c.dm_user_id_b, c.created_at, c.updated_at
+	    FROM conversations c
+	    WHERE c.id IN (SELECT conversation_id FROM participants WHERE user_id = $1)
+	      AND c.subject ILIKE $2
+	`, userID, "%"+query+"%")
 	if err != nil {
 		return nil, err
 	}
@@ -266,6 +273,8 @@ func (r *PostgresConversationRepository) SearchConversations(ctx context.Context
 			&c.InviteLink,
 			&c.InviteLinkRevokedAt,
 			&c.CreatedBy,
+			&c.DMUserIDA,
+			&c.DMUserIDB,
 			&c.CreatedAt,
 			&c.UpdatedAt,
 		); err != nil {
@@ -287,13 +296,13 @@ func (r *PostgresConversationRepository) SearchConversations(ctx context.Context
 func (r *PostgresConversationRepository) GetConversationsByType(ctx context.Context, userID uuid.UUID, convType string) ([]conversation.Conversation, error) {
 	var conversations []conversation.Conversation
 	rows, err := r.db.QueryContext(ctx, `
-        SELECT c.id, c.type, c.subject, c.description, c.avatar_url, c.expiry_seconds, c.disappearing_mode,
-               c.message_expiry_seconds, c.group_permissions, c.invite_link, c.invite_link_revoked_at, c.created_by,
-               c.created_at, c.updated_at
-        FROM conversations c
-        WHERE c.id IN (SELECT conversation_id FROM participants WHERE user_id = $1)
-          AND c.type = $2
-    `, userID, convType)
+	    SELECT c.id, c.type, c.subject, c.description, c.avatar_url, c.expiry_seconds, c.disappearing_mode,
+	           c.message_expiry_seconds, c.group_permissions, c.invite_link, c.invite_link_revoked_at, c.created_by,
+	           c.dm_user_id_a, c.dm_user_id_b, c.created_at, c.updated_at
+	    FROM conversations c
+	    WHERE c.id IN (SELECT conversation_id FROM participants WHERE user_id = $1)
+	      AND c.type = $2
+	`, userID, convType)
 	if err != nil {
 		return nil, err
 	}
@@ -313,6 +322,8 @@ func (r *PostgresConversationRepository) GetConversationsByType(ctx context.Cont
 			&c.InviteLink,
 			&c.InviteLinkRevokedAt,
 			&c.CreatedBy,
+			&c.DMUserIDA,
+			&c.DMUserIDB,
 			&c.CreatedAt,
 			&c.UpdatedAt,
 		); err != nil {
@@ -334,11 +345,12 @@ func (r *PostgresConversationRepository) GetConversationsByType(ctx context.Cont
 func (r *PostgresConversationRepository) GetByInviteLink(ctx context.Context, link string) (conversation.Conversation, error) {
 	var c conversation.Conversation
 	err := r.db.QueryRowContext(ctx, `
-        SELECT id, type, subject, description, avatar_url, expiry_seconds, disappearing_mode, message_expiry_seconds,
-               group_permissions, invite_link, invite_link_revoked_at, created_by, created_at, updated_at
-        FROM conversations
-        WHERE invite_link = $1 AND (invite_link_revoked_at IS NULL OR invite_link_revoked_at > NOW())
-    `, link).Scan(
+	    SELECT id, type, subject, description, avatar_url, expiry_seconds, disappearing_mode, message_expiry_seconds,
+	           group_permissions, invite_link, invite_link_revoked_at, created_by, dm_user_id_a, dm_user_id_b,
+	           created_at, updated_at
+	    FROM conversations
+	    WHERE invite_link = $1 AND (invite_link_revoked_at IS NULL OR invite_link_revoked_at > NOW())
+	`, link).Scan(
 		&c.ID,
 		&c.Type,
 		&c.Subject,
@@ -351,6 +363,8 @@ func (r *PostgresConversationRepository) GetByInviteLink(ctx context.Context, li
 		&c.InviteLink,
 		&c.InviteLinkRevokedAt,
 		&c.CreatedBy,
+		&c.DMUserIDA,
+		&c.DMUserIDB,
 		&c.CreatedAt,
 		&c.UpdatedAt,
 	)

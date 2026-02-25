@@ -22,6 +22,8 @@ type Conversation struct {
 	InviteLink           sql.NullString
 	InviteLinkRevokedAt  sql.NullTime
 	CreatedBy            uuid.NullUUID
+	DMUserIDA            uuid.NullUUID
+	DMUserIDB            uuid.NullUUID
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
 

@@ -99,9 +99,21 @@ func (s *ConversationService) createDirect(ctx context.Context, input CreateConv
 		Subject:          convNullString(input.Subject),
 		Description:      convNullString(input.Description),
 		CreatedBy:        uuid.NullUUID{UUID: input.CreatorID, Valid: true},
+		DMUserIDA:        uuid.NullUUID{UUID: uuid.Nil, Valid: false},
+		DMUserIDB:        uuid.NullUUID{UUID: uuid.Nil, Valid: false},
 		CreatedAt:        time.Now(),
 		UpdatedAt:        time.Now(),
 		DisappearingMode: "OFF",
+	}
+
+	if input.Type == "DM" && len(input.ParticipantIDs) == 2 {
+		userA := input.ParticipantIDs[0]
+		userB := input.ParticipantIDs[1]
+		if userB.String() < userA.String() {
+			userA, userB = userB, userA
+		}
+		conv.DMUserIDA = uuid.NullUUID{UUID: userA, Valid: true}
+		conv.DMUserIDB = uuid.NullUUID{UUID: userB, Valid: true}
 	}
 
 	if err := s.repo.Create(ctx, &conv); err != nil {

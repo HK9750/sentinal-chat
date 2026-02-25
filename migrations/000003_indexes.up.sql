@@ -12,6 +12,15 @@ CREATE INDEX IF NOT EXISTS idx_participants_user ON participants (user_id);
 CREATE INDEX IF NOT EXISTS idx_participants_conv ON participants (conversation_id);
 CREATE INDEX IF NOT EXISTS idx_participants_role ON participants (conversation_id, role);
 
+-- Conversations
+ALTER TABLE conversations
+  ADD COLUMN IF NOT EXISTS dm_user_id_a UUID,
+  ADD COLUMN IF NOT EXISTS dm_user_id_b UUID;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_conversations_dm_unique_pair
+  ON conversations (dm_user_id_a, dm_user_id_b)
+  WHERE type = 'DM';
+
 -- Messages
 CREATE INDEX IF NOT EXISTS idx_messages_conv_seq ON messages (conversation_id, seq_id DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages (sender_id);
@@ -63,4 +72,3 @@ CREATE INDEX IF NOT EXISTS idx_scheduled_messages_sender ON scheduled_messages(s
 
 -- Message versions index
 CREATE INDEX IF NOT EXISTS idx_message_versions_message ON message_versions(message_id, version_number DESC);
-
