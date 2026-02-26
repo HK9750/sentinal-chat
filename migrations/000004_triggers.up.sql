@@ -20,6 +20,7 @@ ALTER TABLE conversations
   ADD COLUMN IF NOT EXISTS dm_user_id_b UUID;
 
 -- Normalize DM pair columns
+DROP TRIGGER IF EXISTS tr_conversations_dm_pair ON conversations;
 DROP FUNCTION IF EXISTS fn_set_dm_pair();
 CREATE OR REPLACE FUNCTION fn_set_dm_pair()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
@@ -49,7 +50,6 @@ BEGIN
 END;
 $$;
 
-DROP TRIGGER IF EXISTS tr_conversations_dm_pair ON conversations;
 CREATE TRIGGER tr_conversations_dm_pair
 BEFORE INSERT OR UPDATE OF type, dm_user_id_a, dm_user_id_b ON conversations
 FOR EACH ROW
