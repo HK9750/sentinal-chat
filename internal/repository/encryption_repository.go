@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"time"
 
 	"sentinal-chat/internal/domain/encryption"
@@ -41,8 +40,6 @@ func (r *PostgresEncryptionRepository) SetupEncryption(ctx context.Context, iden
 			return err
 		}
 
-		fmt.Println("After Identity Key Insert")
-
 		// 2. Signed PreKey
 		_, _ = tx.ExecContext(ctx, "UPDATE signed_prekeys SET is_active = false WHERE user_id = $1 AND device_id = $2 AND is_active = true", signedPreKey.UserID, signedPreKey.DeviceID)
 		err = tx.QueryRowContext(ctx, `
@@ -53,10 +50,8 @@ func (r *PostgresEncryptionRepository) SetupEncryption(ctx context.Context, iden
 			return err
 		}
 
-		fmt.Println("After Signed PreKey Insert")
-
 		// 3. One Time PreKeys
-		_, _ = tx.ExecContext(ctx, "DELETE FROM onetime_prekeys WHERE user_id = $1 AND device_id = $2", identityKey.UserID, identityKey.DeviceID)
+		_, _ = tx.ExecContext(ctx, "DELETE FROM onetime_prekeys WHERE user_id = $1 AND device_id = $2 AND consumed_at IS NULL", identityKey.UserID, identityKey.DeviceID)
 		for i, k := range oneTimePreKeys {
 			err := tx.QueryRowContext(ctx, `
                 INSERT INTO onetime_prekeys (user_id, device_id, key_id, public_key, uploaded_at, consumed_at, consumed_by, consumed_by_device_id)

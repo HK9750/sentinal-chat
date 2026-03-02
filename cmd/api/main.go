@@ -121,7 +121,7 @@ func main() {
 	callService := services.NewCallService(database.GetDB(), callRepo, signalingStore, eventPublisher)
 
 	// Initialize WebSocket Hub
-	hub := server.NewHub(eventBus, conversationService, messageService, userService)
+	hub := server.NewHub(eventBus, conversationService, messageService, userService, callService)
 	go hub.Run()
 
 	// Create WebSocket Handler

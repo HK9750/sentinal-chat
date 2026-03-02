@@ -92,7 +92,7 @@ func (rl *ClientRateLimiter) Allow(msgType string) bool {
 			rl.presenceTokens--
 			return true
 		}
-	case "call":
+	case "call", "call:offer", "call:answer", "call:ice", "call:end":
 		if rl.callTokens > 0 {
 			rl.callTokens--
 			return true
@@ -132,9 +132,21 @@ type Client struct {
 
 // ClientMessage represents a message from the client
 type ClientMessage struct {
-	Type           string    `json:"type"`
-	ConversationID uuid.UUID `json:"conversation_id,omitempty"`
-	MessageID      uuid.UUID `json:"message_id,omitempty"`
+	Type           string          `json:"type"`
+	ConversationID uuid.UUID       `json:"conversation_id,omitempty"`
+	MessageID      uuid.UUID       `json:"message_id,omitempty"`
+	CallID         uuid.UUID       `json:"call_id,omitempty"`
+	ParticipantID  uuid.UUID       `json:"participant_id,omitempty"`
+	SDP            string          `json:"sdp,omitempty"`
+	Candidate      json.RawMessage `json:"candidate,omitempty"`
+	Reason         string          `json:"reason,omitempty"`
+}
+
+// ICECandidateMessage represents an ICE candidate from the client
+type ICECandidateMessage struct {
+	Candidate     string `json:"candidate"`
+	SDPMid        string `json:"sdpMid"`
+	SDPMLineIndex int    `json:"sdpMLineIndex"`
 }
 
 func NewClient(hub *Hub, conn *websocket.Conn, userID uuid.UUID, deviceID uuid.UUID, clientID string, logger WebSocketLogger) *Client {
@@ -206,6 +218,14 @@ func (c *Client) handleMessage(message []byte) error {
 		return c.handleReadReceipt(msg)
 	case "ping":
 		return c.handlePing()
+	case "call:offer":
+		return c.handleCallOffer(msg)
+	case "call:answer":
+		return c.handleCallAnswer(msg)
+	case "call:ice":
+		return c.handleCallICE(msg)
+	case "call:end":
+		return c.handleCallEnd(msg)
 	default:
 		c.logger.Warn("unknown message type", c.userID, c.clientID, zap.String("msg_type", msg.Type))
 		return nil
@@ -250,6 +270,78 @@ func (c *Client) handleReadReceipt(msg ClientMessage) error {
 func (c *Client) handlePing() error {
 	c.send <- []byte(`{"type":"pong"}`)
 	return nil
+}
+
+func (c *Client) handleCallOffer(msg ClientMessage) error {
+	if c.hub.callService == nil {
+		return nil
+	}
+	if msg.CallID == uuid.Nil || msg.ParticipantID == uuid.Nil || msg.SDP == "" {
+		return nil
+	}
+	return c.hub.callService.SendOffer(
+		context.Background(),
+		msg.CallID,
+		c.userID,
+		msg.ParticipantID,
+		msg.SDP,
+	)
+}
+
+func (c *Client) handleCallAnswer(msg ClientMessage) error {
+	if c.hub.callService == nil {
+		return nil
+	}
+	if msg.CallID == uuid.Nil || msg.ParticipantID == uuid.Nil || msg.SDP == "" {
+		return nil
+	}
+	return c.hub.callService.SendAnswer(
+		context.Background(),
+		msg.CallID,
+		c.userID,
+		msg.ParticipantID,
+		msg.SDP,
+	)
+}
+
+func (c *Client) handleCallICE(msg ClientMessage) error {
+	if c.hub.callService == nil {
+		return nil
+	}
+	if msg.CallID == uuid.Nil || msg.ParticipantID == uuid.Nil || len(msg.Candidate) == 0 {
+		return nil
+	}
+	var ice ICECandidateMessage
+	if err := json.Unmarshal(msg.Candidate, &ice); err != nil {
+		return err
+	}
+	return c.hub.callService.SendICECandidate(
+		context.Background(),
+		msg.CallID,
+		c.userID,
+		msg.ParticipantID,
+		ice.Candidate,
+		ice.SDPMid,
+		ice.SDPMLineIndex,
+	)
+}
+
+func (c *Client) handleCallEnd(msg ClientMessage) error {
+	if c.hub.callService == nil {
+		return nil
+	}
+	if msg.CallID == uuid.Nil {
+		return nil
+	}
+	reason := msg.Reason
+	if reason == "" {
+		reason = "HANGUP"
+	}
+	return c.hub.callService.EndCall(
+		context.Background(),
+		msg.CallID,
+		reason,
+	)
 }
 
 func (c *Client) writePump() {

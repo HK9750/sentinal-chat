@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
 
@@ -408,9 +409,10 @@ func (s *MessageService) executeSendMessageDirect(ctx context.Context, input Sen
 	if input.ClientMsgID != "" {
 		msg.ClientMessageID = msgNullString(input.ClientMsgID)
 	}
+	normalizedIdempotencyKey := ""
 	if input.IdempotencyKey != "" {
-		idempotencyKey := input.IdempotencyKey + ":" + input.ConversationID.String()
-		msg.IdempotencyKey = msgNullString(idempotencyKey)
+		normalizedIdempotencyKey = input.IdempotencyKey + ":" + input.ConversationID.String()
+		msg.IdempotencyKey = msgNullString(normalizedIdempotencyKey)
 	}
 
 	if input.Metadata == nil {
@@ -431,6 +433,20 @@ func (s *MessageService) executeSendMessageDirect(ctx context.Context, input Sen
 	msg.Metadata = string(raw)
 
 	if err := s.messageRepo.Create(ctx, &msg); err != nil {
+		if errors.Is(err, sentinal_errors.ErrAlreadyExists) {
+			if normalizedIdempotencyKey != "" {
+				if existing, getErr := s.messageRepo.GetByIdempotencyKey(ctx, normalizedIdempotencyKey); getErr == nil {
+					return existing, nil
+				}
+			}
+			if input.ClientMsgID != "" {
+				if existing, getErr := s.messageRepo.GetByClientMessageID(ctx, input.ClientMsgID); getErr == nil {
+					if existing.ConversationID == input.ConversationID {
+						return existing, nil
+					}
+				}
+			}
+		}
 		return message.Message{}, err
 	}
 

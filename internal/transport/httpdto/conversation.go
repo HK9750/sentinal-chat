@@ -45,16 +45,17 @@ type ListConversationsResponse struct {
 
 // ConversationDTO represents a conversation in API responses
 type ConversationDTO struct {
-	ID               string `json:"id"`
-	Type             string `json:"type"`
-	Subject          string `json:"subject,omitempty"`
-	Description      string `json:"description,omitempty"`
-	AvatarURL        string `json:"avatar_url,omitempty"`
-	CreatorID        string `json:"creator_id"`
-	InviteLink       string `json:"invite_link,omitempty"`
-	ParticipantCount int    `json:"participant_count"`
-	LastMessageAt    string `json:"last_message_at,omitempty"`
-	CreatedAt        string `json:"created_at"`
+	ID               string           `json:"id"`
+	Type             string           `json:"type"`
+	Subject          string           `json:"subject,omitempty"`
+	Description      string           `json:"description,omitempty"`
+	AvatarURL        string           `json:"avatar_url,omitempty"`
+	CreatorID        string           `json:"creator_id"`
+	InviteLink       string           `json:"invite_link,omitempty"`
+	ParticipantCount int              `json:"participant_count"`
+	Participants     []ParticipantDTO `json:"participants,omitempty"`
+	LastMessageAt    string           `json:"last_message_at,omitempty"`
+	CreatedAt        string           `json:"created_at"`
 }
 
 // SearchConversationsRequest holds query parameters for searching
@@ -97,11 +98,14 @@ type ParticipantsResponse struct {
 
 // ParticipantDTO represents a conversation participant in API responses
 type ParticipantDTO struct {
-	UserID    string   `json:"user_id"`
-	Username  string   `json:"username,omitempty"`
-	Role      string   `json:"role"`
-	JoinedAt  string   `json:"joined_at"`
-	DeviceIDs []string `json:"device_ids,omitempty"`
+	UserID      string   `json:"user_id"`
+	Username    string   `json:"username,omitempty"`
+	DisplayName string   `json:"display_name,omitempty"`
+	AvatarURL   string   `json:"avatar_url,omitempty"`
+	IsOnline    bool     `json:"is_online"`
+	Role        string   `json:"role"`
+	JoinedAt    string   `json:"joined_at"`
+	DeviceIDs   []string `json:"device_ids,omitempty"`
 }
 
 // MuteConversationRequest is used for POST /conversations/:id/mute
@@ -153,7 +157,11 @@ func FromConversation(c conversation.Conversation) ConversationDTO {
 	if c.InviteLink.Valid {
 		dto.InviteLink = c.InviteLink.String
 	}
+	if c.LastMessageAt != nil {
+		dto.LastMessageAt = c.LastMessageAt.Format(time.RFC3339)
+	}
 	dto.ParticipantCount = len(c.Participants)
+	dto.Participants = FromParticipantSlice(c.Participants)
 	return dto
 }
 
@@ -169,9 +177,13 @@ func FromConversationSlice(conversations []conversation.Conversation) []Conversa
 // FromParticipant converts a domain participant to ParticipantDTO
 func FromParticipant(p conversation.Participant) ParticipantDTO {
 	dto := ParticipantDTO{
-		UserID:   p.UserID.String(),
-		Role:     p.Role,
-		JoinedAt: p.JoinedAt.Format(time.RFC3339),
+		UserID:      p.UserID.String(),
+		Username:    p.Username,
+		DisplayName: p.DisplayName,
+		AvatarURL:   p.AvatarURL,
+		IsOnline:    p.IsOnline,
+		Role:        p.Role,
+		JoinedAt:    p.JoinedAt.Format(time.RFC3339),
 	}
 	return dto
 }

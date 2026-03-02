@@ -27,6 +27,9 @@ type Conversation struct {
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
 
+	// Computed fields (populated via subquery, not stored in conversations table)
+	LastMessageAt *time.Time
+
 	// Relationships
 	Participants []Participant
 	// Sequence     ConversationSequence
@@ -45,8 +48,11 @@ type Participant struct {
 	LastReadSequence int64
 	Permissions      *string
 
-	// Relationships
-	// User user.User
+	// Joined user fields (populated via JOIN, not stored in participants table)
+	DisplayName string
+	Username    string
+	AvatarURL   string
+	IsOnline    bool
 }
 
 // ConversationSequence represents the conversation_sequences table

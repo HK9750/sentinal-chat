@@ -158,8 +158,6 @@ func runSeedDevelopment() {
 	log.Println("📊 Seed Summary:")
 	log.Printf("   - Admin user: %s", result.AdminUser.Email.String)
 	log.Printf("   - Test users: %d", len(result.TestUsers))
-	log.Printf("   - Conversations: %d", len(result.Conversations))
-	log.Printf("   - Messages: %d", len(result.Messages))
 	log.Println("✅ Development seeding completed!")
 }
 

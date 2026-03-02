@@ -154,10 +154,11 @@ func (r *PostgresConversationRepository) GetUserConversations(ctx context.Contex
 	rows, err := r.db.QueryContext(ctx, `
 	    SELECT c.id, c.type, c.subject, c.description, c.avatar_url, c.expiry_seconds, c.disappearing_mode,
 	           c.message_expiry_seconds, c.group_permissions, c.invite_link, c.invite_link_revoked_at, c.created_by,
-	           c.dm_user_id_a, c.dm_user_id_b, c.created_at, c.updated_at
+	           c.dm_user_id_a, c.dm_user_id_b, c.created_at, c.updated_at,
+	           (SELECT MAX(m.created_at) FROM messages m WHERE m.conversation_id = c.id) AS last_message_at
 	    FROM conversations c
 	    WHERE c.id IN (SELECT conversation_id FROM participants WHERE user_id = $1)
-	    ORDER BY c.updated_at DESC
+	    ORDER BY COALESCE((SELECT MAX(m.created_at) FROM messages m WHERE m.conversation_id = c.id), c.created_at) DESC
 	    OFFSET $2 LIMIT $3
 	`, userID, offset, limit)
 	if err != nil {
@@ -167,6 +168,7 @@ func (r *PostgresConversationRepository) GetUserConversations(ctx context.Contex
 
 	for rows.Next() {
 		var c conversation.Conversation
+		var lastMessageAt sql.NullTime
 		if err := rows.Scan(
 			&c.ID,
 			&c.Type,
@@ -184,8 +186,12 @@ func (r *PostgresConversationRepository) GetUserConversations(ctx context.Contex
 			&c.DMUserIDB,
 			&c.CreatedAt,
 			&c.UpdatedAt,
+			&lastMessageAt,
 		); err != nil {
 			return nil, 0, err
+		}
+		if lastMessageAt.Valid {
+			c.LastMessageAt = &lastMessageAt.Time
 		}
 		participants, err := r.GetParticipants(ctx, c.ID)
 		if err != nil {
@@ -439,8 +445,12 @@ func (r *PostgresConversationRepository) RemoveParticipant(ctx context.Context, 
 func (r *PostgresConversationRepository) GetParticipants(ctx context.Context, conversationID uuid.UUID) ([]conversation.Participant, error) {
 	var participants []conversation.Participant
 	rows, err := r.db.QueryContext(ctx, `
-        SELECT conversation_id, user_id, role, joined_at, added_by, muted_until, pinned_at, archived, last_read_sequence, permissions
-        FROM participants WHERE conversation_id = $1
+        SELECT p.conversation_id, p.user_id, p.role, p.joined_at, p.added_by, p.muted_until, p.pinned_at,
+               p.archived, p.last_read_sequence, p.permissions,
+               COALESCE(u.display_name, ''), COALESCE(u.username, ''), COALESCE(u.avatar_url, ''), COALESCE(u.is_online, false)
+        FROM participants p
+        LEFT JOIN users u ON u.id = p.user_id
+        WHERE p.conversation_id = $1
     `, conversationID)
 	if err != nil {
 		return nil, err
@@ -459,6 +469,10 @@ func (r *PostgresConversationRepository) GetParticipants(ctx context.Context, co
 			&p.Archived,
 			&p.LastReadSequence,
 			&p.Permissions,
+			&p.DisplayName,
+			&p.Username,
+			&p.AvatarURL,
+			&p.IsOnline,
 		); err != nil {
 			return nil, err
 		}

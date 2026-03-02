@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"net/http"
 	"strconv"
+	"time"
 
 	"sentinal-chat/internal/domain/encryption"
 	"sentinal-chat/internal/services"
@@ -43,11 +44,13 @@ func (h *EncryptionHandler) SetupEncryption(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid identity public_key", "INVALID_REQUEST"))
 		return
 	}
+	now := time.Now()
 	identityKey := &encryption.IdentityKey{
 		UserID:    userID,
 		DeviceID:  deviceID,
 		PublicKey: identityPubKey,
 		IsActive:  true,
+		CreatedAt: now,
 	}
 
 	signedPubKey, err := base64.StdEncoding.DecodeString(req.SignedPreKey.PublicKey)
@@ -67,6 +70,7 @@ func (h *EncryptionHandler) SetupEncryption(c *gin.Context) {
 		PublicKey: signedPubKey,
 		Signature: signedSignature,
 		IsActive:  true,
+		CreatedAt: now,
 	}
 
 	oneTimePreKeys := make([]encryption.OneTimePreKey, 0, len(req.OneTimeKeys))
@@ -87,10 +91,11 @@ func (h *EncryptionHandler) SetupEncryption(c *gin.Context) {
 			return
 		}
 		oneTimePreKeys = append(oneTimePreKeys, encryption.OneTimePreKey{
-			UserID:    kUserID,
-			DeviceID:  kDeviceID,
-			KeyID:     k.KeyID,
-			PublicKey: kPubKey,
+			UserID:     kUserID,
+			DeviceID:   kDeviceID,
+			KeyID:      k.KeyID,
+			PublicKey:  kPubKey,
+			UploadedAt: now,
 		})
 	}
 
@@ -130,6 +135,7 @@ func (h *EncryptionHandler) UploadIdentityKey(c *gin.Context) {
 		DeviceID:  deviceID,
 		PublicKey: publicKey,
 		IsActive:  true,
+		CreatedAt: time.Now(),
 	}
 	if err := h.service.CreateIdentityKey(c.Request.Context(), item); err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
@@ -193,6 +199,7 @@ func (h *EncryptionHandler) UploadSignedPreKey(c *gin.Context) {
 		PublicKey: publicKey,
 		Signature: signature,
 		IsActive:  true,
+		CreatedAt: time.Now(),
 	}
 	if err := h.service.CreateSignedPreKey(c.Request.Context(), item); err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
@@ -282,6 +289,7 @@ func (h *EncryptionHandler) RotateSignedPreKey(c *gin.Context) {
 		PublicKey: publicKey,
 		Signature: signature,
 		IsActive:  true,
+		CreatedAt: time.Now(),
 	}
 	if err := h.service.RotateSignedPreKey(c.Request.Context(), userID, deviceID, &key); err != nil {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
@@ -299,6 +307,7 @@ func (h *EncryptionHandler) UploadOneTimePreKeys(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid request", "INVALID_REQUEST"))
 		return
 	}
+	now := time.Now()
 	keys := make([]encryption.OneTimePreKey, 0, len(req.Keys))
 	for _, k := range req.Keys {
 		userID, err := uuid.Parse(k.UserID)
@@ -317,10 +326,11 @@ func (h *EncryptionHandler) UploadOneTimePreKeys(c *gin.Context) {
 			return
 		}
 		keys = append(keys, encryption.OneTimePreKey{
-			UserID:    userID,
-			DeviceID:  deviceID,
-			KeyID:     k.KeyID,
-			PublicKey: publicKey,
+			UserID:     userID,
+			DeviceID:   deviceID,
+			KeyID:      k.KeyID,
+			PublicKey:  publicKey,
+			UploadedAt: now,
 		})
 	}
 	if err := h.service.UploadOneTimePreKeys(c.Request.Context(), keys); err != nil {

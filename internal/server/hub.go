@@ -22,6 +22,7 @@ type Hub struct {
 	conversationService *services.ConversationService
 	messageService      *services.MessageService
 	userService         *services.UserService
+	callService         *services.CallService
 	rateLimiter         *WebSocketRateLimiter
 	logger              *WebSocketLogger
 	mu                  sync.RWMutex
@@ -116,6 +117,7 @@ func NewHub(
 	conversationService *services.ConversationService,
 	messageService *services.MessageService,
 	userService *services.UserService,
+	callService *services.CallService,
 ) *Hub {
 	return &Hub{
 		clients:             make(map[uuid.UUID]map[string]*Client),
@@ -126,6 +128,7 @@ func NewHub(
 		conversationService: conversationService,
 		messageService:      messageService,
 		userService:         userService,
+		callService:         callService,
 		rateLimiter:         NewWebSocketRateLimiter(),
 		logger:              NewWebSocketLogger(),
 		stopChan:            make(chan struct{}),
