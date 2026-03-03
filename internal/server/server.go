@@ -234,11 +234,9 @@ func (s *Server) SetupRoutes(handlers *Handlers, authService *services.AuthServi
 		enc := s.engine.Group("/v1/encryption")
 		enc.Use(middleware.AuthMiddleware(authService))
 		enc.POST("/setup", handlers.Encryption.SetupEncryption)
-		enc.POST("/identity", handlers.Encryption.UploadIdentityKey)
 		enc.GET("/identity", handlers.Encryption.GetIdentityKey)
 		enc.PUT("/identity/:id/deactivate", handlers.Encryption.DeactivateIdentityKey)
 		enc.DELETE("/identity/:id", handlers.Encryption.DeleteIdentityKey)
-		enc.POST("/signed-prekeys", handlers.Encryption.UploadSignedPreKey)
 		enc.GET("/signed-prekeys", handlers.Encryption.GetSignedPreKey)
 		enc.GET("/signed-prekeys/active", handlers.Encryption.GetActiveSignedPreKey)
 		enc.POST("/signed-prekeys/rotate", handlers.Encryption.RotateSignedPreKey)
@@ -248,6 +246,8 @@ func (s *Server) SetupRoutes(handlers *Handlers, authService *services.AuthServi
 		enc.GET("/onetime-prekeys/count", handlers.Encryption.GetPreKeyCount)
 		enc.GET("/bundles", handlers.Encryption.GetKeyBundle)
 		enc.GET("/keys/active", handlers.Encryption.HasActiveKeys)
+		enc.POST("/backup", handlers.Encryption.UploadKeyBackup)
+		enc.GET("/backup", handlers.Encryption.GetKeyBackup)
 	}
 
 	if handlers.Broadcast != nil {

@@ -54,3 +54,19 @@ func (SignedPreKey) TableName() string {
 func (OneTimePreKey) TableName() string {
 	return "onetime_prekeys"
 }
+
+// KeyBackup represents key_backups table for cache-clear recovery
+type KeyBackup struct {
+	UserID     uuid.UUID
+	DeviceID   uuid.UUID
+	BackupData []byte
+	Nonce      []byte
+	Salt       []byte
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+}
+
+func (KeyBackup) TableName() string {
+	return "key_backups"
+}
+

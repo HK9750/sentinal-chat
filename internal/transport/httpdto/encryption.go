@@ -211,3 +211,35 @@ func FromOneTimePreKey(k encryption.OneTimePreKey) OneTimePreKeyDTO {
 	}
 	return dto
 }
+
+// UploadKeyBackupRequest is used for POST /encryption/backup
+type UploadKeyBackupRequest struct {
+	DeviceID   string `json:"device_id" binding:"required"`
+	BackupData string `json:"backup_data" binding:"required"`
+	Nonce      string `json:"nonce" binding:"required"`
+	Salt       string `json:"salt" binding:"required"`
+}
+
+// KeyBackupDTO represents a key backup returned to the client
+type KeyBackupDTO struct {
+	UserID     string `json:"user_id"`
+	DeviceID   string `json:"device_id"`
+	BackupData string `json:"backup_data"`
+	Nonce      string `json:"nonce"`
+	Salt       string `json:"salt"`
+	CreatedAt  string `json:"created_at"`
+	UpdatedAt  string `json:"updated_at"`
+}
+
+// FromKeyBackup converts a domain KeyBackup to KeyBackupDTO
+func FromKeyBackup(b encryption.KeyBackup) KeyBackupDTO {
+	return KeyBackupDTO{
+		UserID:     b.UserID.String(),
+		DeviceID:   b.DeviceID.String(),
+		BackupData: base64.StdEncoding.EncodeToString(b.BackupData),
+		Nonce:      base64.StdEncoding.EncodeToString(b.Nonce),
+		Salt:       base64.StdEncoding.EncodeToString(b.Salt),
+		CreatedAt:  b.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:  b.UpdatedAt.Format(time.RFC3339),
+	}
+}

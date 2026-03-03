@@ -84,6 +84,8 @@ CREATE TABLE IF NOT EXISTS conversations (
   type conversation_type NOT NULL,
   subject TEXT,
   description TEXT,
+  dm_user_id_a UUID REFERENCES users(id),
+  dm_user_id_b UUID REFERENCES users(id),
   avatar_url TEXT,
   expiry_seconds INTEGER,
   disappearing_mode disappearing_mode DEFAULT 'OFF',
@@ -452,4 +454,14 @@ CREATE TABLE IF NOT EXISTS message_versions (
   edited_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   edited_at TIMESTAMP DEFAULT NOW(),
   version_number INT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS key_backups (
+    user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    device_id UUID NOT NULL,
+    backup_data BYTEA NOT NULL,
+    nonce BYTEA NOT NULL,
+    salt BYTEA NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );

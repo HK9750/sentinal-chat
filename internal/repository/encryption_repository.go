@@ -298,3 +298,42 @@ func (r *PostgresEncryptionRepository) HasActiveKeys(ctx context.Context, userID
 	}
 	return count > 0, nil
 }
+
+func (r *PostgresEncryptionRepository) UpsertKeyBackup(ctx context.Context, backup *encryption.KeyBackup) error {
+	now := time.Now()
+	_, err := r.db.ExecContext(ctx, `
+        INSERT INTO key_backups (user_id, device_id, backup_data, nonce, salt, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        ON CONFLICT (user_id) DO UPDATE SET
+            device_id = EXCLUDED.device_id,
+            backup_data = EXCLUDED.backup_data,
+            nonce = EXCLUDED.nonce,
+            salt = EXCLUDED.salt,
+            updated_at = EXCLUDED.updated_at
+    `, backup.UserID, backup.DeviceID, backup.BackupData, backup.Nonce, backup.Salt, now, now)
+	return err
+}
+
+func (r *PostgresEncryptionRepository) GetKeyBackup(ctx context.Context, userID uuid.UUID) (encryption.KeyBackup, error) {
+	var backup encryption.KeyBackup
+	err := r.db.QueryRowContext(ctx, `
+        SELECT user_id, device_id, backup_data, nonce, salt, created_at, updated_at
+        FROM key_backups
+        WHERE user_id = $1
+    `, userID).Scan(
+		&backup.UserID,
+		&backup.DeviceID,
+		&backup.BackupData,
+		&backup.Nonce,
+		&backup.Salt,
+		&backup.CreatedAt,
+		&backup.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return encryption.KeyBackup{}, sentinal_errors.ErrNotFound
+		}
+		return encryption.KeyBackup{}, err
+	}
+	return backup, nil
+}

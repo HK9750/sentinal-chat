@@ -109,42 +109,10 @@ func (h *EncryptionHandler) SetupEncryption(c *gin.Context) {
 	}))
 }
 
-func (h *EncryptionHandler) UploadIdentityKey(c *gin.Context) {
-	var req httpdto.UploadIdentityKeyRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid request", "INVALID_REQUEST"))
-		return
-	}
-	userID, err := uuid.Parse(req.UserID)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid user_id", "INVALID_REQUEST"))
-		return
-	}
-	deviceID, err := uuid.Parse(req.DeviceID)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid device_id", "INVALID_REQUEST"))
-		return
-	}
-	publicKey, err := base64.StdEncoding.DecodeString(req.PublicKey)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid public_key", "INVALID_REQUEST"))
-		return
-	}
-	item := &encryption.IdentityKey{
-		UserID:    userID,
-		DeviceID:  deviceID,
-		PublicKey: publicKey,
-		IsActive:  true,
-		CreatedAt: time.Now(),
-	}
-	if err := h.service.CreateIdentityKey(c.Request.Context(), item); err != nil {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
-		return
-	}
-	identity := httpdto.FromIdentityKey(*item)
-	identity.PublicKey = ""
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(identity))
-}
+// SetupEncryption acts as a single transactional endpoint to provision all keys
+// UploadIdentityKey and UploadSignedPreKey are intentionally omitted because
+// identity and first signed prekeys must always be uploaded together during setup.
+
 
 func (h *EncryptionHandler) GetIdentityKey(c *gin.Context) {
 	userID, err := uuid.Parse(c.Query("user_id"))
@@ -166,50 +134,8 @@ func (h *EncryptionHandler) GetIdentityKey(c *gin.Context) {
 	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(identity))
 }
 
-func (h *EncryptionHandler) UploadSignedPreKey(c *gin.Context) {
-	var req httpdto.UploadSignedPreKeyRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid request", "INVALID_REQUEST"))
-		return
-	}
-	userID, err := uuid.Parse(req.UserID)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid user_id", "INVALID_REQUEST"))
-		return
-	}
-	deviceID, err := uuid.Parse(req.DeviceID)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid device_id", "INVALID_REQUEST"))
-		return
-	}
-	publicKey, err := base64.StdEncoding.DecodeString(req.PublicKey)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid public_key", "INVALID_REQUEST"))
-		return
-	}
-	signature, err := base64.StdEncoding.DecodeString(req.Signature)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid signature", "INVALID_REQUEST"))
-		return
-	}
-	item := &encryption.SignedPreKey{
-		UserID:    userID,
-		DeviceID:  deviceID,
-		KeyID:     req.KeyID,
-		PublicKey: publicKey,
-		Signature: signature,
-		IsActive:  true,
-		CreatedAt: time.Now(),
-	}
-	if err := h.service.CreateSignedPreKey(c.Request.Context(), item); err != nil {
-		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
-		return
-	}
-	signed := httpdto.FromSignedPreKey(*item)
-	signed.PublicKey = ""
-	signed.Signature = ""
-	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(signed))
-}
+// RotateSignedPreKey replaces a compromised or aged signed pre-key
+
 
 func (h *EncryptionHandler) GetSignedPreKey(c *gin.Context) {
 	userID, err := uuid.Parse(c.Query("user_id"))
@@ -388,25 +314,7 @@ func (h *EncryptionHandler) GetPreKeyCount(c *gin.Context) {
 	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.PreKeyCountResponse{Count: int(count)}))
 }
 
-func (h *EncryptionHandler) CreateSession(c *gin.Context) {
-	c.JSON(http.StatusNotFound, httpdto.NewErrorResponse("route disabled", "NOT_FOUND"))
-}
 
-func (h *EncryptionHandler) GetSession(c *gin.Context) {
-	c.JSON(http.StatusNotFound, httpdto.NewErrorResponse("route disabled", "NOT_FOUND"))
-}
-
-func (h *EncryptionHandler) UpdateSession(c *gin.Context) {
-	c.JSON(http.StatusNotFound, httpdto.NewErrorResponse("route disabled", "NOT_FOUND"))
-}
-
-func (h *EncryptionHandler) DeleteSession(c *gin.Context) {
-	c.JSON(http.StatusNotFound, httpdto.NewErrorResponse("route disabled", "NOT_FOUND"))
-}
-
-func (h *EncryptionHandler) UpsertKeyBundle(c *gin.Context) {
-	c.JSON(http.StatusNotFound, httpdto.NewErrorResponse("route disabled", "NOT_FOUND"))
-}
 
 func (h *EncryptionHandler) GetKeyBundle(c *gin.Context) {
 	userID, err := uuid.Parse(c.Query("user_id"))
@@ -459,13 +367,7 @@ func (h *EncryptionHandler) GetKeyBundle(c *gin.Context) {
 	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(bundle))
 }
 
-func (h *EncryptionHandler) GetUserKeyBundles(c *gin.Context) {
-	c.JSON(http.StatusNotFound, httpdto.NewErrorResponse("route disabled", "NOT_FOUND"))
-}
 
-func (h *EncryptionHandler) DeleteKeyBundle(c *gin.Context) {
-	c.JSON(http.StatusNotFound, httpdto.NewErrorResponse("route disabled", "NOT_FOUND"))
-}
 
 func (h *EncryptionHandler) HasActiveKeys(c *gin.Context) {
 	userID, err := uuid.Parse(c.Query("user_id"))
@@ -484,6 +386,75 @@ func (h *EncryptionHandler) HasActiveKeys(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.HasActiveKeysResponse{HasActiveKeys: ok}))
+}
+
+func (h *EncryptionHandler) UploadKeyBackup(c *gin.Context) {
+	var req httpdto.UploadKeyBackupRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid request", "INVALID_REQUEST"))
+		return
+	}
+
+	userID, ok := services.UserIDFromContext(c.Request.Context())
+	if !ok {
+		c.JSON(http.StatusUnauthorized, httpdto.NewErrorResponse("unauthorized", "UNAUTHORIZED"))
+		return
+	}
+
+	deviceID, err := uuid.Parse(req.DeviceID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid device_id", "INVALID_REQUEST"))
+		return
+	}
+
+	backupData, err := base64.StdEncoding.DecodeString(req.BackupData)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid backup_data", "INVALID_REQUEST"))
+		return
+	}
+
+	nonce, err := base64.StdEncoding.DecodeString(req.Nonce)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid nonce", "INVALID_REQUEST"))
+		return
+	}
+
+	salt, err := base64.StdEncoding.DecodeString(req.Salt)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, httpdto.NewErrorResponse("invalid salt", "INVALID_REQUEST"))
+		return
+	}
+
+	backup := &encryption.KeyBackup{
+		UserID:     userID,
+		DeviceID:   deviceID,
+		BackupData: backupData,
+		Nonce:      nonce,
+		Salt:       salt,
+	}
+
+	if err := h.service.UpsertKeyBackup(c.Request.Context(), backup); err != nil {
+		c.JSON(http.StatusInternalServerError, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
+		return
+	}
+
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse[any](nil))
+}
+
+func (h *EncryptionHandler) GetKeyBackup(c *gin.Context) {
+	userID, ok := services.UserIDFromContext(c.Request.Context())
+	if !ok {
+		c.JSON(http.StatusUnauthorized, httpdto.NewErrorResponse("unauthorized", "UNAUTHORIZED"))
+		return
+	}
+
+	backup, err := h.service.GetKeyBackup(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, httpdto.NewErrorResponse(err.Error(), "REQUEST_FAILED"))
+		return
+	}
+
+	c.JSON(http.StatusOK, httpdto.NewSuccessResponse(httpdto.FromKeyBackup(backup)))
 }
 
 func (h *EncryptionHandler) DeactivateIdentityKey(c *gin.Context) {

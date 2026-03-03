@@ -14,11 +14,6 @@ CREATE TRIGGER tr_conversations_updated
 BEFORE UPDATE ON conversations FOR EACH ROW
 EXECUTE FUNCTION fn_update_timestamp();
 
--- Ensure DM uniqueness columns exist before triggers
-ALTER TABLE conversations
-  ADD COLUMN IF NOT EXISTS dm_user_id_a UUID,
-  ADD COLUMN IF NOT EXISTS dm_user_id_b UUID;
-
 -- Normalize DM pair columns
 DROP TRIGGER IF EXISTS tr_conversations_dm_pair ON conversations;
 DROP FUNCTION IF EXISTS fn_set_dm_pair();
@@ -49,6 +44,12 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+
+CREATE TRIGGER update_key_backups_updated_at
+    BEFORE UPDATE ON key_backups
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
 
 CREATE TRIGGER tr_conversations_dm_pair
 BEFORE INSERT OR UPDATE OF type, dm_user_id_a, dm_user_id_b ON conversations

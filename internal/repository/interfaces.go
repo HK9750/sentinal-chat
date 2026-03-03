@@ -234,6 +234,9 @@ type EncryptionRepository interface {
 	DeleteConsumedPreKeys(ctx context.Context, olderThan time.Time) (int64, error)
 
 	HasActiveKeys(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID) (bool, error)
+
+	UpsertKeyBackup(ctx context.Context, backup *encryption.KeyBackup) error
+	GetKeyBackup(ctx context.Context, userID uuid.UUID) (encryption.KeyBackup, error)
 }
 
 type UploadRepository interface {

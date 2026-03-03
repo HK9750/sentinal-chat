@@ -134,3 +134,14 @@ func (s *EncryptionService) GetKeyBundle(ctx context.Context, userID uuid.UUID, 
 
 	return bundle, nil
 }
+
+// UpsertKeyBackup stores or updates an encrypted key backup for a user
+func (s *EncryptionService) UpsertKeyBackup(ctx context.Context, backup *encryption.KeyBackup) error {
+	return s.repo.UpsertKeyBackup(ctx, backup)
+}
+
+// GetKeyBackup retrieves the current key backup for a user
+func (s *EncryptionService) GetKeyBackup(ctx context.Context, userID uuid.UUID) (encryption.KeyBackup, error) {
+	return s.repo.GetKeyBackup(ctx, userID)
+}
+
