@@ -22,7 +22,7 @@ DROP INDEX IF EXISTS idx_sessions_user;
 DROP INDEX IF EXISTS idx_users_email;
 DROP INDEX IF EXISTS idx_users_username;
 DROP INDEX IF EXISTS idx_users_phone;
-DROP INDEX IF EXISTS idx_outbox_status
-DROP INDEX IF EXISTS idx_outbox_created_at
-DROP INDEX IF EXISTS idx_outbox_pending
-DROP INDEX IF EXISTS idx_outbox_aggregate
+DROP INDEX IF EXISTS idx_outbox_status;
+DROP INDEX IF EXISTS idx_outbox_created_at;
+DROP INDEX IF EXISTS idx_outbox_pending;
+DROP INDEX IF EXISTS idx_outbox_aggregate;

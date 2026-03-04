@@ -35,5 +35,5 @@ DROP TABLE IF EXISTS user_sessions;
 DROP TABLE IF EXISTS push_tokens;
 DROP TABLE IF EXISTS devices;
 DROP TABLE IF EXISTS user_settings;
-DROP TABLE IF EXISTS users;
 DROP TABLE IF EXISTS key_backups;
+DROP TABLE IF EXISTS users;

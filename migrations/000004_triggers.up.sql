@@ -45,10 +45,11 @@ BEGIN
 END;
 $$;
 
+DROP TRIGGER IF EXISTS update_key_backups_updated_at ON key_backups;
 CREATE TRIGGER update_key_backups_updated_at
     BEFORE UPDATE ON key_backups
     FOR EACH ROW
-    EXECUTE FUNCTION update_updated_at_column();
+    EXECUTE FUNCTION fn_update_timestamp();
 
 
 CREATE TRIGGER tr_conversations_dm_pair
