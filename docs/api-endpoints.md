@@ -1,112 +1,189 @@
 # API Endpoints
 
-This file defines the backend HTTP API surface that should exist for this project.
+This document is a cleaned-up API build plan based on what is actually present in this repository:
 
-It mixes three kinds of information:
+- SQL schema in `migrations/*.sql`
+- repository methods in `internal/repository/*.go`
+- middleware expectations in `internal/middleware/*.go`
+- server bootstrap in `internal/server/server.go`
 
-- `implemented`: already registered in Gin.
-- `repo-backed`: not wired yet, but strongly supported by current SQL schema and repository code.
-- `recommended`: needed to expose existing domain features cleanly, even when the exact path is not yet present in the repo.
+This file intentionally does not include encryption key endpoints or broadcast endpoints, because those tables and repositories do not exist in the current repo.
 
-## Global API conventions
+## 1. Scope of this file
 
-### Base URL
+This file covers only these backend areas:
 
-- Public API prefix: `/v1`
-- Health utilities stay at root:
-  - `/ping`
-  - `/health`
-  - `/goroutines`
+- utility routes
+- auth and sessions
+- users, contacts, devices, push tokens
+- conversations and participants
+- messages and message-related actions
+- attachments and uploads
+- polls
+- calls
+- commands
 
-### Response envelope
+Not included on purpose:
 
-Successful responses:
+- encryption key endpoints
+- broadcast list endpoints
+
+Reason:
+
+- there is no backing SQL schema for those areas in the current repository
+- there are no repositories for those areas in the current repository
+- documenting them here as real API work would be misleading
+
+## 2. Current backend reality
+
+### Actually implemented right now
+
+Only these routes are currently registered by the Gin server:
+
+- `GET /ping`
+- `GET /health`
+- `GET /goroutines`
+
+Everything else in this file is the API surface that should be built next because the schema and repositories already support it.
+
+## 3. Global API rules
+
+### Base path
+
+- application routes should live under `/v1`
+- diagnostic routes can remain at root
+
+### Success response shape
 
 ```json
-{"success": true, "data": {}}
+{
+  "success": true,
+  "data": {}
+}
 ```
 
-Error responses:
+### Error response shape
 
 ```json
-{"success": false, "error": "message", "code": "ERROR_CODE"}
+{
+  "success": false,
+  "error": "human readable message",
+  "code": "ERROR_CODE"
+}
 ```
 
-### Auth rules
+### Authentication
 
-- Use `Authorization: Bearer <access_token>` for authenticated endpoints.
-- Auth middleware stores these values in request context:
+- protected routes should use `Authorization: Bearer <access_token>`
+- auth middleware currently expects JWT parsing to provide:
   - `user_id`
   - `session_id`
   - `device_id`
-- Access tokens should carry:
-  - user id
-  - session id
-  - optional device id
 
-### Common parameter conventions
+### Common input rules
 
-- All ids are UUIDs.
-- Pagination should use:
-  - `page` default `1`
-  - `limit` default `20`, max `100`
-- Time values should be ISO-8601 UTC strings.
-- Nullable fields should be omitted or set to `null`.
+- all ids are UUID strings
+- timestamps should be ISO-8601 UTC strings
+- pagination should use `page` and `limit`
+- booleans should be explicit, not string values
+- nullable fields should be omitted or set to `null`
 
-### Useful status labels in this file
+### Common service rules
 
-- `implemented`: route exists now.
-- `repo-backed`: route is not registered but the repositories and tables exist.
-- `recommended`: route should be added for a complete product surface.
-- `documented-only`: route name appears in docs but there is no concrete backend support yet.
+For every write endpoint, the service layer should decide:
+
+- whether current user is allowed to perform the action
+- whether the target row exists
+- whether the request conflicts with unique constraints
+- whether an outbox event should be written in the same transaction
+- whether a command log should be written for undoable chat actions
 
 ---
 
-## 1. Utility Endpoints
+## 4. Utility Endpoints
 
-### GET `/ping`
+## 4.1 GET `/ping`
 
-- Status: `implemented`
-- Auth: no
-- Does:
-  - returns a simple liveliness response
-- Response:
-
-```json
-{"success": true, "data": {"message": "pong"}}
-```
-
-### GET `/health`
-
-- Status: `implemented`
-- Auth: no
-- Does:
-  - runs database health check
-  - returns `UNHEALTHY` when DB is unavailable
-- Response on success:
+- Current status: implemented
+- Auth required: no
+- Purpose:
+  - cheap liveness check
+  - useful for load balancers and smoke checks
+- Request body: none
+- Query params: none
+- Success response:
 
 ```json
-{"success": true, "data": {"status": "healthy"}}
+{
+  "success": true,
+  "data": {
+    "message": "pong"
+  }
+}
 ```
 
-### GET `/goroutines`
+## 4.2 GET `/health`
 
-- Status: `implemented`
-- Auth: no
-- Does:
-  - returns current Go runtime goroutine count
+- Current status: implemented
+- Auth required: no
+- Purpose:
+  - verifies database connectivity
+  - should be used for readiness monitoring
+- Request body: none
+- Query params: none
+- Success response:
+
+```json
+{
+  "success": true,
+  "data": {
+    "status": "healthy"
+  }
+}
+```
+
+- Failure response:
+
+```json
+{
+  "success": false,
+  "error": "database error text",
+  "code": "UNHEALTHY"
+}
+```
+
+## 4.3 GET `/goroutines`
+
+- Current status: implemented
+- Auth required: no
+- Purpose:
+  - runtime debugging
+  - returns current goroutine count
+- Success response example:
+
+```json
+{
+  "goroutines": 42
+}
+```
 
 ---
 
-## 2. Auth Endpoints
+## 5. Auth Endpoints
 
-These paths are explicitly documented in `README.md` and partially supported by middleware, config, sessions, devices, and users tables.
+These routes are necessary because the repo already has users, devices, sessions, JWT config, and auth middleware.
 
-### POST `/v1/auth/register`
+## 5.1 POST `/v1/auth/register`
 
-- Status: `repo-backed`
-- Auth: no
-- Request body:
+- Auth required: no
+- Rate limit: yes, IP-based
+- Main purpose:
+  - create a new user account
+  - optionally register the first device
+  - create the initial refresh session
+  - return login tokens
+
+### Request body
 
 ```json
 {
@@ -123,26 +200,65 @@ These paths are explicitly documented in `README.md` and partially supported by 
 }
 ```
 
-- Does:
-  - validates at least one unique login identifier: email, username, or phone number
-  - hashes password
-  - creates user row
-  - optionally creates device row
-  - creates refresh session row
-  - returns access token and refresh token
-- Writes:
-  - `users`
-  - `devices`
-  - `user_sessions`
-- Important constraints:
-  - `email`, `username`, and `phone_number` are case-insensitive unique fields via `CITEXT`
-  - `(user_id, device_id)` must be unique in `devices`
+### Field notes
 
-### POST `/v1/auth/login`
+- `display_name`: required
+- `email`: optional but recommended
+- `username`: optional but recommended
+- `phone_number`: optional
+- `password`: required; must be hashed before storing
+- `device`: optional, but useful for multi-device session tracking
 
-- Status: `repo-backed`
-- Auth: no
-- Request body:
+### Backend actions
+
+- validate uniqueness of `email`, `username`, and `phone_number`
+- hash the incoming password
+- create a row in `users`
+- if device payload is present, create a row in `devices`
+- create a row in `user_sessions` with hashed refresh token
+- return access token and refresh token
+
+### Tables touched
+
+- `users`
+- `devices`
+- `user_sessions`
+
+### Important DB constraints
+
+- `email`, `username`, and `phone_number` are `CITEXT UNIQUE`
+- uniqueness is case-insensitive
+- `(user_id, device_id)` in `devices` must be unique
+
+### Success response example
+
+```json
+{
+  "success": true,
+  "data": {
+    "user": {
+      "id": "uuid",
+      "display_name": "Hasnain",
+      "email": "hasnain@example.com",
+      "username": "hasnain",
+      "phone_number": "+923001112233"
+    },
+    "access_token": "jwt",
+    "refresh_token": "opaque-refresh-token"
+  }
+}
+```
+
+## 5.2 POST `/v1/auth/login`
+
+- Auth required: no
+- Rate limit: yes, IP-based
+- Main purpose:
+  - authenticate existing user
+  - create a new session
+  - update or create device info
+
+### Request body
 
 ```json
 {
@@ -156,125 +272,151 @@ These paths are explicitly documented in `README.md` and partially supported by 
 }
 ```
 
-- Does:
-  - resolves identifier against email, username, or phone number
-  - verifies password hash
-  - upserts or creates device record
-  - creates a new refresh session
-  - returns access and refresh tokens
-- Writes:
-  - `devices` or device last seen data
-  - `user_sessions`
-  - `users.last_seen_at` and online state if desired
+### Field notes
 
-### POST `/v1/auth/refresh`
+- `identifier` should accept email, username, or phone number
+- `device` should be used to map the login session to a physical or logical client
 
-- Status: `repo-backed`
-- Auth: no
-- Request body:
+### Backend actions
 
-```json
-{
-  "refresh_token": "opaque-token"
-}
-```
+- find user by identifier
+- verify password hash
+- if provided, add or update device information
+- create new refresh session
+- optionally update `users.last_seen_at`
+- optionally set `users.is_online = true`
 
-- Does:
-  - hashes incoming refresh token
-  - validates non-revoked, non-expired session
-  - rotates refresh token
-  - returns new access token and refresh token
-- Reads/Writes:
-  - `user_sessions`
+### Tables touched
 
-### POST `/v1/auth/logout`
+- `users`
+- `devices`
+- `user_sessions`
 
-- Status: `repo-backed`
-- Auth: yes
-- Request body:
+## 5.3 POST `/v1/auth/refresh`
+
+- Auth required: no
+- Rate limit: yes, IP-based
+- Main purpose:
+  - rotate access token and refresh token pair
+
+### Request body
 
 ```json
 {
-  "session_id": "uuid-optional-if-current-session-implicit"
+  "refresh_token": "opaque-refresh-token"
 }
 ```
 
-- Does:
-  - revokes current or specified session
-- Writes:
-  - `user_sessions.is_revoked = true`
+### Backend actions
 
-### POST `/v1/auth/logout-all`
+- hash refresh token
+- find matching valid session
+- ensure session is not revoked
+- ensure session is not expired
+- issue new access token
+- rotate refresh token hash in `user_sessions`
 
-- Status: `repo-backed`
-- Auth: yes
-- Does:
-  - revokes all sessions for current user
-- Writes:
-  - all matching `user_sessions`
+### Tables touched
 
-### GET `/v1/auth/sessions`
+- `user_sessions`
 
-- Status: `repo-backed`
-- Auth: yes
-- Does:
-  - returns active and historical sessions for current user
-  - should include related device info when available
-- Reads:
-  - `user_sessions`
-  - `devices`
+## 5.4 POST `/v1/auth/logout`
 
-### POST `/v1/auth/password/forgot`
+- Auth required: yes
+- Main purpose:
+  - revoke the current session or a specific session
 
-- Status: `documented-only`
-- Auth: no
-- Current repo support:
-  - no reset token table
-  - no mail/SMS delivery implementation
-- To make this real, add:
-  - password reset token storage
-  - expiry handling
-  - mail or SMS sender
-
-### POST `/v1/auth/password/reset`
-
-- Status: `documented-only`
-- Auth: no
-- Current repo support:
-  - no reset token schema
-- Needed request body:
+### Request body
 
 ```json
 {
-  "token": "reset-token",
-  "new_password": "new-plain-text-password"
+  "session_id": "uuid-optional"
 }
 ```
+
+### Behavior
+
+- if `session_id` is omitted, revoke current session from auth context
+- if `session_id` is provided, only revoke that session if it belongs to current user
+
+### Tables touched
+
+- `user_sessions`
+
+## 5.5 POST `/v1/auth/logout-all`
+
+- Auth required: yes
+- Main purpose:
+  - revoke every session of current user
+
+### Backend actions
+
+- set `is_revoked = true` for all rows in `user_sessions` for current user
+
+## 5.6 GET `/v1/auth/sessions`
+
+- Auth required: yes
+- Main purpose:
+  - list all sessions of current user
+  - include device information if available
+
+### Query params
+
+- none required
+
+### Response should include
+
+- session id
+- user id
+- device id
+- expiry time
+- revoked state
+- created time
+- optional device name and type
 
 ---
 
-## 3. User Endpoints
+## 6. User Endpoints
 
-`README.md` only documents the `/v1/users` prefix. The exact endpoints below are the cleanest mapping for the existing repositories.
+The repo has a strong user repository, so these should exist.
 
-### GET `/v1/users/me`
+## 6.1 GET `/v1/users/me`
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - returns current user profile
-- Reads:
-  - `users`
+- Auth required: yes
+- Main purpose:
+  - fetch current user's own profile
 
-### PUT `/v1/users/me`
+### Reads from
 
-- Status: `recommended`
-- Auth: yes
-- Request body:
+- `users`
+
+### Response fields
+
+- `id`
+- `phone_number`
+- `username`
+- `email`
+- `display_name`
+- `bio`
+- `avatar_url`
+- `is_online`
+- `last_seen_at`
+- `is_active`
+- `is_verified`
+- `created_at`
+- `updated_at`
+
+## 6.2 PUT `/v1/users/me`
+
+- Auth required: yes
+- Main purpose:
+  - update current user's profile
+
+### Request body
 
 ```json
 {
-  "display_name": "Hasnain",
+  "display_name": "Hasnain Ali",
   "bio": "Builder",
   "avatar_url": "https://cdn.example.com/avatar.jpg",
   "email": "hasnain@example.com",
@@ -283,43 +425,64 @@ These paths are explicitly documented in `README.md` and partially supported by 
 }
 ```
 
-- Does:
-  - updates editable profile fields
-- Writes:
-  - `users`
-- Important:
-  - unique identifier conflicts must return already exists error
+### Backend actions
 
-### GET `/v1/users/:id`
+- load current user
+- patch editable fields
+- enforce uniqueness for email, username, phone number
+- update row in `users`
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - returns another user profile for chat/search/contact flows
+## 6.3 GET `/v1/users/:id`
 
-### GET `/v1/users/search?q=...&page=1&limit=20`
+- Auth required: yes
+- Main purpose:
+  - fetch another user by id for contacts, DM creation, mentions, and participant rendering
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - searches by display name, username, or email
-- Reads:
-  - `users`
+## 6.4 GET `/v1/users/search?q=<term>&page=1&limit=20`
 
-### GET `/v1/users/contacts`
+- Auth required: yes
+- Main purpose:
+  - user discovery
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - returns current user's contact list
-- Reads:
-  - `user_contacts`
+### Search behavior from repository
 
-### POST `/v1/users/contacts`
+- matches against:
+  - `display_name`
+  - `username`
+  - `email`
 
-- Status: `recommended`
-- Auth: yes
-- Request body:
+### Response should include
+
+- result list
+- total count
+- page
+- limit
+
+## 6.5 GET `/v1/users/contacts`
+
+- Auth required: yes
+- Main purpose:
+  - list current user's contacts
+
+### Reads from
+
+- `user_contacts`
+
+### Suggested response fields
+
+- `contact_user_id`
+- `nickname`
+- `is_blocked`
+- `created_at`
+- joined profile summary for the contact user
+
+## 6.6 POST `/v1/users/contacts`
+
+- Auth required: yes
+- Main purpose:
+  - add a user as contact
+
+### Request body
 
 ```json
 {
@@ -328,45 +491,47 @@ These paths are explicitly documented in `README.md` and partially supported by 
 }
 ```
 
-- Does:
-  - creates a contact relation
-- Writes:
-  - `user_contacts`
+### Backend actions
 
-### DELETE `/v1/users/contacts/:contact_user_id`
+- verify target user exists
+- insert into `user_contacts`
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - removes a contact relation
+## 6.7 DELETE `/v1/users/contacts/:contact_user_id`
 
-### POST `/v1/users/contacts/:contact_user_id/block`
+- Auth required: yes
+- Main purpose:
+  - remove a contact entry
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - sets `is_blocked = true`
-  - creates contact row first if it does not exist
+## 6.8 POST `/v1/users/contacts/:contact_user_id/block`
 
-### POST `/v1/users/contacts/:contact_user_id/unblock`
+- Auth required: yes
+- Main purpose:
+  - block a contact
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - sets `is_blocked = false`
+### Backend behavior from repository
 
-### GET `/v1/users/contacts/blocked`
+- if contact row exists, set `is_blocked = true`
+- if contact row does not exist, create it as blocked
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - lists blocked contacts
+## 6.9 POST `/v1/users/contacts/:contact_user_id/unblock`
 
-### POST `/v1/users/devices`
+- Auth required: yes
+- Main purpose:
+  - unblock a contact
 
-- Status: `recommended`
-- Auth: yes
-- Request body:
+## 6.10 GET `/v1/users/contacts/blocked`
+
+- Auth required: yes
+- Main purpose:
+  - list blocked contacts only
+
+## 6.11 POST `/v1/users/devices`
+
+- Auth required: yes
+- Main purpose:
+  - register a device for current user
+
+### Request body
 
 ```json
 {
@@ -376,32 +541,39 @@ These paths are explicitly documented in `README.md` and partially supported by 
 }
 ```
 
-- Does:
-  - registers a device for the current user
-- Writes:
-  - `devices`
+### Backend actions
 
-### GET `/v1/users/devices`
+- create device row
+- set `is_active = true`
+- set `registered_at`
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - returns active and inactive devices for current user
+### Tables touched
 
-### DELETE `/v1/users/devices/:device_uuid`
+- `devices`
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - deactivates a device
-- Writes:
-  - `devices.is_active = false`
+## 6.12 GET `/v1/users/devices`
 
-### POST `/v1/users/devices/:device_uuid/fcm-tokens`
+- Auth required: yes
+- Main purpose:
+  - list all devices for current user
 
-- Status: `recommended`
-- Auth: yes
-- Request body:
+## 6.13 DELETE `/v1/users/devices/:device_uuid`
+
+- Auth required: yes
+- Main purpose:
+  - deactivate a device instead of physically deleting it
+
+### Backend behavior
+
+- set `devices.is_active = false`
+
+## 6.14 POST `/v1/users/devices/:device_uuid/push-tokens`
+
+- Auth required: yes
+- Main purpose:
+  - attach an FCM token to a device
+
+### Request body
 
 ```json
 {
@@ -410,49 +582,35 @@ These paths are explicitly documented in `README.md` and partially supported by 
 }
 ```
 
-- Does:
-  - attaches an FCM token to a device
-- Writes:
-  - `fcm_tokens`
+### Tables touched
 
-### GET `/v1/users/fcm-tokens`
+- `fcm_tokens`
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - lists push tokens for the current user
+## 6.15 GET `/v1/users/push-tokens`
 
-### DELETE `/v1/users/fcm-tokens/:token_id`
+- Auth required: yes
+- Main purpose:
+  - list push tokens for current user
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - deactivates an FCM token
+## 6.16 DELETE `/v1/users/push-tokens/:token_id`
+
+- Auth required: yes
+- Main purpose:
+  - deactivate a push token
 
 ---
 
-## 4. Conversation Endpoints
+## 7. Conversation Endpoints
 
-Most of these are explicitly listed in `README.md` and map well to repository methods.
+The conversation repository and schema are strong enough that this should be one of the first major handler sets you build.
 
-### POST `/v1/conversations`
+## 7.1 POST `/v1/conversations`
 
-- Status: `repo-backed`
-- Auth: yes
-- Request body for group:
+- Auth required: yes
+- Main purpose:
+  - create a DM or group conversation
 
-```json
-{
-  "type": "GROUP",
-  "subject": "Core Team",
-  "description": "Planning room",
-  "avatar_url": "https://cdn.example.com/group.png",
-  "disappearing_mode": "OFF",
-  "participant_ids": ["uuid-1", "uuid-2"]
-}
-```
-
-- Request body for DM:
+### Request body for DM
 
 ```json
 {
@@ -461,39 +619,89 @@ Most of these are explicitly listed in `README.md` and map well to repository me
 }
 ```
 
-- Does:
-  - creates conversation row
-  - creates participant rows
-  - for DM, stores normalized pair in `dm_user_id_a` and `dm_user_id_b`
-  - should reject DM creation with more than one other user
-- Writes:
-  - `conversations`
-  - `participants`
-- Important:
-  - DM uniqueness is enforced by partial unique index on normalized pair
+### Request body for group
 
-### GET `/v1/conversations?page=1&limit=20`
+```json
+{
+  "type": "GROUP",
+  "subject": "Core Team",
+  "description": "Planning room",
+  "avatar_url": "https://cdn.example.com/group.png",
+  "disappearing_mode": "OFF",
+  "participant_ids": ["uuid-1", "uuid-2", "uuid-3"]
+}
+```
 
-- Status: `repo-backed`
-- Auth: yes
-- Does:
-  - returns conversations for current user
-  - sorts by latest message time if present, otherwise conversation creation time
-  - includes participants
+### Important fields
 
-### GET `/v1/conversations/:id`
+- `type`: must be `DM` or `GROUP`
+- `subject`: mainly for groups
+- `description`: mainly for groups
+- `avatar_url`: optional
+- `disappearing_mode`: one of:
+  - `OFF`
+  - `24_HOURS`
+  - `7_DAYS`
+  - `90_DAYS`
+- `participant_ids`: target user ids to include in the conversation
 
-- Status: `repo-backed`
-- Auth: yes
-- Does:
-  - returns conversation and participants
-  - should require current user to be a participant
+### Backend actions
 
-### PUT `/v1/conversations/:id`
+- create row in `conversations`
+- for DM:
+  - set `dm_user_id_a` and `dm_user_id_b`
+  - DB trigger normalizes pair ordering automatically
+  - DB unique index prevents duplicate DM per user pair
+- insert creator and target users into `participants`
+- optionally create initial outbox event such as `conversation:created`
 
-- Status: `repo-backed`
-- Auth: yes
-- Request body:
+### Tables touched
+
+- `conversations`
+- `participants`
+
+### Important DB behavior
+
+- DM pair normalization is enforced by trigger
+- duplicate DM pairs are prevented by unique partial index
+
+## 7.2 GET `/v1/conversations?page=1&limit=20`
+
+- Auth required: yes
+- Main purpose:
+  - list all conversations of current user
+
+### Backend behavior from repository
+
+- fetches conversations where current user exists in `participants`
+- computes `last_message_at` using a subquery against `messages`
+- sorts by latest message activity first
+- loads participant list for each conversation
+
+### Response should include
+
+- conversation metadata
+- participant summaries
+- last message time
+- pagination info
+
+## 7.3 GET `/v1/conversations/:id`
+
+- Auth required: yes
+- Main purpose:
+  - fetch one conversation with participant list
+
+### Important service rule
+
+- before returning, verify current user is a participant
+
+## 7.4 PUT `/v1/conversations/:id`
+
+- Auth required: yes
+- Main purpose:
+  - update conversation metadata
+
+### Request body
 
 ```json
 {
@@ -504,73 +712,94 @@ Most of these are explicitly listed in `README.md` and map well to repository me
 }
 ```
 
-- Does:
-  - updates mutable conversation metadata
+### Backend actions
 
-### DELETE `/v1/conversations/:id`
+- load conversation
+- patch mutable fields
+- update row
+- optionally create outbox event
 
-- Status: `repo-backed`
-- Auth: yes
-- Does:
-  - deletes conversation row
-  - cascades to related rows via FK rules
-- Important:
-  - use carefully; many chat products prefer soft-delete or leave semantics instead
+## 7.5 DELETE `/v1/conversations/:id`
 
-### GET `/v1/conversations/direct?user_id=<uuid>`
+- Auth required: yes
+- Main purpose:
+  - permanently delete a conversation
 
-- Status: `repo-backed`
-- Auth: yes
-- Does:
-  - returns existing DM for current user and target user
+### Important note
 
-### GET `/v1/conversations/search?q=...`
+- current schema uses hard delete here
+- related rows cascade because of foreign keys
+- in many chat products this should be restricted or replaced with leave/archive behavior
 
-- Status: `repo-backed`
-- Auth: yes
-- Does:
-  - searches current user's conversations by subject
-- Limitation:
-  - only group subject search makes sense; DMs have no subject by default
+## 7.6 GET `/v1/conversations/direct?user_id=<uuid>`
 
-### GET `/v1/conversations/type?type=DM|GROUP`
+- Auth required: yes
+- Main purpose:
+  - fetch the DM shared by current user and another user
 
-- Status: `repo-backed`
-- Auth: yes
-- Does:
-  - filters current user's conversations by type
+### Backend behavior
 
-### GET `/v1/conversations/invite?link=<invite_link>`
+- repository queries the normalized DM pair directly
 
-- Status: `repo-backed`
-- Auth: yes
-- Does:
-  - resolves invite link to a conversation
-  - only works while `invite_link_revoked_at` is null or in the future
+## 7.7 GET `/v1/conversations/search?q=<text>`
 
-### POST `/v1/conversations/:id/invite`
+- Auth required: yes
+- Main purpose:
+  - search current user's conversations by subject
 
-- Status: `repo-backed`
-- Auth: yes
-- Does:
-  - regenerates invite link
-  - clears revocation timestamp
-- Response:
+### Important limitation
+
+- current repository search only matches `subject`
+- that means this endpoint is mostly useful for group conversations
+
+## 7.8 GET `/v1/conversations/type?type=DM|GROUP`
+
+- Auth required: yes
+- Main purpose:
+  - filter conversations by type
+
+## 7.9 GET `/v1/conversations/invite?link=<invite_link>`
+
+- Auth required: yes
+- Main purpose:
+  - resolve an invite link to a conversation
+
+### Backend behavior
+
+- repository only returns rows where:
+  - `invite_link = provided_link`
+  - and `invite_link_revoked_at IS NULL OR invite_link_revoked_at > NOW()`
+
+## 7.10 POST `/v1/conversations/:id/invite`
+
+- Auth required: yes
+- Main purpose:
+  - regenerate invite link
+
+### Backend actions
+
+- generate new UUID string as invite link
+- set `invite_link`
+- clear `invite_link_revoked_at`
+
+### Response example
 
 ```json
 {
   "success": true,
   "data": {
-    "invite_link": "uuid-string"
+    "invite_link": "new-uuid-link"
   }
 }
 ```
 
-### POST `/v1/conversations/:id/participants`
+## 7.11 POST `/v1/conversations/:id/participants`
 
-- Status: `repo-backed`
-- Auth: yes
-- Request body:
+- Auth required: yes
+- Main purpose:
+  - add user to conversation
+
+### Request body
 
 ```json
 {
@@ -579,31 +808,38 @@ Most of these are explicitly listed in `README.md` and map well to repository me
 }
 ```
 
-- Does:
-  - adds participant
-  - should verify role permissions in service layer
-- Writes:
-  - `participants`
+### Backend actions
 
-### DELETE `/v1/conversations/:id/participants/:user_id`
+- verify current user has permission to add participants
+- verify target user exists
+- insert into `participants`
 
-- Status: `repo-backed`
-- Auth: yes
-- Does:
-  - removes participant from conversation
+## 7.12 DELETE `/v1/conversations/:id/participants/:user_id`
 
-### GET `/v1/conversations/:id/participants`
+- Auth required: yes
+- Main purpose:
+  - remove a participant from conversation
 
-- Status: `repo-backed`
-- Auth: yes
-- Does:
-  - returns participant list with joined user fields
+## 7.13 GET `/v1/conversations/:id/participants`
 
-### PUT `/v1/conversations/:id/participants/:user_id/role`
+- Auth required: yes
+- Main purpose:
+  - list participants
 
-- Status: `repo-backed`
-- Auth: yes
-- Request body:
+### Joined profile fields already available from repository
+
+- `display_name`
+- `username`
+- `avatar_url`
+- `is_online`
+
+## 7.14 PUT `/v1/conversations/:id/participants/:user_id/role`
+
+- Auth required: yes
+- Main purpose:
+  - change participant role
+
+### Request body
 
 ```json
 {
@@ -611,14 +847,13 @@ Most of these are explicitly listed in `README.md` and map well to repository me
 }
 ```
 
-- Does:
-  - changes participant role
+## 7.15 POST `/v1/conversations/:id/mute`
 
-### POST `/v1/conversations/:id/mute`
+- Auth required: yes
+- Main purpose:
+  - mute a conversation for current user
 
-- Status: `repo-backed`
-- Auth: yes
-- Request body:
+### Request body
 
 ```json
 {
@@ -626,35 +861,39 @@ Most of these are explicitly listed in `README.md` and map well to repository me
 }
 ```
 
-- Does:
-  - sets `participants.muted_until`
+### Backend behavior
 
-### POST `/v1/conversations/:id/unmute`
+- update `participants.muted_until`
 
-- Status: `repo-backed`
-- Auth: yes
-- Does:
-  - clears `participants.muted_until`
+## 7.16 POST `/v1/conversations/:id/unmute`
 
-### POST `/v1/conversations/:id/archive`
+- Auth required: yes
+- Main purpose:
+  - clear mute state for current user
 
-- Status: `repo-backed`
-- Auth: yes
-- Does:
-  - sets `participants.archived = true`
+## 7.17 POST `/v1/conversations/:id/archive`
 
-### POST `/v1/conversations/:id/unarchive`
+- Auth required: yes
+- Main purpose:
+  - archive conversation for current user only
 
-- Status: `repo-backed`
-- Auth: yes
-- Does:
-  - sets `participants.archived = false`
+### Backend behavior
 
-### POST `/v1/conversations/:id/read-sequence`
+- update `participants.archived = true`
 
-- Status: `repo-backed`
-- Auth: yes
-- Request body:
+## 7.18 POST `/v1/conversations/:id/unarchive`
+
+- Auth required: yes
+- Main purpose:
+  - unarchive conversation for current user only
+
+## 7.19 POST `/v1/conversations/:id/read-sequence`
+
+- Auth required: yes
+- Main purpose:
+  - update current user's highest read sequence
+
+### Request body
 
 ```json
 {
@@ -662,59 +901,47 @@ Most of these are explicitly listed in `README.md` and map well to repository me
 }
 ```
 
-- Does:
-  - updates `participants.last_read_sequence`
-  - should also emit read events through outbox/websocket
+### Backend behavior
 
-### GET `/v1/conversations/:id/sequence`
+- update `participants.last_read_sequence`
+- should also emit realtime read progress event
 
-- Status: `repo-backed`
-- Auth: yes
-- Does:
-  - returns current conversation sequence counter
+## 7.20 GET `/v1/conversations/:id/sequence`
 
-### POST `/v1/conversations/:id/sequence`
+- Auth required: yes
+- Main purpose:
+  - get conversation sequence state from `conversation_sequences`
 
-- Status: `repo-backed`
-- Auth: yes
-- Does:
-  - increments sequence manually
-- Note:
-  - this route is probably only useful internally; message insert trigger already manages sequence assignment
+## 7.21 POST `/v1/conversations/:id/clear`
 
-### POST `/v1/conversations/:id/clear`
+- Auth required: yes
+- Main purpose:
+  - clear chat history for the current user without deleting global messages
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - sets or updates `conversation_clears.cleared_at` for current user
-  - hides older messages client-side without deleting them globally
-- Writes:
-  - `conversation_clears`
+### Backend behavior from repository
 
-### POST `/v1/conversations/:id/pin`
+- upsert row in `conversation_clears`
+- update `cleared_at = NOW()` on repeat clears
 
-- Status: `documented-only`
-- Reality check:
-  - the repo does not support conversation pinning
-  - current pinning support is for messages, not conversations
-- Recommendation:
-  - remove this route from docs unless a `pinned_conversations` table is added
+### Why this endpoint matters
 
-### POST `/v1/conversations/:id/unpin`
-
-- Status: `documented-only`
-- Same note as above.
+- schema already supports per-user clear chat
+- SQL comments mention `CLEAR_CHAT` as a command type
 
 ---
 
-## 5. Message Endpoints
+## 8. Message Endpoints
 
-### POST `/v1/messages`
+Messages are the most important API area in the project.
 
-- Status: `repo-backed`
-- Auth: yes
-- Request body:
+## 8.1 POST `/v1/messages`
+
+- Auth required: yes
+- Rate limit: yes, user-based
+- Main purpose:
+  - create a message inside a conversation
+
+### Request body
 
 ```json
 {
@@ -726,56 +953,97 @@ Most of these are explicitly listed in `README.md` and map well to repository me
   "reply_to_msg_id": null,
   "expires_at": null,
   "mentions": [
-    {"user_id": "uuid", "offset": 0, "length": 8}
+    {
+      "user_id": "uuid",
+      "offset": 0,
+      "length": 8
+    }
   ],
-  "attachments": [
-    {"attachment_id": "uuid"}
-  ],
+  "attachment_ids": ["uuid-1", "uuid-2"],
   "poll": null
 }
 ```
 
-- Does:
-  - creates message row
-  - database trigger assigns `seq_id`
-  - optionally links attachments
-  - optionally creates mentions
-  - optionally creates poll and poll options
-  - should create outbox event for realtime fan-out
-- Writes:
-  - `messages`
-  - `message_mentions`
-  - `message_attachments`
-  - `polls`
-  - `poll_options`
-  - `outbox_events`
-- Important constraints:
-  - unique per conversation by `(conversation_id, client_message_id)`
-  - search is not possible server-side because payload is encrypted
+### Important fields
 
-### GET `/v1/messages?conversation_id=<uuid>&before_seq=<n>&limit=50`
+- `conversation_id`: required
+- `client_message_id`: optional but strongly recommended for idempotency
+- `type`: one of:
+  - `TEXT`
+  - `IMAGE`
+  - `VIDEO`
+  - `AUDIO`
+  - `FILE`
+  - `GIF`
+  - `EMOJI`
+  - `POLL`
+  - `SYSTEM`
+- `encrypted_content`: opaque encrypted payload stored by server as text
+- `reply_to_msg_id`: optional reply link
+- `expires_at`: optional disappearing message deadline
+- `mentions`: optional mention metadata
+- `attachment_ids`: optional pre-created attachments
+- `poll`: optional poll definition if `type = POLL`
 
-- Status: `repo-backed`
-- Auth: yes
-- Does:
-  - returns non-deleted messages for a conversation
-  - paginates backward by sequence id
-  - sorts descending by `seq_id`
+### Backend actions
 
-### GET `/v1/messages/:id`
+- verify current user is participant in conversation
+- insert message row
+- let DB trigger assign `seq_id`
+- add mentions if provided
+- link attachments if provided
+- create poll and poll options if needed
+- create outbox event for fan-out
 
-- Status: `repo-backed`
-- Auth: yes
-- Does:
-  - fetches one message by id
-- Limitation:
-  - README already notes full message detail flows may be limited for E2EE product needs
+### Tables touched
 
-### PUT `/v1/messages/:id`
+- `messages`
+- `message_mentions`
+- `message_attachments`
+- `polls`
+- `poll_options`
+- `outbox_events`
 
-- Status: `repo-backed`
-- Auth: yes
-- Request body:
+### Important DB constraints
+
+- `(conversation_id, client_message_id)` must be unique
+- `seq_id` is assigned by DB trigger, not by handler logic
+
+## 8.2 GET `/v1/messages?conversation_id=<uuid>&before_seq=<n>&limit=50`
+
+- Auth required: yes
+- Main purpose:
+  - load message history for a conversation
+
+### Query params
+
+- `conversation_id`: required
+- `before_seq`: optional; if present, load older messages only
+- `limit`: required or defaulted by server
+
+### Backend behavior from repository
+
+- only returns messages with `deleted_at IS NULL`
+- sorts by `seq_id DESC`
+
+## 8.3 GET `/v1/messages/:id`
+
+- Auth required: yes
+- Main purpose:
+  - fetch one message by id
+
+### Note
+
+- repo supports this cleanly
+- product response should likely include attachments, mentions, receipts, and reactions by composition in service layer
+
+## 8.4 PUT `/v1/messages/:id`
+
+- Auth required: yes
+- Main purpose:
+  - edit a message
+
+### Request body
 
 ```json
 {
@@ -784,72 +1052,117 @@ Most of these are explicitly listed in `README.md` and map well to repository me
 }
 ```
 
-- Does:
-  - updates message row
-  - should create a `message_edits` history row first
-  - should mark `edited_at`
-  - should log an `EDIT_MESSAGE` command
-  - should create outbox event
+### Backend actions that should happen together
 
-### DELETE `/v1/messages/:id`
+- verify current user is allowed to edit the message
+- create row in `message_edits` holding previous encrypted content
+- update `messages.encrypted_content`
+- update `messages.edited_at`
+- create command log for `EDIT_MESSAGE`
+- create outbox event
 
-- Status: `repo-backed`
-- Auth: yes
-- Does:
-  - soft deletes message by setting `deleted_at`
-  - should log a `DELETE_MESSAGE` command
-  - should create outbox event
+## 8.5 DELETE `/v1/messages/:id`
 
-### DELETE `/v1/messages/:id/hard`
+- Auth required: yes
+- Main purpose:
+  - soft delete a message
 
-- Status: `repo-backed`
-- Auth: yes
-- Does:
-  - permanently deletes message row
-  - cascades dependent rows
-- Recommendation:
-  - keep admin-only or internal only
+### Backend behavior
 
-### POST `/v1/messages/:id/read`
+- update `messages.deleted_at = now`
+- create command log for `DELETE_MESSAGE`
+- create outbox event
 
-- Status: `repo-backed`
-- Auth: yes
-- Does:
-  - marks or creates read receipt for current user
-  - should also update conversation `last_read_sequence`
-  - should emit outbox event
-- Writes:
-  - `message_receipts`
-  - optionally `participants.last_read_sequence`
+## 8.6 DELETE `/v1/messages/:id/hard`
 
-### POST `/v1/messages/:id/delivered`
+- Auth required: yes
+- Main purpose:
+  - permanently delete a message row
 
-- Status: `repo-backed`
-- Auth: yes
-- Does:
-  - marks or creates delivered receipt for current user
-  - should emit outbox event
+### Important note
 
-### POST `/v1/messages/:id/played`
+- should probably be restricted to admins, system tasks, or moderation flows
+- hard delete removes auditability compared to soft delete
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - updates played timestamp for audio/video messages
-- Writes:
-  - `message_receipts.played_at`
+## 8.7 POST `/v1/messages/:id/delivered`
+
+- Auth required: yes
+- Main purpose:
+  - mark message delivered for current user
+
+### Backend behavior from repository
+
+- if receipt exists, update it to `DELIVERED`
+- if receipt does not exist, create it
+
+### Tables touched
+
+- `message_receipts`
+
+## 8.8 POST `/v1/messages/:id/read`
+
+- Auth required: yes
+- Main purpose:
+  - mark message read for current user
+
+### Backend behavior from repository
+
+- if receipt exists, update it to `READ`
+- if receipt does not exist, create it
+- service should also consider updating `participants.last_read_sequence`
+
+## 8.9 POST `/v1/messages/:id/played`
+
+- Auth required: yes
+- Main purpose:
+  - mark media message as played
+
+### Why include this endpoint
+
+- repository already supports `MarkAsPlayed`
+- schema already supports `PLAYED` in delivery lifecycle
+
+## 8.10 POST `/v1/messages/bulk-delivered`
+
+- Auth required: yes
+- Main purpose:
+  - bulk delivery acknowledgement for mobile sync or reconnect flows
+
+### Request body
+
+```json
+{
+  "message_ids": ["uuid-1", "uuid-2", "uuid-3"]
+}
+```
+
+## 8.11 POST `/v1/messages/bulk-read`
+
+- Auth required: yes
+- Main purpose:
+  - bulk read acknowledgement for current user
+
+### Request body
+
+```json
+{
+  "message_ids": ["uuid-1", "uuid-2", "uuid-3"]
+}
+```
 
 ---
 
-## 6. Message Feature Endpoints
+## 9. Message Feature Endpoints
 
-These are not all listed in `README.md`, but the repository layer clearly supports them.
+These are all backed by existing schema and repository methods.
 
-### POST `/v1/messages/:id/reactions`
+## 9.1 POST `/v1/messages/:id/reactions`
 
-- Status: `recommended`
-- Auth: yes
-- Request body:
+- Auth required: yes
+- Main purpose:
+  - add reaction to a message
+
+### Request body
 
 ```json
 {
@@ -857,53 +1170,53 @@ These are not all listed in `README.md`, but the repository layer clearly suppor
 }
 ```
 
-- Does:
-  - creates reaction row
-  - should log `REACT_MESSAGE` command
-  - should create outbox event
+### Backend actions
 
-### DELETE `/v1/messages/:id/reactions/:reaction_code`
+- create row in `message_reactions`
+- optionally create command log for `REACT_MESSAGE`
+- create outbox event for realtime fan-out
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - removes current user's reaction
+## 9.2 DELETE `/v1/messages/:id/reactions/:reaction_code`
 
-### GET `/v1/messages/:id/reactions`
+- Auth required: yes
+- Main purpose:
+  - remove current user's reaction from a message
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - returns all reactions for one message
+## 9.3 GET `/v1/messages/:id/reactions`
 
-### POST `/v1/messages/:id/star`
+- Auth required: yes
+- Main purpose:
+  - list all reactions for a message
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - stars message for current user
-- Writes:
-  - `starred_messages`
+## 9.4 POST `/v1/messages/:id/star`
 
-### DELETE `/v1/messages/:id/star`
+- Auth required: yes
+- Main purpose:
+  - star a message for the current user
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - unstars message for current user
+### Tables touched
 
-### GET `/v1/messages/starred?page=1&limit=20`
+- `starred_messages`
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - lists current user's starred messages
+## 9.5 DELETE `/v1/messages/:id/star`
 
-### POST `/v1/messages/:id/pin`
+- Auth required: yes
+- Main purpose:
+  - remove star from a message for the current user
 
-- Status: `recommended`
-- Auth: yes
-- Request body:
+## 9.6 GET `/v1/messages/starred?page=1&limit=20`
+
+- Auth required: yes
+- Main purpose:
+  - list current user's starred messages
+
+## 9.7 POST `/v1/messages/:id/pin`
+
+- Auth required: yes
+- Main purpose:
+  - pin a message inside a conversation
+
+### Request body
 
 ```json
 {
@@ -911,80 +1224,80 @@ These are not all listed in `README.md`, but the repository layer clearly suppor
 }
 ```
 
-- Does:
-  - pins message in a conversation
-  - should log `PIN_MESSAGE` command
-  - should create outbox event
+### Backend actions
 
-### DELETE `/v1/messages/:id/pin?conversation_id=<uuid>`
+- insert into `pinned_messages`
+- create command log for `PIN_MESSAGE`
+- create outbox event
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - unpins message in a conversation
-  - should log `UNPIN_MESSAGE` command
-  - should create outbox event
+## 9.8 DELETE `/v1/messages/:id/pin?conversation_id=<uuid>`
 
-### GET `/v1/conversations/:id/pinned-messages`
+- Auth required: yes
+- Main purpose:
+  - unpin a message from a conversation
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - lists pinned messages for a conversation
+### Backend actions
 
-### GET `/v1/messages/:id/edits`
+- delete from `pinned_messages`
+- create command log for `UNPIN_MESSAGE`
+- create outbox event
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - returns edit history rows
+## 9.9 GET `/v1/conversations/:id/pinned-messages`
 
-### GET `/v1/messages/:id/receipts`
+- Auth required: yes
+- Main purpose:
+  - list pinned messages for one conversation
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - returns all receipts for a message
+## 9.10 GET `/v1/messages/:id/edits`
 
-### GET `/v1/users/me/mentions?page=1&limit=20`
+- Auth required: yes
+- Main purpose:
+  - list edit history of a message
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - returns messages that mention current user
+## 9.11 GET `/v1/messages/:id/receipts`
 
-### GET `/v1/conversations/:id/messages/by-type?type=IMAGE&limit=50`
+- Auth required: yes
+- Main purpose:
+  - list receipt rows for a message
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - returns recent messages of a given message type
+## 9.12 GET `/v1/users/me/mentions?page=1&limit=20`
 
-### GET `/v1/conversations/:id/messages/range?start_seq=1&end_seq=100`
+- Auth required: yes
+- Main purpose:
+  - list messages where current user was mentioned
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - returns messages in an inclusive sequence window
+## 9.13 GET `/v1/conversations/:id/messages/by-type?type=IMAGE&limit=50`
 
-### GET `/v1/conversations/:id/messages/unread`
+- Auth required: yes
+- Main purpose:
+  - filter recent messages in one conversation by type
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - returns unread messages for current user in a conversation
+## 9.14 GET `/v1/conversations/:id/messages/range?start_seq=1&end_seq=100`
+
+- Auth required: yes
+- Main purpose:
+  - fetch an inclusive sequence range
+
+## 9.15 GET `/v1/conversations/:id/messages/unread`
+
+- Auth required: yes
+- Main purpose:
+  - fetch unread messages for current user in a conversation
 
 ---
 
-## 7. Attachment and Upload Endpoints
+## 10. Attachment and Upload Endpoints
 
-The schema supports both attachment metadata and upload sessions. S3 presign helper also exists.
+The repo already supports upload sessions, attachment metadata, and an S3 presign helper.
 
-### POST `/v1/uploads`
+## 10.1 POST `/v1/uploads`
 
-- Status: `recommended`
-- Auth: yes
-- Request body:
+- Auth required: yes
+- Main purpose:
+  - create an upload session
+  - return upload target details
+
+### Request body
 
 ```json
 {
@@ -995,26 +1308,50 @@ The schema supports both attachment metadata and upload sessions. S3 presign hel
 }
 ```
 
-- Does:
-  - validates file size limit (`<= 15 MB`)
-  - creates upload session
-  - generates object key
-  - returns presigned upload URL and required headers
-- Writes:
-  - `upload_sessions`
+### Backend actions
 
-### GET `/v1/uploads/:id`
+- validate `size_bytes <= 15728640`
+- create object key
+- create row in `upload_sessions`
+- generate presigned PUT URL using S3 helper
 
-- Status: `repo-backed`
-- Auth: yes
-- Does:
-  - returns upload session by id
+### Tables touched
 
-### PATCH `/v1/uploads/:id/progress`
+- `upload_sessions`
 
-- Status: `recommended`
-- Auth: yes
-- Request body:
+### Success response should include
+
+- upload session id
+- object key
+- presigned url
+- required headers
+- current status
+
+## 10.2 GET `/v1/uploads/:id`
+
+- Auth required: yes
+- Main purpose:
+  - fetch upload session by id
+
+## 10.3 GET `/v1/uploads?status=IN_PROGRESS|COMPLETED&page=1&limit=20`
+
+- Auth required: yes
+- Main purpose:
+  - list current user's uploads
+
+### Suggested service behavior
+
+- if no status filter, return all uploads
+- if `status = IN_PROGRESS`, use in-progress repository method
+- if `status = COMPLETED`, use paginated completed repository method
+
+## 10.4 PATCH `/v1/uploads/:id/progress`
+
+- Auth required: yes
+- Main purpose:
+  - update uploaded byte count
+
+### Request body
 
 ```json
 {
@@ -1022,42 +1359,33 @@ The schema supports both attachment metadata and upload sessions. S3 presign hel
 }
 ```
 
-- Does:
-  - updates progress counter
+## 10.5 POST `/v1/uploads/:id/complete`
 
-### POST `/v1/uploads/:id/complete`
+- Auth required: yes
+- Main purpose:
+  - mark upload as completed
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - marks upload completed
-  - sets uploaded bytes to full size
-  - sets completion timestamp
+### Backend behavior from repository
 
-### POST `/v1/uploads/:id/fail`
+- sets:
+  - `status = COMPLETED`
+  - `uploaded_bytes = size_bytes`
+  - `completed_at = now`
+  - `updated_at = now`
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - marks upload failed
+## 10.6 POST `/v1/uploads/:id/fail`
 
-### GET `/v1/uploads`
+- Auth required: yes
+- Main purpose:
+  - mark upload as failed
 
-- Status: `recommended`
-- Auth: yes
-- Query options:
-  - `status=IN_PROGRESS`
-  - `status=COMPLETED`
-  - `page`
-  - `limit`
-- Does:
-  - returns current user's upload sessions
+## 10.7 POST `/v1/attachments`
 
-### POST `/v1/attachments`
+- Auth required: yes
+- Main purpose:
+  - create attachment metadata after or during upload completion
 
-- Status: `recommended`
-- Auth: yes
-- Request body:
+### Request body
 
 ```json
 {
@@ -1073,35 +1401,46 @@ The schema supports both attachment metadata and upload sessions. S3 presign hel
 }
 ```
 
-- Does:
-  - stores attachment metadata after successful upload
-- Writes:
-  - `attachments`
+### Important DB constraint
 
-### GET `/v1/attachments/:id`
+- attachment size must be `<= 15 MB`
 
-- Status: `repo-backed`
-- Auth: yes
-- Does:
-  - returns attachment metadata
+## 10.8 GET `/v1/attachments/:id`
 
-### POST `/v1/attachments/:id/viewed`
+- Auth required: yes
+- Main purpose:
+  - fetch one attachment metadata row
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - marks a view-once attachment as viewed
-  - DB trigger then redacts `encrypted_url`
+## 10.9 POST `/v1/attachments/:id/viewed`
+
+- Auth required: yes
+- Main purpose:
+  - mark a view-once attachment as viewed
+
+### Important DB behavior
+
+- when `view_once = true` and `viewed_at` gets set, DB trigger clears `encrypted_url`
+
+## 10.10 GET `/v1/messages/:id/attachments`
+
+- Auth required: yes
+- Main purpose:
+  - list attachments linked to a message
 
 ---
 
-## 8. Poll Endpoints
+## 11. Poll Endpoints
 
-### POST `/v1/polls`
+The poll schema exists and is message-linked.
 
-- Status: `recommended`
-- Auth: yes
-- Request body:
+## 11.1 POST `/v1/polls`
+
+- Auth required: yes
+- Main purpose:
+  - create a poll and options
+  - usually as part of message creation flow
+
+### Request body
 
 ```json
 {
@@ -1116,29 +1455,30 @@ The schema supports both attachment metadata and upload sessions. S3 presign hel
 }
 ```
 
-- Does:
-  - creates poll and poll options
-  - typically should be called as part of `POST /v1/messages` for `type = POLL`
+### Important application rule
 
-### GET `/v1/polls/:id`
+- DB does not enforce single-choice voting across whole poll
+- service layer must enforce it when `allows_multiple = false`
 
-- Status: `repo-backed`
-- Auth: yes
-- Does:
-  - returns poll metadata
+## 11.2 GET `/v1/polls/:id`
 
-### GET `/v1/polls/:id/options`
+- Auth required: yes
+- Main purpose:
+  - fetch poll metadata
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - lists options ordered by `position`
+## 11.3 GET `/v1/polls/:id/options`
 
-### POST `/v1/polls/:id/votes`
+- Auth required: yes
+- Main purpose:
+  - list options ordered by `position`
 
-- Status: `recommended`
-- Auth: yes
-- Request body:
+## 11.4 POST `/v1/polls/:id/votes`
+
+- Auth required: yes
+- Main purpose:
+  - vote on a poll option
+
+### Request body
 
 ```json
 {
@@ -1146,42 +1486,49 @@ The schema supports both attachment metadata and upload sessions. S3 presign hel
 }
 ```
 
-- Does:
-  - creates vote row
-  - service layer must enforce single-choice behavior when `allows_multiple = false`
+### Tables touched
 
-### DELETE `/v1/polls/:id/votes/:option_id`
+- `poll_votes`
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - removes current user's vote for one option
+## 11.5 DELETE `/v1/polls/:id/votes/:option_id`
 
-### GET `/v1/polls/:id/votes`
+- Auth required: yes
+- Main purpose:
+  - remove one vote by current user
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - returns all votes for the poll
+## 11.6 GET `/v1/polls/:id/votes`
 
-### POST `/v1/polls/:id/close`
+- Auth required: yes
+- Main purpose:
+  - list all votes on a poll
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - sets `closes_at = now`
+## 11.7 GET `/v1/polls/:id/my-votes`
+
+- Auth required: yes
+- Main purpose:
+  - fetch current user's votes for one poll
+
+## 11.8 POST `/v1/polls/:id/close`
+
+- Auth required: yes
+- Main purpose:
+  - close a poll immediately by setting `closes_at = now`
 
 ---
 
-## 9. Call Endpoints
+## 12. Call Endpoints
 
-`README.md` documents only the `/v1/calls` area. The repository can already support a useful initial HTTP surface.
+The repository already supports a useful call API even though websocket signaling still needs to be built.
 
-### POST `/v1/calls`
+## 12.1 POST `/v1/calls`
 
-- Status: `recommended`
-- Auth: yes
-- Request body:
+- Auth required: yes
+- Rate limit: yes, user-based
+- Main purpose:
+  - create a call record
+  - add initial participants
+
+### Request body
 
 ```json
 {
@@ -1192,64 +1539,70 @@ The schema supports both attachment metadata and upload sessions. S3 presign hel
 }
 ```
 
-- Does:
-  - creates call row
-  - creates `call_participants` rows
-  - should emit websocket events for ringing/signaling
-- Writes:
-  - `calls`
-  - `call_participants`
-  - `outbox_events`
+### Backend actions
 
-### GET `/v1/calls/:id`
+- verify current user belongs to conversation
+- create row in `calls`
+- create rows in `call_participants`
+- optionally create outbox event for call start
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - returns call detail
+### Important enum note
 
-### GET `/v1/calls?conversation_id=<uuid>&page=1&limit=20`
+- SQL uses `CONNECTED`
+- current repository incorrectly uses `JOINED` in some places
+- fix that before implementing handlers
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - lists calls for a conversation
+## 12.2 GET `/v1/calls/:id`
 
-### GET `/v1/calls/me?page=1&limit=20`
+- Auth required: yes
+- Main purpose:
+  - fetch one call by id
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - lists calls where current user is initiator or participant
+## 12.3 GET `/v1/calls?conversation_id=<uuid>&page=1&limit=20`
 
-### GET `/v1/calls/active`
+- Auth required: yes
+- Main purpose:
+  - list calls for a conversation
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - returns active calls for current user
-- Important mismatch to fix first:
-  - repository currently uses `JOINED`, but SQL enum uses `CONNECTED`
+## 12.4 GET `/v1/calls/me?page=1&limit=20`
 
-### GET `/v1/calls/missed?since=<timestamp>`
+- Auth required: yes
+- Main purpose:
+  - list calls where current user is initiator or participant
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - returns missed calls since a timestamp
+## 12.5 GET `/v1/calls/active`
 
-### POST `/v1/calls/:id/connect`
+- Auth required: yes
+- Main purpose:
+  - list active calls for current user
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - marks call connected
+### Important fix needed first
 
-### POST `/v1/calls/:id/end`
+- current repository query should be aligned with SQL enum values
 
-- Status: `recommended`
-- Auth: yes
-- Request body:
+## 12.6 GET `/v1/calls/missed?since=<timestamp>`
+
+- Auth required: yes
+- Main purpose:
+  - list missed calls since a given point in time
+
+## 12.7 POST `/v1/calls/:id/connect`
+
+- Auth required: yes
+- Main purpose:
+  - mark call connected
+
+### Backend behavior
+
+- sets `connected_at = now`
+
+## 12.8 POST `/v1/calls/:id/end`
+
+- Auth required: yes
+- Main purpose:
+  - end a call and compute duration
+
+### Request body
 
 ```json
 {
@@ -1257,30 +1610,39 @@ The schema supports both attachment metadata and upload sessions. S3 presign hel
 }
 ```
 
-- Does:
-  - sets `ended_at`
-  - stores `end_reason`
-  - computes `duration_seconds` if `connected_at` is present
+### Allowed reasons from schema
 
-### GET `/v1/calls/:id/duration`
+- `COMPLETED`
+- `MISSED`
+- `DECLINED`
+- `FAILED`
+- `TIMEOUT`
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - returns call duration
+### Backend behavior
 
-### GET `/v1/calls/:id/participants`
+- set `ended_at`
+- set `end_reason`
+- if `connected_at` exists, compute `duration_seconds`
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - returns call participants
+## 12.9 GET `/v1/calls/:id/duration`
 
-### POST `/v1/calls/:id/participants`
+- Auth required: yes
+- Main purpose:
+  - fetch stored call duration
 
-- Status: `recommended`
-- Auth: yes
-- Request body:
+## 12.10 GET `/v1/calls/:id/participants`
+
+- Auth required: yes
+- Main purpose:
+  - list all call participants
+
+## 12.11 POST `/v1/calls/:id/participants`
+
+- Auth required: yes
+- Main purpose:
+  - add participant to a call
+
+### Request body
 
 ```json
 {
@@ -1289,21 +1651,19 @@ The schema supports both attachment metadata and upload sessions. S3 presign hel
 }
 ```
 
-- Does:
-  - adds participant to the call
+## 12.12 DELETE `/v1/calls/:id/participants/:user_id`
 
-### DELETE `/v1/calls/:id/participants/:user_id`
+- Auth required: yes
+- Main purpose:
+  - mark participant as left
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - marks participant as left
+## 12.13 PATCH `/v1/calls/:id/participants/:user_id/status`
 
-### PATCH `/v1/calls/:id/participants/:user_id/status`
+- Auth required: yes
+- Main purpose:
+  - update participant call state
 
-- Status: `recommended`
-- Auth: yes
-- Request body:
+### Request body
 
 ```json
 {
@@ -1311,16 +1671,21 @@ The schema supports both attachment metadata and upload sessions. S3 presign hel
 }
 ```
 
-- Does:
-  - updates participant state
-- Required fix:
-  - align repo constants to SQL enum before shipping
+### Valid values from SQL
 
-### PATCH `/v1/calls/:id/participants/:user_id/mute`
+- `INVITED`
+- `RINGING`
+- `CONNECTED`
+- `LEFT`
+- `DECLINED`
 
-- Status: `recommended`
-- Auth: yes
-- Request body:
+## 12.14 PATCH `/v1/calls/:id/participants/:user_id/mute`
+
+- Auth required: yes
+- Main purpose:
+  - update audio and video mute state for one participant
+
+### Request body
 
 ```json
 {
@@ -1329,171 +1694,114 @@ The schema supports both attachment metadata and upload sessions. S3 presign hel
 }
 ```
 
-- Does:
-  - updates mute flags
+## 12.15 GET `/v1/calls/:id/participants/active-count`
 
-### GET `/v1/calls/:id/participants/active-count`
-
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - returns active participant count
-- Required fix:
-  - count should use `CONNECTED`, not `JOINED`
+- Auth required: yes
+- Main purpose:
+  - get current connected participant count
 
 ---
 
-## 10. Encryption Endpoints
+## 13. Command Endpoints
 
-`README.md` claims this area, but the current migrations do not create the required tables. These endpoints are still useful as the intended contract.
+Command logs already have a table and repository, so they should be exposed clearly.
 
-### POST `/v1/encryption/identity-keys`
+## 13.1 GET `/v1/commands/:id`
 
-- Status: `documented-only`
-- Auth: yes
-- Request body should include:
-  - public identity key
-  - device id
+- Auth required: yes
+- Main purpose:
+  - fetch a single command log
 
-### POST `/v1/encryption/signed-prekeys`
+### Response should include
 
-- Status: `documented-only`
-- Auth: yes
+- `id`
+- `command_type`
+- `user_id`
+- `conversation_id`
+- `status`
+- `payload`
+- `undo_payload`
+- `error_message`
+- `execution_time_ms`
+- `created_at`
+- `executed_at`
+- `undone_at`
 
-### POST `/v1/encryption/one-time-prekeys`
+## 13.2 GET `/v1/commands?limit=50`
 
-- Status: `documented-only`
-- Auth: yes
+- Auth required: yes
+- Main purpose:
+  - fetch recent command logs for current user
 
-### GET `/v1/encryption/bundle/:user_id?device_id=<device-id>`
+## 13.3 POST `/v1/commands/:id/undo`
 
-- Status: `documented-only`
-- Auth: yes
-- Does:
-  - returns identity key, signed prekey, and one available one-time prekey
+- Auth required: yes
+- Main purpose:
+  - reverse an undoable chat action
 
-### Reality check
+### What it should check
 
-- Before these can exist, add schema and repositories for:
-  - `identity_keys`
-  - `signed_prekeys`
-  - `onetime_prekeys`
-  - session material if needed
+- command exists
+- command belongs to current user
+- command status is undoable
+- command has not already been undone
+- undo window has not expired
 
----
+### What it should do
 
-## 11. Broadcast Endpoints
+- inspect `command_type`
+- load `undo_payload`
+- reverse the original action
+- mark command as undone
+- create outbox event for clients
 
-`README.md` claims `/v1/broadcasts`, but the schema does not create broadcast tables.
+### Important repo issue
 
-### Recommended contract
-
-### POST `/v1/broadcasts`
-
-- Status: `documented-only`
-- Request body:
-
-```json
-{
-  "name": "Announcements",
-  "recipient_ids": ["uuid-1", "uuid-2"]
-}
-```
-
-### GET `/v1/broadcasts`
-
-- Status: `documented-only`
-
-### GET `/v1/broadcasts/:id`
-
-- Status: `documented-only`
-
-### PUT `/v1/broadcasts/:id`
-
-- Status: `documented-only`
-
-### DELETE `/v1/broadcasts/:id`
-
-- Status: `documented-only`
-
-### POST `/v1/broadcasts/:id/recipients`
-
-- Status: `documented-only`
-
-### DELETE `/v1/broadcasts/:id/recipients/:user_id`
-
-- Status: `documented-only`
-
-### Required missing schema
-
-- `broadcast_lists`
-- `broadcast_recipients`
+- Go command status constants do not match SQL enum values yet
+- fix that before implementing this route
 
 ---
 
-## 12. Command Endpoints
+## 14. Endpoints that should not be in this API doc right now
 
-The command system deserves its own file, but these are the HTTP routes the API should expose.
+These were intentionally removed from this file:
 
-### GET `/v1/commands/:id`
+### Encryption key endpoints
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - returns command log detail
+Removed because there is no backing schema or repository for:
 
-### GET `/v1/commands?limit=50`
+- identity keys
+- signed prekeys
+- one-time prekeys
+- key bundle serving
 
-- Status: `recommended`
-- Auth: yes
-- Does:
-  - returns current user's recent command logs
+### Broadcast endpoints
 
-### POST `/v1/commands/:id/undo`
+Removed because there is no backing schema or repository for:
 
-- Status: `repo-backed`
-- Auth: yes
-- Does:
-  - validates ownership
-  - validates command can still be undone
-  - reverses command side effects
-  - marks command as `UNDONE`
-  - creates outbox events for client fan-out
-- Important:
-  - current repo only exposes `CanUndo`; actual undo execution is not implemented yet
+- broadcast lists
+- broadcast recipients
+
+If those features are added later, they should be documented in a separate section only after:
+
+- SQL tables exist
+- repositories exist
+- handlers/services are planned
 
 ---
 
-## 13. Rate limiting recommendations
+## 15. Recommended implementation order
 
-Middleware already implies these groups:
+If you want to build this backend cleanly, implement the endpoints in this order:
 
-- Auth routes:
-  - `/v1/auth/login`
-  - `/v1/auth/register`
-  - `/v1/auth/refresh`
-  - `/v1/auth/password/forgot`
-  - `/v1/auth/password/reset`
-- Message routes:
-  - all write-heavy message endpoints should use user-based limiter
-- Call routes:
-  - call creation and signaling endpoints should use user-based limiter
+1. auth and sessions
+2. users, contacts, devices
+3. conversations and participants
+4. messages and receipts
+5. reactions, stars, pins, mentions
+6. uploads and attachments
+7. polls
+8. calls
+9. commands and undo
 
-Recommended response headers on limited routes:
-
-- `X-RateLimit-Limit`
-- `X-RateLimit-Remaining`
-- `X-RateLimit-Reset`
-
----
-
-## 14. Key implementation notes to keep in mind
-
-- Message `seq_id` is assigned by a DB trigger, not by the application.
-- DM conversations are normalized and deduplicated at DB level.
-- Search over encrypted content is intentionally unsupported.
-- View-once attachments lose their `encrypted_url` after view mark is written.
-- Poll single-choice rules are not DB-enforced and must live in service logic.
-- Upload and attachment size ceiling is `15 MB`.
-- Command status enum mismatch must be fixed before command endpoints ship.
-- Call participant status mismatch must be fixed before call endpoints ship.
+That order matches the actual structure already present in the repository.

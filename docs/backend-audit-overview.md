@@ -63,8 +63,9 @@ This document summarizes what is actually present in the repository and what sti
 ## What the other docs in this folder contain
 
 - `docs/api-endpoints.md`
-  - Full endpoint plan for the HTTP API.
-  - Separates implemented routes from repo-backed routes and recommended new routes.
+  - Detailed endpoint-by-endpoint build plan for the HTTP API.
+  - Includes only repo-backed and schema-backed API areas.
+  - Intentionally excludes unsupported encryption-key and broadcast endpoints.
 - `docs/websockets.md`
   - Full websocket contract, event envelopes, authentication, subscriptions, typing, receipts, presence, and call signaling.
 - `docs/redis-outbox.md`
