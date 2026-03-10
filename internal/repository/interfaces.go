@@ -7,11 +7,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"sentinal-chat/internal/domain/broadcast"
 	"sentinal-chat/internal/domain/call"
 	"sentinal-chat/internal/domain/command"
 	"sentinal-chat/internal/domain/conversation"
-	"sentinal-chat/internal/domain/encryption"
 	"sentinal-chat/internal/domain/message"
 	"sentinal-chat/internal/domain/outbox"
 	"sentinal-chat/internal/domain/upload"
@@ -41,19 +39,15 @@ type UserRepository interface {
 	UnblockContact(ctx context.Context, userID, contactUserID uuid.UUID) error
 	GetBlockedContacts(ctx context.Context, userID uuid.UUID) ([]user.UserContact, error)
 
-	GetUserSettings(ctx context.Context, userID uuid.UUID) (user.UserSettings, error)
-	UpdateUserSettings(ctx context.Context, s user.UserSettings) error
-	CreateUserSettings(ctx context.Context, s *user.UserSettings) error
-
 	AddDevice(ctx context.Context, d *user.Device) error
 	GetUserDevices(ctx context.Context, userID uuid.UUID) ([]user.Device, error)
 	GetDeviceByID(ctx context.Context, deviceID uuid.UUID) (user.Device, error)
 	DeactivateDevice(ctx context.Context, deviceID uuid.UUID) error
 	UpdateDeviceLastSeen(ctx context.Context, deviceID uuid.UUID) error
 
-	AddPushToken(ctx context.Context, pt *user.PushToken) error
-	GetUserPushTokens(ctx context.Context, userID uuid.UUID) ([]user.PushToken, error)
-	DeactivatePushToken(ctx context.Context, tokenID uuid.UUID) error
+	AddFcmToken(ctx context.Context, ft *user.FcmToken) error
+	GetUserFcmTokens(ctx context.Context, userID uuid.UUID) ([]user.FcmToken, error)
+	DeactivateFcmToken(ctx context.Context, tokenID uuid.UUID) error
 
 	CreateSession(ctx context.Context, s *user.UserSession) error
 	GetSessionByID(ctx context.Context, sessionID uuid.UUID) (user.UserSession, error)
@@ -89,11 +83,12 @@ type ConversationRepository interface {
 
 	MuteConversation(ctx context.Context, conversationID, userID uuid.UUID, until time.Time) error
 	UnmuteConversation(ctx context.Context, conversationID, userID uuid.UUID) error
-	PinConversation(ctx context.Context, conversationID, userID uuid.UUID) error
-	UnpinConversation(ctx context.Context, conversationID, userID uuid.UUID) error
 	ArchiveConversation(ctx context.Context, conversationID, userID uuid.UUID) error
 	UnarchiveConversation(ctx context.Context, conversationID, userID uuid.UUID) error
 	UpdateLastReadSequence(ctx context.Context, conversationID, userID uuid.UUID, seqID int64) error
+
+	ClearConversation(ctx context.Context, conversationID, userID uuid.UUID) error
+	GetConversationClear(ctx context.Context, conversationID, userID uuid.UUID) (conversation.ConversationClear, error)
 
 	GetConversationSequence(ctx context.Context, conversationID uuid.UUID) (conversation.ConversationSequence, error)
 	IncrementSequence(ctx context.Context, conversationID uuid.UUID) (int64, error)
@@ -106,9 +101,8 @@ type MessageRepository interface {
 	Update(ctx context.Context, m message.Message) error
 	SoftDelete(ctx context.Context, id uuid.UUID) error
 	HardDelete(ctx context.Context, id uuid.UUID) error
-	CreateCiphertext(ctx context.Context, c *message.MessageCiphertext) error
 
-	GetConversationMessages(ctx context.Context, conversationID uuid.UUID, beforeSeq int64, limit int, recipientDeviceID uuid.UUID) ([]message.Message, error)
+	GetConversationMessages(ctx context.Context, conversationID uuid.UUID, beforeSeq int64, limit int) ([]message.Message, error)
 	GetMessagesBySeqRange(ctx context.Context, conversationID uuid.UUID, startSeq, endSeq int64) ([]message.Message, error)
 	GetUnreadMessages(ctx context.Context, conversationID, userID uuid.UUID) ([]message.Message, error)
 	SearchMessages(ctx context.Context, conversationID uuid.UUID, query string, page, limit int) ([]message.Message, int64, error)
@@ -118,8 +112,7 @@ type MessageRepository interface {
 	MarkAsEdited(ctx context.Context, messageID uuid.UUID) error
 	GetMessageCountSince(ctx context.Context, conversationID uuid.UUID, since time.Time) (int64, error)
 
-	GetByIdempotencyKey(ctx context.Context, key string) (message.Message, error)
-	GetByClientMessageID(ctx context.Context, clientMsgID string) (message.Message, error)
+	GetByClientMessageID(ctx context.Context, conversationID uuid.UUID, clientMsgID string) (message.Message, error)
 
 	AddReaction(ctx context.Context, r *message.MessageReaction) error
 	RemoveReaction(ctx context.Context, messageID, userID uuid.UUID, reactionCode string) error
@@ -144,15 +137,18 @@ type MessageRepository interface {
 	GetUserStarredMessages(ctx context.Context, userID uuid.UUID, page, limit int) ([]message.StarredMessage, int64, error)
 	IsMessageStarred(ctx context.Context, userID, messageID uuid.UUID) (bool, error)
 
+	PinMessage(ctx context.Context, p *message.PinnedMessage) error
+	UnpinMessage(ctx context.Context, conversationID, messageID uuid.UUID) error
+	GetPinnedMessages(ctx context.Context, conversationID uuid.UUID) ([]message.PinnedMessage, error)
+
+	CreateMessageEdit(ctx context.Context, e *message.MessageEdit) error
+	GetMessageEdits(ctx context.Context, messageID uuid.UUID) ([]message.MessageEdit, error)
+
 	CreateAttachment(ctx context.Context, a *message.Attachment) error
 	GetAttachmentByID(ctx context.Context, id uuid.UUID) (message.Attachment, error)
 	LinkAttachmentToMessage(ctx context.Context, ma *message.MessageAttachment) error
 	GetMessageAttachments(ctx context.Context, messageID uuid.UUID) ([]message.Attachment, error)
 	MarkViewOnceViewed(ctx context.Context, attachmentID uuid.UUID) error
-
-	CreateLinkPreview(ctx context.Context, lp *message.LinkPreview) error
-	GetLinkPreviewByHash(ctx context.Context, urlHash string) (message.LinkPreview, error)
-	GetLinkPreviewByID(ctx context.Context, id uuid.UUID) (message.LinkPreview, error)
 
 	CreatePoll(ctx context.Context, p *message.Poll) error
 	GetPollByID(ctx context.Context, id uuid.UUID) (message.Poll, error)
@@ -188,55 +184,6 @@ type CallRepository interface {
 	UpdateParticipantStatus(ctx context.Context, callID, userID uuid.UUID, status string) error
 	UpdateParticipantMuteStatus(ctx context.Context, callID, userID uuid.UUID, audioMuted, videoMuted bool) error
 	GetActiveParticipantCount(ctx context.Context, callID uuid.UUID) (int64, error)
-
-	RecordQualityMetric(ctx context.Context, m *call.CallQualityMetric) error
-	GetCallQualityMetrics(ctx context.Context, callID uuid.UUID) ([]call.CallQualityMetric, error)
-	GetUserCallQualityMetrics(ctx context.Context, callID, userID uuid.UUID) ([]call.CallQualityMetric, error)
-	GetAverageCallQuality(ctx context.Context, callID uuid.UUID) (float64, error)
-}
-
-type BroadcastRepository interface {
-	Create(ctx context.Context, b *broadcast.BroadcastList) error
-	GetByID(ctx context.Context, id uuid.UUID) (broadcast.BroadcastList, error)
-	Update(ctx context.Context, b broadcast.BroadcastList) error
-	Delete(ctx context.Context, id uuid.UUID) error
-
-	GetUserBroadcastLists(ctx context.Context, ownerID uuid.UUID) ([]broadcast.BroadcastList, error)
-	SearchBroadcastLists(ctx context.Context, ownerID uuid.UUID, query string) ([]broadcast.BroadcastList, error)
-
-	AddRecipient(ctx context.Context, r *broadcast.BroadcastRecipient) error
-	RemoveRecipient(ctx context.Context, broadcastID, userID uuid.UUID) error
-	GetRecipients(ctx context.Context, broadcastID uuid.UUID) ([]broadcast.BroadcastRecipient, error)
-	GetRecipientCount(ctx context.Context, broadcastID uuid.UUID) (int64, error)
-	IsRecipient(ctx context.Context, broadcastID, userID uuid.UUID) (bool, error)
-	BulkAddRecipients(ctx context.Context, broadcastID uuid.UUID, userIDs []uuid.UUID) error
-	BulkRemoveRecipients(ctx context.Context, broadcastID uuid.UUID, userIDs []uuid.UUID) error
-}
-
-type EncryptionRepository interface {
-	IsDeviceOwnedByUser(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID) (bool, error)
-	SetupEncryption(ctx context.Context, identityKey *encryption.IdentityKey, signedPreKey *encryption.SignedPreKey, oneTimePreKeys []encryption.OneTimePreKey) error
-	CreateIdentityKey(ctx context.Context, k *encryption.IdentityKey) error
-	GetIdentityKey(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID) (encryption.IdentityKey, error)
-	GetUserIdentityKeys(ctx context.Context, userID uuid.UUID) ([]encryption.IdentityKey, error)
-	DeactivateIdentityKey(ctx context.Context, id uuid.UUID) error
-	DeleteIdentityKey(ctx context.Context, id uuid.UUID) error
-
-	CreateSignedPreKey(ctx context.Context, k *encryption.SignedPreKey) error
-	GetSignedPreKey(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID, keyID int) (encryption.SignedPreKey, error)
-	GetActiveSignedPreKey(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID) (encryption.SignedPreKey, error)
-	RotateSignedPreKey(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID, newKey *encryption.SignedPreKey) error
-	DeactivateSignedPreKey(ctx context.Context, id uuid.UUID) error
-
-	UploadOneTimePreKeys(ctx context.Context, keys []encryption.OneTimePreKey) error
-	ConsumeOneTimePreKey(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID, consumedBy uuid.UUID, consumedByDeviceID uuid.UUID) (encryption.OneTimePreKey, error)
-	GetAvailablePreKeyCount(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID) (int64, error)
-	DeleteConsumedPreKeys(ctx context.Context, olderThan time.Time) (int64, error)
-
-	HasActiveKeys(ctx context.Context, userID uuid.UUID, deviceID uuid.UUID) (bool, error)
-
-	UpsertKeyBackup(ctx context.Context, backup *encryption.KeyBackup) error
-	GetKeyBackup(ctx context.Context, userID uuid.UUID) (encryption.KeyBackup, error)
 }
 
 type UploadRepository interface {

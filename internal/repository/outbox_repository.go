@@ -21,10 +21,9 @@ func (r *outboxRepository) Create(ctx context.Context, tx DBTX, event *outbox.Ou
 		execDB = r.db
 	}
 	_, err := execDB.ExecContext(ctx, `
-        INSERT INTO outbox_events (id, event_type, aggregate_type, aggregate_id, payload, status, retry_count, error, created_at, updated_at, processed_at)
+        INSERT INTO outbox_events (event_type, aggregate_type, aggregate_id, payload, status, retry_count, error, created_at, updated_at, processed_at)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
     `,
-		event.ID,
 		event.EventType,
 		event.AggregateType,
 		event.AggregateID,

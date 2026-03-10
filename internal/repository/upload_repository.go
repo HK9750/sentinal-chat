@@ -22,9 +22,9 @@ func NewUploadRepository(db DBTX) UploadRepository {
 
 func (r *PostgresUploadRepository) Create(ctx context.Context, u *upload.UploadSession) error {
 	_, err := r.db.ExecContext(ctx, `
-        INSERT INTO upload_sessions (id, uploader_id, filename, mime_type, size_bytes, chunk_size, uploaded_bytes, status, object_key, file_url, completed_at, created_at, updated_at)
+        INSERT INTO upload_sessions (uploader_id, filename, mime_type, size_bytes, chunk_size, uploaded_bytes, status, object_key, file_url, completed_at, created_at, updated_at)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-    `, u.ID, u.UploaderID, u.Filename, u.MimeType, u.SizeBytes, u.ChunkSize, u.UploadedBytes, u.Status, u.ObjectKey, u.FileURL, u.CompletedAt, u.CreatedAt, u.UpdatedAt)
+    `, u.UploaderID, u.Filename, u.MimeType, u.SizeBytes, u.ChunkSize, u.UploadedBytes, u.Status, u.ObjectKey, u.FileURL, u.CompletedAt, u.CreatedAt, u.UpdatedAt)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return sentinal_errors.ErrAlreadyExists

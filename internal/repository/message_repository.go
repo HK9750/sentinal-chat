@@ -21,27 +21,52 @@ func NewMessageRepository(db DBTX) MessageRepository {
 	return &PostgresMessageRepository{db: db}
 }
 
+const msgColumns = `id, conversation_id, sender_id, client_message_id, seq_id, type, encrypted_content,
+       is_forwarded, reply_to_msg_id, poll_id, mention_count,
+       created_at, edited_at, deleted_at, expires_at`
+
+func scanMessage(scanner interface {
+	Scan(dest ...any) error
+}) (message.Message, error) {
+	var m message.Message
+	err := scanner.Scan(
+		&m.ID,
+		&m.ConversationID,
+		&m.SenderID,
+		&m.ClientMessageID,
+		&m.SeqID,
+		&m.Type,
+		&m.EncryptedContent,
+		&m.IsForwarded,
+		&m.ReplyToMsgID,
+		&m.PollID,
+		&m.MentionCount,
+		&m.CreatedAt,
+		&m.EditedAt,
+		&m.DeletedAt,
+		&m.ExpiresAt,
+	)
+	return m, err
+}
+
 func (r *PostgresMessageRepository) Create(ctx context.Context, m *message.Message) error {
 	_, err := r.db.ExecContext(ctx, `
         INSERT INTO messages (
-            id, conversation_id, sender_id, client_message_id, idempotency_key, seq_id, type, metadata,
-            is_forwarded, forwarded_from_msg_id, reply_to_msg_id, poll_id, link_preview_id, mention_count,
+            id, conversation_id, sender_id, client_message_id, seq_id, type, encrypted_content,
+            is_forwarded, reply_to_msg_id, poll_id, mention_count,
             created_at, edited_at, deleted_at, expires_at
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
     `,
 		m.ID,
 		m.ConversationID,
 		m.SenderID,
 		m.ClientMessageID,
-		m.IdempotencyKey,
 		m.SeqID,
 		m.Type,
-		m.Metadata,
+		m.EncryptedContent,
 		m.IsForwarded,
-		m.ForwardedFromMsgID,
 		m.ReplyToMsgID,
 		m.PollID,
-		m.LinkPreviewID,
 		m.MentionCount,
 		m.CreatedAt,
 		m.EditedAt,
@@ -57,62 +82,11 @@ func (r *PostgresMessageRepository) Create(ctx context.Context, m *message.Messa
 	return nil
 }
 
-func (r *PostgresMessageRepository) CreateCiphertext(ctx context.Context, c *message.MessageCiphertext) error {
-	_, err := r.db.ExecContext(ctx, `
-        INSERT INTO message_ciphertexts (id, message_id, recipient_user_id, recipient_device_id, sender_device_id, ciphertext, header, created_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-    `,
-		c.ID,
-		c.MessageID,
-		c.RecipientUserID,
-		c.RecipientDeviceID,
-		c.SenderDeviceID,
-		c.Ciphertext,
-		c.Header,
-		c.CreatedAt,
-	)
-	if err != nil {
-		if isUniqueViolation(err) {
-			return sentinal_errors.ErrAlreadyExists
-		}
-		return err
-	}
-	return nil
-}
-
 func (r *PostgresMessageRepository) GetByID(ctx context.Context, id uuid.UUID) (message.Message, error) {
-	var m message.Message
-	var metadata sql.NullString
-	err := r.db.QueryRowContext(ctx, `
-        SELECT id, conversation_id, sender_id, client_message_id, idempotency_key, seq_id, type, metadata,
-               is_forwarded, forwarded_from_msg_id, reply_to_msg_id, poll_id, link_preview_id, mention_count,
-               created_at, edited_at, deleted_at, expires_at
-        FROM messages WHERE id = $1
-    `, id).Scan(
-		&m.ID,
-		&m.ConversationID,
-		&m.SenderID,
-		&m.ClientMessageID,
-		&m.IdempotencyKey,
-		&m.SeqID,
-		&m.Type,
-		&metadata,
-		&m.IsForwarded,
-		&m.ForwardedFromMsgID,
-		&m.ReplyToMsgID,
-		&m.PollID,
-		&m.LinkPreviewID,
-		&m.MentionCount,
-		&m.CreatedAt,
-		&m.EditedAt,
-		&m.DeletedAt,
-		&m.ExpiresAt,
-	)
-	if err == nil {
-		m.Metadata = metadata.String
-	}
+	m, err := scanMessage(r.db.QueryRowContext(ctx, `
+        SELECT `+msgColumns+` FROM messages WHERE id = $1
+    `, id))
 	if err != nil {
-
 		if errors.Is(err, sql.ErrNoRows) {
 			return message.Message{}, sentinal_errors.ErrNotFound
 		}
@@ -124,23 +98,20 @@ func (r *PostgresMessageRepository) GetByID(ctx context.Context, id uuid.UUID) (
 func (r *PostgresMessageRepository) Update(ctx context.Context, m message.Message) error {
 	res, err := r.db.ExecContext(ctx, `
         UPDATE messages
-        SET conversation_id = $1, sender_id = $2, client_message_id = $3, idempotency_key = $4, seq_id = $5,
-            type = $6, metadata = $7, is_forwarded = $8, forwarded_from_msg_id = $9, reply_to_msg_id = $10,
-            poll_id = $11, link_preview_id = $12, mention_count = $13, edited_at = $14, deleted_at = $15, expires_at = $16
-        WHERE id = $17
+        SET conversation_id = $1, sender_id = $2, client_message_id = $3, seq_id = $4,
+            type = $5, encrypted_content = $6, is_forwarded = $7, reply_to_msg_id = $8,
+            poll_id = $9, mention_count = $10, edited_at = $11, deleted_at = $12, expires_at = $13
+        WHERE id = $14
     `,
 		m.ConversationID,
 		m.SenderID,
 		m.ClientMessageID,
-		m.IdempotencyKey,
 		m.SeqID,
 		m.Type,
-		m.Metadata,
+		m.EncryptedContent,
 		m.IsForwarded,
-		m.ForwardedFromMsgID,
 		m.ReplyToMsgID,
 		m.PollID,
-		m.LinkPreviewID,
 		m.MentionCount,
 		m.EditedAt,
 		m.DeletedAt,
@@ -181,25 +152,16 @@ func (r *PostgresMessageRepository) HardDelete(ctx context.Context, id uuid.UUID
 	return err
 }
 
-func (r *PostgresMessageRepository) GetConversationMessages(ctx context.Context, conversationID uuid.UUID, beforeSeq int64, limit int, recipientDeviceID uuid.UUID) ([]message.Message, error) {
+func (r *PostgresMessageRepository) GetConversationMessages(ctx context.Context, conversationID uuid.UUID, beforeSeq int64, limit int) ([]message.Message, error) {
 	var messages []message.Message
 
-	query := `
-        SELECT m.id, m.conversation_id, m.sender_id, m.client_message_id, m.idempotency_key, m.seq_id, m.type, m.metadata,
-               m.is_forwarded, m.forwarded_from_msg_id, m.reply_to_msg_id, m.poll_id, m.link_preview_id, m.mention_count,
-               m.created_at, m.edited_at, m.deleted_at, m.expires_at,
-               mc.ciphertext, mc.header, mc.recipient_device_id, mc.recipient_user_id, mc.sender_device_id
-        FROM messages m
-        JOIN message_ciphertexts mc ON mc.message_id = m.id
-        WHERE m.conversation_id = $1 AND m.deleted_at IS NULL AND mc.recipient_device_id = $2
-    `
-
-	args := []interface{}{conversationID, recipientDeviceID}
+	query := `SELECT ` + msgColumns + ` FROM messages WHERE conversation_id = $1 AND deleted_at IS NULL`
+	args := []interface{}{conversationID}
 	if beforeSeq > 0 {
-		query += " AND m.seq_id < $3"
+		query += " AND seq_id < $2"
 		args = append(args, beforeSeq)
 	}
-	query += fmt.Sprintf(" ORDER BY m.seq_id DESC LIMIT $%d", len(args)+1)
+	query += fmt.Sprintf(" ORDER BY seq_id DESC LIMIT $%d", len(args)+1)
 	args = append(args, limit)
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
@@ -209,36 +171,10 @@ func (r *PostgresMessageRepository) GetConversationMessages(ctx context.Context,
 	defer rows.Close()
 
 	for rows.Next() {
-		var m message.Message
-		var metadata sql.NullString
-		if err := rows.Scan(
-			&m.ID,
-			&m.ConversationID,
-			&m.SenderID,
-			&m.ClientMessageID,
-			&m.IdempotencyKey,
-			&m.SeqID,
-			&m.Type,
-			&metadata,
-			&m.IsForwarded,
-			&m.ForwardedFromMsgID,
-			&m.ReplyToMsgID,
-			&m.PollID,
-			&m.LinkPreviewID,
-			&m.MentionCount,
-			&m.CreatedAt,
-			&m.EditedAt,
-			&m.DeletedAt,
-			&m.ExpiresAt,
-			&m.Ciphertext,
-			&m.Header,
-			&m.RecipientDeviceID,
-			&m.RecipientUserID,
-			&m.SenderDeviceID,
-		); err != nil {
+		m, err := scanMessage(rows)
+		if err != nil {
 			return nil, err
 		}
-		m.Metadata = metadata.String
 		messages = append(messages, m)
 	}
 	if err := rows.Err(); err != nil {
@@ -250,9 +186,7 @@ func (r *PostgresMessageRepository) GetConversationMessages(ctx context.Context,
 func (r *PostgresMessageRepository) GetMessagesBySeqRange(ctx context.Context, conversationID uuid.UUID, startSeq, endSeq int64) ([]message.Message, error) {
 	var messages []message.Message
 	rows, err := r.db.QueryContext(ctx, `
-        SELECT id, conversation_id, sender_id, client_message_id, idempotency_key, seq_id, type, metadata,
-               is_forwarded, forwarded_from_msg_id, reply_to_msg_id, poll_id, link_preview_id, mention_count,
-               created_at, edited_at, deleted_at, expires_at
+        SELECT `+msgColumns+`
         FROM messages
         WHERE conversation_id = $1 AND seq_id >= $2 AND seq_id <= $3 AND deleted_at IS NULL
         ORDER BY seq_id ASC
@@ -263,31 +197,10 @@ func (r *PostgresMessageRepository) GetMessagesBySeqRange(ctx context.Context, c
 	defer rows.Close()
 
 	for rows.Next() {
-		var m message.Message
-		var metadata sql.NullString
-		if err := rows.Scan(
-			&m.ID,
-			&m.ConversationID,
-			&m.SenderID,
-			&m.ClientMessageID,
-			&m.IdempotencyKey,
-			&m.SeqID,
-			&m.Type,
-			&metadata,
-			&m.IsForwarded,
-			&m.ForwardedFromMsgID,
-			&m.ReplyToMsgID,
-			&m.PollID,
-			&m.LinkPreviewID,
-			&m.MentionCount,
-			&m.CreatedAt,
-			&m.EditedAt,
-			&m.DeletedAt,
-			&m.ExpiresAt,
-		); err != nil {
+		m, err := scanMessage(rows)
+		if err != nil {
 			return nil, err
 		}
-		m.Metadata = metadata.String
 		messages = append(messages, m)
 	}
 	if err := rows.Err(); err != nil {
@@ -299,9 +212,7 @@ func (r *PostgresMessageRepository) GetMessagesBySeqRange(ctx context.Context, c
 func (r *PostgresMessageRepository) GetUnreadMessages(ctx context.Context, conversationID, userID uuid.UUID) ([]message.Message, error) {
 	var messages []message.Message
 	rows, err := r.db.QueryContext(ctx, `
-        SELECT m.id, m.conversation_id, m.sender_id, m.client_message_id, m.idempotency_key, m.seq_id, m.type, m.metadata,
-               m.is_forwarded, m.forwarded_from_msg_id, m.reply_to_msg_id, m.poll_id, m.link_preview_id, m.mention_count,
-               m.created_at, m.edited_at, m.deleted_at, m.expires_at
+        SELECT `+msgColumns+`
         FROM messages m
         WHERE m.conversation_id = $1 AND m.sender_id != $2 AND m.deleted_at IS NULL AND NOT EXISTS (
             SELECT 1 FROM message_receipts r WHERE r.message_id = m.id AND r.user_id = $2 AND r.read_at IS NOT NULL
@@ -314,31 +225,10 @@ func (r *PostgresMessageRepository) GetUnreadMessages(ctx context.Context, conve
 	defer rows.Close()
 
 	for rows.Next() {
-		var m message.Message
-		var metadata sql.NullString
-		if err := rows.Scan(
-			&m.ID,
-			&m.ConversationID,
-			&m.SenderID,
-			&m.ClientMessageID,
-			&m.IdempotencyKey,
-			&m.SeqID,
-			&m.Type,
-			&metadata,
-			&m.IsForwarded,
-			&m.ForwardedFromMsgID,
-			&m.ReplyToMsgID,
-			&m.PollID,
-			&m.LinkPreviewID,
-			&m.MentionCount,
-			&m.CreatedAt,
-			&m.EditedAt,
-			&m.DeletedAt,
-			&m.ExpiresAt,
-		); err != nil {
+		m, err := scanMessage(rows)
+		if err != nil {
 			return nil, err
 		}
-		m.Metadata = metadata.String
 		messages = append(messages, m)
 	}
 	if err := rows.Err(); err != nil {
@@ -348,15 +238,14 @@ func (r *PostgresMessageRepository) GetUnreadMessages(ctx context.Context, conve
 }
 
 func (r *PostgresMessageRepository) SearchMessages(ctx context.Context, conversationID uuid.UUID, query string, page, limit int) ([]message.Message, int64, error) {
+	// E2E encrypted content cannot be searched server-side
 	return nil, 0, sentinal_errors.ErrForbidden
 }
 
 func (r *PostgresMessageRepository) GetMessagesByType(ctx context.Context, conversationID uuid.UUID, msgType string, limit int) ([]message.Message, error) {
 	var messages []message.Message
 	rows, err := r.db.QueryContext(ctx, `
-        SELECT id, conversation_id, sender_id, client_message_id, idempotency_key, seq_id, type, metadata,
-               is_forwarded, forwarded_from_msg_id, reply_to_msg_id, poll_id, link_preview_id, mention_count,
-               created_at, edited_at, deleted_at, expires_at
+        SELECT `+msgColumns+`
         FROM messages
         WHERE conversation_id = $1 AND type = $2 AND deleted_at IS NULL
         ORDER BY created_at DESC
@@ -368,31 +257,10 @@ func (r *PostgresMessageRepository) GetMessagesByType(ctx context.Context, conve
 	defer rows.Close()
 
 	for rows.Next() {
-		var m message.Message
-		var metadata sql.NullString
-		if err := rows.Scan(
-			&m.ID,
-			&m.ConversationID,
-			&m.SenderID,
-			&m.ClientMessageID,
-			&m.IdempotencyKey,
-			&m.SeqID,
-			&m.Type,
-			&metadata,
-			&m.IsForwarded,
-			&m.ForwardedFromMsgID,
-			&m.ReplyToMsgID,
-			&m.PollID,
-			&m.LinkPreviewID,
-			&m.MentionCount,
-			&m.CreatedAt,
-			&m.EditedAt,
-			&m.DeletedAt,
-			&m.ExpiresAt,
-		); err != nil {
+		m, err := scanMessage(rows)
+		if err != nil {
 			return nil, err
 		}
-		m.Metadata = metadata.String
 		messages = append(messages, m)
 	}
 	if err := rows.Err(); err != nil {
@@ -402,41 +270,14 @@ func (r *PostgresMessageRepository) GetMessagesByType(ctx context.Context, conve
 }
 
 func (r *PostgresMessageRepository) GetLatestMessage(ctx context.Context, conversationID uuid.UUID) (message.Message, error) {
-	var m message.Message
-	var metadata sql.NullString
-	err := r.db.QueryRowContext(ctx, `
-        SELECT id, conversation_id, sender_id, client_message_id, idempotency_key, seq_id, type, metadata,
-               is_forwarded, forwarded_from_msg_id, reply_to_msg_id, poll_id, link_preview_id, mention_count,
-               created_at, edited_at, deleted_at, expires_at
+	m, err := scanMessage(r.db.QueryRowContext(ctx, `
+        SELECT `+msgColumns+`
         FROM messages
         WHERE conversation_id = $1 AND deleted_at IS NULL
         ORDER BY seq_id DESC
         LIMIT 1
-    `, conversationID).Scan(
-		&m.ID,
-		&m.ConversationID,
-		&m.SenderID,
-		&m.ClientMessageID,
-		&m.IdempotencyKey,
-		&m.SeqID,
-		&m.Type,
-		&metadata,
-		&m.IsForwarded,
-		&m.ForwardedFromMsgID,
-		&m.ReplyToMsgID,
-		&m.PollID,
-		&m.LinkPreviewID,
-		&m.MentionCount,
-		&m.CreatedAt,
-		&m.EditedAt,
-		&m.DeletedAt,
-		&m.ExpiresAt,
-	)
-	if err == nil {
-		m.Metadata = metadata.String
-	}
+    `, conversationID))
 	if err != nil {
-
 		if errors.Is(err, sql.ErrNoRows) {
 			return message.Message{}, sentinal_errors.ErrNotFound
 		}
@@ -468,80 +309,12 @@ func (r *PostgresMessageRepository) GetMessageCountSince(ctx context.Context, co
 	return count, nil
 }
 
-func (r *PostgresMessageRepository) GetByIdempotencyKey(ctx context.Context, key string) (message.Message, error) {
-	var m message.Message
-	var metadata sql.NullString
-	err := r.db.QueryRowContext(ctx, `
-        SELECT id, conversation_id, sender_id, client_message_id, idempotency_key, seq_id, type, metadata,
-               is_forwarded, forwarded_from_msg_id, reply_to_msg_id, poll_id, link_preview_id, mention_count,
-               created_at, edited_at, deleted_at, expires_at
-        FROM messages WHERE idempotency_key = $1
-    `, key).Scan(
-		&m.ID,
-		&m.ConversationID,
-		&m.SenderID,
-		&m.ClientMessageID,
-		&m.IdempotencyKey,
-		&m.SeqID,
-		&m.Type,
-		&metadata,
-		&m.IsForwarded,
-		&m.ForwardedFromMsgID,
-		&m.ReplyToMsgID,
-		&m.PollID,
-		&m.LinkPreviewID,
-		&m.MentionCount,
-		&m.CreatedAt,
-		&m.EditedAt,
-		&m.DeletedAt,
-		&m.ExpiresAt,
-	)
-	if err == nil {
-		m.Metadata = metadata.String
-	}
+func (r *PostgresMessageRepository) GetByClientMessageID(ctx context.Context, conversationID uuid.UUID, clientMsgID string) (message.Message, error) {
+	m, err := scanMessage(r.db.QueryRowContext(ctx, `
+        SELECT `+msgColumns+`
+        FROM messages WHERE conversation_id = $1 AND client_message_id = $2
+    `, conversationID, clientMsgID))
 	if err != nil {
-
-		if errors.Is(err, sql.ErrNoRows) {
-			return message.Message{}, sentinal_errors.ErrNotFound
-		}
-		return message.Message{}, err
-	}
-	return m, nil
-}
-
-func (r *PostgresMessageRepository) GetByClientMessageID(ctx context.Context, clientMsgID string) (message.Message, error) {
-	var m message.Message
-	var metadata sql.NullString
-	err := r.db.QueryRowContext(ctx, `
-        SELECT id, conversation_id, sender_id, client_message_id, idempotency_key, seq_id, type, metadata,
-               is_forwarded, forwarded_from_msg_id, reply_to_msg_id, poll_id, link_preview_id, mention_count,
-               created_at, edited_at, deleted_at, expires_at
-        FROM messages WHERE client_message_id = $1
-    `, clientMsgID).Scan(
-		&m.ID,
-		&m.ConversationID,
-		&m.SenderID,
-		&m.ClientMessageID,
-		&m.IdempotencyKey,
-		&m.SeqID,
-		&m.Type,
-		&metadata,
-		&m.IsForwarded,
-		&m.ForwardedFromMsgID,
-		&m.ReplyToMsgID,
-		&m.PollID,
-		&m.LinkPreviewID,
-		&m.MentionCount,
-		&m.CreatedAt,
-		&m.EditedAt,
-		&m.DeletedAt,
-		&m.ExpiresAt,
-	)
-	if err == nil {
-		m.Metadata = metadata.String
-	}
-	if err != nil {
-
 		if errors.Is(err, sql.ErrNoRows) {
 			return message.Message{}, sentinal_errors.ErrNotFound
 		}
@@ -732,17 +505,10 @@ func (r *PostgresMessageRepository) BulkMarkAsDelivered(ctx context.Context, mes
 			}
 			rows, err := res.RowsAffected()
 			if err == nil && rows == 0 {
-				receipt := &message.MessageReceipt{
-					MessageID:   msgID,
-					UserID:      userID,
-					Status:      "DELIVERED",
-					DeliveredAt: toNullTime(now),
-					UpdatedAt:   now,
-				}
 				if _, err := tx.ExecContext(ctx, `
                     INSERT INTO message_receipts (message_id, user_id, status, delivered_at, updated_at)
                     VALUES ($1,$2,$3,$4,$5)
-                `, receipt.MessageID, receipt.UserID, receipt.Status, receipt.DeliveredAt, receipt.UpdatedAt); err != nil {
+                `, msgID, userID, "DELIVERED", now, now); err != nil {
 					return err
 				}
 			}
@@ -765,17 +531,10 @@ func (r *PostgresMessageRepository) BulkMarkAsRead(ctx context.Context, messageI
 			}
 			rows, err := res.RowsAffected()
 			if err == nil && rows == 0 {
-				receipt := &message.MessageReceipt{
-					MessageID: msgID,
-					UserID:    userID,
-					Status:    "READ",
-					ReadAt:    toNullTime(now),
-					UpdatedAt: now,
-				}
 				if _, err := tx.ExecContext(ctx, `
                     INSERT INTO message_receipts (message_id, user_id, status, read_at, updated_at)
                     VALUES ($1,$2,$3,$4,$5)
-                `, receipt.MessageID, receipt.UserID, receipt.Status, receipt.ReadAt, receipt.UpdatedAt); err != nil {
+                `, msgID, userID, "READ", now, now); err != nil {
 					return err
 				}
 			}
@@ -834,9 +593,7 @@ func (r *PostgresMessageRepository) GetUserMentions(ctx context.Context, userID 
 
 	offset := (page - 1) * limit
 	rows, err := r.db.QueryContext(ctx, `
-        SELECT id, conversation_id, sender_id, client_message_id, idempotency_key, seq_id, type, metadata,
-               is_forwarded, forwarded_from_msg_id, reply_to_msg_id, poll_id, link_preview_id, mention_count,
-               created_at, edited_at, deleted_at, expires_at
+        SELECT `+msgColumns+`
         FROM messages
         WHERE id IN (SELECT message_id FROM message_mentions WHERE user_id = $1) AND deleted_at IS NULL
         ORDER BY created_at DESC
@@ -848,27 +605,8 @@ func (r *PostgresMessageRepository) GetUserMentions(ctx context.Context, userID 
 	defer rows.Close()
 
 	for rows.Next() {
-		var m message.Message
-		if err := rows.Scan(
-			&m.ID,
-			&m.ConversationID,
-			&m.SenderID,
-			&m.ClientMessageID,
-			&m.IdempotencyKey,
-			&m.SeqID,
-			&m.Type,
-			&m.Metadata,
-			&m.IsForwarded,
-			&m.ForwardedFromMsgID,
-			&m.ReplyToMsgID,
-			&m.PollID,
-			&m.LinkPreviewID,
-			&m.MentionCount,
-			&m.CreatedAt,
-			&m.EditedAt,
-			&m.DeletedAt,
-			&m.ExpiresAt,
-		); err != nil {
+		m, err := scanMessage(rows)
+		if err != nil {
 			return nil, 0, err
 		}
 		messages = append(messages, m)
@@ -945,16 +683,98 @@ func (r *PostgresMessageRepository) IsMessageStarred(ctx context.Context, userID
 	return count > 0, nil
 }
 
+func (r *PostgresMessageRepository) PinMessage(ctx context.Context, p *message.PinnedMessage) error {
+	_, err := r.db.ExecContext(ctx, `
+        INSERT INTO pinned_messages (conversation_id, message_id, pinned_by, pinned_at)
+        VALUES ($1,$2,$3,$4)
+    `, p.ConversationID, p.MessageID, p.PinnedBy, p.PinnedAt)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return sentinal_errors.ErrAlreadyExists
+		}
+		return err
+	}
+	return nil
+}
+
+func (r *PostgresMessageRepository) UnpinMessage(ctx context.Context, conversationID, messageID uuid.UUID) error {
+	res, err := r.db.ExecContext(ctx, "DELETE FROM pinned_messages WHERE conversation_id = $1 AND message_id = $2", conversationID, messageID)
+	if err != nil {
+		return err
+	}
+	rows, err := res.RowsAffected()
+	if err == nil && rows == 0 {
+		return sentinal_errors.ErrNotFound
+	}
+	return err
+}
+
+func (r *PostgresMessageRepository) GetPinnedMessages(ctx context.Context, conversationID uuid.UUID) ([]message.PinnedMessage, error) {
+	var pinned []message.PinnedMessage
+	rows, err := r.db.QueryContext(ctx, `
+        SELECT conversation_id, message_id, pinned_by, pinned_at
+        FROM pinned_messages WHERE conversation_id = $1
+        ORDER BY pinned_at DESC
+    `, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var p message.PinnedMessage
+		if err := rows.Scan(&p.ConversationID, &p.MessageID, &p.PinnedBy, &p.PinnedAt); err != nil {
+			return nil, err
+		}
+		pinned = append(pinned, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return pinned, nil
+}
+
+func (r *PostgresMessageRepository) CreateMessageEdit(ctx context.Context, e *message.MessageEdit) error {
+	_, err := r.db.ExecContext(ctx, `
+        INSERT INTO message_edits (id, message_id, encrypted_content, edited_by, edited_at, version_number)
+        VALUES ($1,$2,$3,$4,$5,$6)
+    `, e.ID, e.MessageID, e.EncryptedContent, e.EditedBy, e.EditedAt, e.VersionNumber)
+	return err
+}
+
+func (r *PostgresMessageRepository) GetMessageEdits(ctx context.Context, messageID uuid.UUID) ([]message.MessageEdit, error) {
+	var edits []message.MessageEdit
+	rows, err := r.db.QueryContext(ctx, `
+        SELECT id, message_id, encrypted_content, edited_by, edited_at, version_number
+        FROM message_edits WHERE message_id = $1
+        ORDER BY version_number ASC
+    `, messageID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var e message.MessageEdit
+		if err := rows.Scan(&e.ID, &e.MessageID, &e.EncryptedContent, &e.EditedBy, &e.EditedAt, &e.VersionNumber); err != nil {
+			return nil, err
+		}
+		edits = append(edits, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return edits, nil
+}
+
 func (r *PostgresMessageRepository) CreateAttachment(ctx context.Context, a *message.Attachment) error {
 	_, err := r.db.ExecContext(ctx, `
         INSERT INTO attachments (
-            id, uploader_id, url, filename, mime_type, size_bytes, view_once, viewed_at, thumbnail_url,
-            width, height, duration_seconds, encryption_key_hash, encryption_iv, created_at
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+            id, uploader_id, encrypted_url, filename, mime_type, size_bytes, view_once, viewed_at,
+            thumbnail_url, width, height, duration_seconds, created_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
     `,
 		a.ID,
 		a.UploaderID,
-		a.URL,
+		a.EncryptedURL,
 		a.Filename,
 		a.MimeType,
 		a.SizeBytes,
@@ -964,8 +784,6 @@ func (r *PostgresMessageRepository) CreateAttachment(ctx context.Context, a *mes
 		a.Width,
 		a.Height,
 		a.DurationSeconds,
-		a.EncryptionKeyHash,
-		a.EncryptionIV,
 		a.CreatedAt,
 	)
 	return err
@@ -974,13 +792,13 @@ func (r *PostgresMessageRepository) CreateAttachment(ctx context.Context, a *mes
 func (r *PostgresMessageRepository) GetAttachmentByID(ctx context.Context, id uuid.UUID) (message.Attachment, error) {
 	var a message.Attachment
 	err := r.db.QueryRowContext(ctx, `
-        SELECT id, uploader_id, url, filename, mime_type, size_bytes, view_once, viewed_at, thumbnail_url,
-               width, height, duration_seconds, encryption_key_hash, encryption_iv, created_at
+        SELECT id, uploader_id, encrypted_url, filename, mime_type, size_bytes, view_once, viewed_at,
+               thumbnail_url, width, height, duration_seconds, created_at
         FROM attachments WHERE id = $1
     `, id).Scan(
 		&a.ID,
 		&a.UploaderID,
-		&a.URL,
+		&a.EncryptedURL,
 		&a.Filename,
 		&a.MimeType,
 		&a.SizeBytes,
@@ -990,8 +808,6 @@ func (r *PostgresMessageRepository) GetAttachmentByID(ctx context.Context, id uu
 		&a.Width,
 		&a.Height,
 		&a.DurationSeconds,
-		&a.EncryptionKeyHash,
-		&a.EncryptionIV,
 		&a.CreatedAt,
 	)
 	if err != nil {
@@ -1020,8 +836,8 @@ func (r *PostgresMessageRepository) LinkAttachmentToMessage(ctx context.Context,
 func (r *PostgresMessageRepository) GetMessageAttachments(ctx context.Context, messageID uuid.UUID) ([]message.Attachment, error) {
 	var attachments []message.Attachment
 	rows, err := r.db.QueryContext(ctx, `
-        SELECT a.id, a.uploader_id, a.url, a.filename, a.mime_type, a.size_bytes, a.view_once, a.viewed_at,
-               a.thumbnail_url, a.width, a.height, a.duration_seconds, a.encryption_key_hash, a.encryption_iv, a.created_at
+        SELECT a.id, a.uploader_id, a.encrypted_url, a.filename, a.mime_type, a.size_bytes, a.view_once, a.viewed_at,
+               a.thumbnail_url, a.width, a.height, a.duration_seconds, a.created_at
         FROM attachments a
         WHERE a.id IN (SELECT attachment_id FROM message_attachments WHERE message_id = $1)
     `, messageID)
@@ -1034,7 +850,7 @@ func (r *PostgresMessageRepository) GetMessageAttachments(ctx context.Context, m
 		if err := rows.Scan(
 			&a.ID,
 			&a.UploaderID,
-			&a.URL,
+			&a.EncryptedURL,
 			&a.Filename,
 			&a.MimeType,
 			&a.SizeBytes,
@@ -1044,8 +860,6 @@ func (r *PostgresMessageRepository) GetMessageAttachments(ctx context.Context, m
 			&a.Width,
 			&a.Height,
 			&a.DurationSeconds,
-			&a.EncryptionKeyHash,
-			&a.EncryptionIV,
 			&a.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -1072,73 +886,11 @@ func (r *PostgresMessageRepository) MarkViewOnceViewed(ctx context.Context, atta
 	return err
 }
 
-func (r *PostgresMessageRepository) CreateLinkPreview(ctx context.Context, lp *message.LinkPreview) error {
-	_, err := r.db.ExecContext(ctx, `
-        INSERT INTO link_previews (id, url, url_hash, title, description, image_url, site_name, fetched_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-    `, lp.ID, lp.URL, lp.URLHash, lp.Title, lp.Description, lp.ImageURL, lp.SiteName, lp.FetchedAt)
-	if err != nil {
-		if isUniqueViolation(err) {
-			return sentinal_errors.ErrAlreadyExists
-		}
-		return err
-	}
-	return nil
-}
-
-func (r *PostgresMessageRepository) GetLinkPreviewByHash(ctx context.Context, urlHash string) (message.LinkPreview, error) {
-	var lp message.LinkPreview
-	err := r.db.QueryRowContext(ctx, `
-        SELECT id, url, url_hash, title, description, image_url, site_name, fetched_at
-        FROM link_previews WHERE url_hash = $1
-    `, urlHash).Scan(
-		&lp.ID,
-		&lp.URL,
-		&lp.URLHash,
-		&lp.Title,
-		&lp.Description,
-		&lp.ImageURL,
-		&lp.SiteName,
-		&lp.FetchedAt,
-	)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return message.LinkPreview{}, sentinal_errors.ErrNotFound
-		}
-		return message.LinkPreview{}, err
-	}
-	return lp, nil
-}
-
-func (r *PostgresMessageRepository) GetLinkPreviewByID(ctx context.Context, id uuid.UUID) (message.LinkPreview, error) {
-	var lp message.LinkPreview
-	err := r.db.QueryRowContext(ctx, `
-        SELECT id, url, url_hash, title, description, image_url, site_name, fetched_at
-        FROM link_previews WHERE id = $1
-    `, id).Scan(
-		&lp.ID,
-		&lp.URL,
-		&lp.URLHash,
-		&lp.Title,
-		&lp.Description,
-		&lp.ImageURL,
-		&lp.SiteName,
-		&lp.FetchedAt,
-	)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return message.LinkPreview{}, sentinal_errors.ErrNotFound
-		}
-		return message.LinkPreview{}, err
-	}
-	return lp, nil
-}
-
 func (r *PostgresMessageRepository) CreatePoll(ctx context.Context, p *message.Poll) error {
 	_, err := r.db.ExecContext(ctx, `
-        INSERT INTO polls (id, message_id, question, allows_multiple, closes_at, created_at)
+        INSERT INTO polls (message_id, question, allows_multiple, closes_at, created_at)
         VALUES ($1,$2,$3,$4,$5,$6)
-    `, p.ID, p.MessageID, p.Question, p.AllowsMultiple, p.ClosesAt, p.CreatedAt)
+    `, p.MessageID, p.Question, p.AllowsMultiple, p.ClosesAt, p.CreatedAt)
 	return err
 }
 

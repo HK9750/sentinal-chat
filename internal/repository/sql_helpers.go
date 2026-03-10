@@ -12,9 +12,9 @@ import (
 
 // DBTX abstracts *sql.DB and *sql.Tx.
 type DBTX interface {
-	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
-	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
-	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
 func isUniqueViolation(err error) bool {
@@ -30,7 +30,7 @@ func buildPlaceholders(start, count int) string {
 		return ""
 	}
 	parts := make([]string, count)
-	for i := 0; i < count; i++ {
+	for i := range count {
 		parts[i] = fmt.Sprintf("$%d", start+i)
 	}
 	return strings.Join(parts, ",")

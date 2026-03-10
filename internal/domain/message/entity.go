@@ -9,30 +9,21 @@ import (
 
 // Message represents the messages table
 type Message struct {
-	ID                 uuid.UUID
-	ConversationID     uuid.UUID
-	SenderID           uuid.UUID
-	ClientMessageID    sql.NullString
-	IdempotencyKey     sql.NullString
-	SeqID              sql.NullInt64 // Managed by trigger, but model needs it
-	Type               string
-	Content            sql.NullString
-	Metadata           string
-	IsForwarded        bool
-	ForwardedFromMsgID uuid.NullUUID
-	ReplyToMsgID       uuid.NullUUID
-	PollID             uuid.NullUUID
-	LinkPreviewID      uuid.NullUUID
-	MentionCount       int
-	CreatedAt          time.Time
-	EditedAt           sql.NullTime
-	DeletedAt          sql.NullTime
-	ExpiresAt          sql.NullTime
-	Ciphertext         []byte
-	Header             string
-	RecipientDeviceID  uuid.NullUUID
-	RecipientUserID    uuid.NullUUID
-	SenderDeviceID     uuid.NullUUID
+	ID               uuid.UUID
+	ConversationID   uuid.UUID
+	SenderID         uuid.UUID
+	ClientMessageID  sql.NullString
+	SeqID            sql.NullInt64
+	Type             string
+	EncryptedContent sql.NullString
+	IsForwarded      bool
+	ReplyToMsgID     uuid.NullUUID
+	PollID           uuid.NullUUID
+	MentionCount     int
+	CreatedAt        time.Time
+	EditedAt         sql.NullTime
+	DeletedAt        sql.NullTime
+	ExpiresAt        sql.NullTime
 }
 
 // MessageReaction represents message_reactions
@@ -70,16 +61,22 @@ type StarredMessage struct {
 	StarredAt time.Time
 }
 
-// MessageCiphertext represents message_ciphertexts
-type MessageCiphertext struct {
-	ID                uuid.UUID
-	MessageID         uuid.UUID
-	RecipientUserID   uuid.UUID
-	RecipientDeviceID uuid.UUID
-	SenderDeviceID    uuid.NullUUID
-	Ciphertext        []byte
-	Header            string
-	CreatedAt         time.Time
+// PinnedMessage represents pinned_messages
+type PinnedMessage struct {
+	ConversationID uuid.UUID
+	MessageID      uuid.UUID
+	PinnedBy       uuid.UUID
+	PinnedAt       time.Time
+}
+
+// MessageEdit represents message_edits
+type MessageEdit struct {
+	ID               uuid.UUID
+	MessageID        uuid.UUID
+	EncryptedContent string
+	EditedBy         uuid.UUID
+	EditedAt         time.Time
+	VersionNumber    int
 }
 
 func (Message) TableName() string {
@@ -102,6 +99,10 @@ func (StarredMessage) TableName() string {
 	return "starred_messages"
 }
 
-func (MessageCiphertext) TableName() string {
-	return "message_ciphertexts"
+func (PinnedMessage) TableName() string {
+	return "pinned_messages"
+}
+
+func (MessageEdit) TableName() string {
+	return "message_edits"
 }

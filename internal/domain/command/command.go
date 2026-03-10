@@ -1,12 +1,13 @@
 package command
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
 )
 
-// Status represents command execution state
+// Status represents command execution state (maps to command_status enum)
 type Status string
 
 const (
@@ -22,10 +23,10 @@ type CommandLog struct {
 	ID              uuid.UUID
 	CommandType     string
 	UserID          uuid.UUID
+	ConversationID  *uuid.UUID
 	Status          Status
-	Payload         []byte
-	Result          []byte
-	UndoData        []byte
+	Payload         json.RawMessage
+	UndoPayload     json.RawMessage
 	ErrorMessage    string
 	ExecutionTimeMs int
 	CreatedAt       time.Time
@@ -36,38 +37,4 @@ type CommandLog struct {
 // TableName returns the database table name
 func (CommandLog) TableName() string {
 	return "command_logs"
-}
-
-// ScheduledMessage for delayed delivery
-type ScheduledMessage struct {
-	ID             uuid.UUID
-	MessageID      uuid.UUID
-	ConversationID uuid.UUID
-	SenderID       uuid.UUID
-	Content        string
-	ScheduledFor   time.Time
-	Timezone       string
-	Status         string
-	CreatedAt      time.Time
-	SentAt         *time.Time
-}
-
-// TableName returns the database table name
-func (ScheduledMessage) TableName() string {
-	return "scheduled_messages"
-}
-
-// MessageVersion for edit history
-type MessageVersion struct {
-	ID            uuid.UUID
-	MessageID     uuid.UUID
-	Content       string
-	EditedBy      uuid.UUID
-	EditedAt      time.Time
-	VersionNumber int
-}
-
-// TableName returns the database table name
-func (MessageVersion) TableName() string {
-	return "message_versions"
 }

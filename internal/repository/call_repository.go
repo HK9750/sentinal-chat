@@ -20,11 +20,33 @@ func NewCallRepository(db DBTX) CallRepository {
 	return &PostgresCallRepository{db: db}
 }
 
+const callColumns = `id, conversation_id, initiated_by, type, is_group_call, started_at, connected_at, ended_at, end_reason, duration_seconds, created_at`
+
+func scanCall(scanner interface {
+	Scan(dest ...interface{}) error
+}) (call.Call, error) {
+	var c call.Call
+	err := scanner.Scan(
+		&c.ID,
+		&c.ConversationID,
+		&c.InitiatedBy,
+		&c.Type,
+		&c.IsGroupCall,
+		&c.StartedAt,
+		&c.ConnectedAt,
+		&c.EndedAt,
+		&c.EndReason,
+		&c.DurationSeconds,
+		&c.CreatedAt,
+	)
+	return c, err
+}
+
 func (r *PostgresCallRepository) Create(ctx context.Context, c *call.Call) error {
 	_, err := r.db.ExecContext(ctx, `
-        INSERT INTO calls (id, conversation_id, initiated_by, type, topology, is_group_call, started_at, connected_at, ended_at, end_reason, duration_seconds, created_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-    `, c.ID, c.ConversationID, c.InitiatedBy, c.Type, c.Topology, c.IsGroupCall, c.StartedAt, c.ConnectedAt, c.EndedAt, c.EndReason, c.DurationSeconds, c.CreatedAt)
+        INSERT INTO calls (conversation_id, initiated_by, type, is_group_call, started_at, connected_at, ended_at, end_reason, duration_seconds, created_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+    `, c.ConversationID, c.InitiatedBy, c.Type, c.IsGroupCall, c.StartedAt, c.ConnectedAt, c.EndedAt, c.EndReason, c.DurationSeconds, c.CreatedAt)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return sentinal_errors.ErrAlreadyExists
@@ -35,24 +57,9 @@ func (r *PostgresCallRepository) Create(ctx context.Context, c *call.Call) error
 }
 
 func (r *PostgresCallRepository) GetByID(ctx context.Context, id uuid.UUID) (call.Call, error) {
-	var c call.Call
-	err := r.db.QueryRowContext(ctx, `
-        SELECT id, conversation_id, initiated_by, type, topology, is_group_call, started_at, connected_at, ended_at, end_reason, duration_seconds, created_at
-        FROM calls WHERE id = $1
-    `, id).Scan(
-		&c.ID,
-		&c.ConversationID,
-		&c.InitiatedBy,
-		&c.Type,
-		&c.Topology,
-		&c.IsGroupCall,
-		&c.StartedAt,
-		&c.ConnectedAt,
-		&c.EndedAt,
-		&c.EndReason,
-		&c.DurationSeconds,
-		&c.CreatedAt,
-	)
+	c, err := scanCall(r.db.QueryRowContext(ctx, `
+        SELECT `+callColumns+` FROM calls WHERE id = $1
+    `, id))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return call.Call{}, sentinal_errors.ErrNotFound
@@ -65,14 +72,13 @@ func (r *PostgresCallRepository) GetByID(ctx context.Context, id uuid.UUID) (cal
 func (r *PostgresCallRepository) Update(ctx context.Context, c call.Call) error {
 	res, err := r.db.ExecContext(ctx, `
         UPDATE calls
-        SET conversation_id = $1, initiated_by = $2, type = $3, topology = $4, is_group_call = $5,
-            started_at = $6, connected_at = $7, ended_at = $8, end_reason = $9, duration_seconds = $10
-        WHERE id = $11
+        SET conversation_id = $1, initiated_by = $2, type = $3, is_group_call = $4,
+            started_at = $5, connected_at = $6, ended_at = $7, end_reason = $8, duration_seconds = $9
+        WHERE id = $10
     `,
 		c.ConversationID,
 		c.InitiatedBy,
 		c.Type,
-		c.Topology,
 		c.IsGroupCall,
 		c.StartedAt,
 		c.ConnectedAt,
@@ -101,7 +107,7 @@ func (r *PostgresCallRepository) GetConversationCalls(ctx context.Context, conve
 
 	offset := (page - 1) * limit
 	rows, err := r.db.QueryContext(ctx, `
-        SELECT id, conversation_id, initiated_by, type, topology, is_group_call, started_at, connected_at, ended_at, end_reason, duration_seconds, created_at
+        SELECT `+callColumns+`
         FROM calls
         WHERE conversation_id = $1
         ORDER BY started_at DESC
@@ -113,21 +119,8 @@ func (r *PostgresCallRepository) GetConversationCalls(ctx context.Context, conve
 	defer rows.Close()
 
 	for rows.Next() {
-		var c call.Call
-		if err := rows.Scan(
-			&c.ID,
-			&c.ConversationID,
-			&c.InitiatedBy,
-			&c.Type,
-			&c.Topology,
-			&c.IsGroupCall,
-			&c.StartedAt,
-			&c.ConnectedAt,
-			&c.EndedAt,
-			&c.EndReason,
-			&c.DurationSeconds,
-			&c.CreatedAt,
-		); err != nil {
+		c, err := scanCall(rows)
+		if err != nil {
 			return nil, 0, err
 		}
 		calls = append(calls, c)
@@ -151,7 +144,7 @@ func (r *PostgresCallRepository) GetUserCalls(ctx context.Context, userID uuid.U
 
 	offset := (page - 1) * limit
 	rows, err := r.db.QueryContext(ctx, `
-        SELECT id, conversation_id, initiated_by, type, topology, is_group_call, started_at, connected_at, ended_at, end_reason, duration_seconds, created_at
+        SELECT `+callColumns+`
         FROM calls
         WHERE initiated_by = $1 OR id IN (SELECT call_id FROM call_participants WHERE user_id = $1)
         ORDER BY started_at DESC
@@ -163,21 +156,8 @@ func (r *PostgresCallRepository) GetUserCalls(ctx context.Context, userID uuid.U
 	defer rows.Close()
 
 	for rows.Next() {
-		var c call.Call
-		if err := rows.Scan(
-			&c.ID,
-			&c.ConversationID,
-			&c.InitiatedBy,
-			&c.Type,
-			&c.Topology,
-			&c.IsGroupCall,
-			&c.StartedAt,
-			&c.ConnectedAt,
-			&c.EndedAt,
-			&c.EndReason,
-			&c.DurationSeconds,
-			&c.CreatedAt,
-		); err != nil {
+		c, err := scanCall(rows)
+		if err != nil {
 			return nil, 0, err
 		}
 		calls = append(calls, c)
@@ -191,7 +171,7 @@ func (r *PostgresCallRepository) GetUserCalls(ctx context.Context, userID uuid.U
 func (r *PostgresCallRepository) GetActiveCalls(ctx context.Context, userID uuid.UUID) ([]call.Call, error) {
 	var calls []call.Call
 	rows, err := r.db.QueryContext(ctx, `
-        SELECT id, conversation_id, initiated_by, type, topology, is_group_call, started_at, connected_at, ended_at, end_reason, duration_seconds, created_at
+        SELECT `+callColumns+`
         FROM calls
         WHERE ended_at IS NULL AND (initiated_by = $1 OR id IN (
             SELECT call_id FROM call_participants WHERE user_id = $1 AND status IN ('INVITED','JOINED')
@@ -202,21 +182,8 @@ func (r *PostgresCallRepository) GetActiveCalls(ctx context.Context, userID uuid
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var c call.Call
-		if err := rows.Scan(
-			&c.ID,
-			&c.ConversationID,
-			&c.InitiatedBy,
-			&c.Type,
-			&c.Topology,
-			&c.IsGroupCall,
-			&c.StartedAt,
-			&c.ConnectedAt,
-			&c.EndedAt,
-			&c.EndReason,
-			&c.DurationSeconds,
-			&c.CreatedAt,
-		); err != nil {
+		c, err := scanCall(rows)
+		if err != nil {
 			return nil, err
 		}
 		calls = append(calls, c)
@@ -230,7 +197,7 @@ func (r *PostgresCallRepository) GetActiveCalls(ctx context.Context, userID uuid
 func (r *PostgresCallRepository) GetMissedCalls(ctx context.Context, userID uuid.UUID, since time.Time) ([]call.Call, error) {
 	var calls []call.Call
 	rows, err := r.db.QueryContext(ctx, `
-        SELECT id, conversation_id, initiated_by, type, topology, is_group_call, started_at, connected_at, ended_at, end_reason, duration_seconds, created_at
+        SELECT `+callColumns+`
         FROM calls
         WHERE id IN (
             SELECT call_id FROM call_participants
@@ -243,21 +210,8 @@ func (r *PostgresCallRepository) GetMissedCalls(ctx context.Context, userID uuid
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var c call.Call
-		if err := rows.Scan(
-			&c.ID,
-			&c.ConversationID,
-			&c.InitiatedBy,
-			&c.Type,
-			&c.Topology,
-			&c.IsGroupCall,
-			&c.StartedAt,
-			&c.ConnectedAt,
-			&c.EndedAt,
-			&c.EndReason,
-			&c.DurationSeconds,
-			&c.CreatedAt,
-		); err != nil {
+		c, err := scanCall(rows)
+		if err != nil {
 			return nil, err
 		}
 		calls = append(calls, c)
@@ -284,23 +238,9 @@ func (r *PostgresCallRepository) EndCall(ctx context.Context, callID uuid.UUID, 
 	now := time.Now()
 	return WithTx(ctx, r.db, func(tx DBTX) error {
 		var c call.Call
-		err := tx.QueryRowContext(ctx, `
-            SELECT id, conversation_id, initiated_by, type, topology, is_group_call, started_at, connected_at, ended_at, end_reason, duration_seconds, created_at
-            FROM calls WHERE id = $1
-        `, callID).Scan(
-			&c.ID,
-			&c.ConversationID,
-			&c.InitiatedBy,
-			&c.Type,
-			&c.Topology,
-			&c.IsGroupCall,
-			&c.StartedAt,
-			&c.ConnectedAt,
-			&c.EndedAt,
-			&c.EndReason,
-			&c.DurationSeconds,
-			&c.CreatedAt,
-		)
+		c, err := scanCall(tx.QueryRowContext(ctx, `
+            SELECT `+callColumns+` FROM calls WHERE id = $1
+        `, callID))
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return sentinal_errors.ErrNotFound
@@ -308,20 +248,17 @@ func (r *PostgresCallRepository) EndCall(ctx context.Context, callID uuid.UUID, 
 			return err
 		}
 
-		updates := map[string]interface{}{
-			"ended_at":   now,
-			"end_reason": reason,
-		}
+		var duration any
 		if c.ConnectedAt.Valid {
-			duration := int32(now.Sub(c.ConnectedAt.Time).Seconds())
-			updates["duration_seconds"] = duration
+			d := int32(now.Sub(c.ConnectedAt.Time).Seconds())
+			duration = d
 		}
 
 		_, err = tx.ExecContext(ctx, `
             UPDATE calls
             SET ended_at = $1, end_reason = $2, duration_seconds = COALESCE($3, duration_seconds)
             WHERE id = $4
-        `, updates["ended_at"], updates["end_reason"], updates["duration_seconds"], callID)
+        `, now, reason, duration, callID)
 		return err
 	})
 }
@@ -343,9 +280,9 @@ func (r *PostgresCallRepository) GetCallDuration(ctx context.Context, callID uui
 
 func (r *PostgresCallRepository) AddParticipant(ctx context.Context, p *call.CallParticipant) error {
 	_, err := r.db.ExecContext(ctx, `
-        INSERT INTO call_participants (call_id, user_id, status, joined_at, left_at, muted_audio, muted_video, device_type)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-    `, p.CallID, p.UserID, p.Status, p.JoinedAt, p.LeftAt, p.MutedAudio, p.MutedVideo, p.DeviceType)
+        INSERT INTO call_participants (call_id, user_id, status, joined_at, left_at, muted_audio, muted_video)
+        VALUES ($1,$2,$3,$4,$5,$6,$7)
+    `, p.CallID, p.UserID, p.Status, p.JoinedAt, p.LeftAt, p.MutedAudio, p.MutedVideo)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return sentinal_errors.ErrAlreadyExists
@@ -375,7 +312,7 @@ func (r *PostgresCallRepository) RemoveParticipant(ctx context.Context, callID, 
 func (r *PostgresCallRepository) GetCallParticipants(ctx context.Context, callID uuid.UUID) ([]call.CallParticipant, error) {
 	var participants []call.CallParticipant
 	rows, err := r.db.QueryContext(ctx, `
-        SELECT call_id, user_id, status, joined_at, left_at, muted_audio, muted_video, device_type
+        SELECT call_id, user_id, status, joined_at, left_at, muted_audio, muted_video
         FROM call_participants WHERE call_id = $1
     `, callID)
 	if err != nil {
@@ -384,7 +321,7 @@ func (r *PostgresCallRepository) GetCallParticipants(ctx context.Context, callID
 	defer rows.Close()
 	for rows.Next() {
 		var p call.CallParticipant
-		if err := rows.Scan(&p.CallID, &p.UserID, &p.Status, &p.JoinedAt, &p.LeftAt, &p.MutedAudio, &p.MutedVideo, &p.DeviceType); err != nil {
+		if err := rows.Scan(&p.CallID, &p.UserID, &p.Status, &p.JoinedAt, &p.LeftAt, &p.MutedAudio, &p.MutedVideo); err != nil {
 			return nil, err
 		}
 		participants = append(participants, p)
@@ -409,7 +346,7 @@ var (
 )
 
 func (r *PostgresCallRepository) UpdateParticipantStatus(ctx context.Context, callID, userID uuid.UUID, status string) error {
-	updates := map[string]interface{}{
+	updates := map[string]any{
 		"status": status,
 	}
 	switch status {
@@ -456,88 +393,4 @@ func (r *PostgresCallRepository) GetActiveParticipantCount(ctx context.Context, 
 		return 0, err
 	}
 	return count, nil
-}
-
-func (r *PostgresCallRepository) RecordQualityMetric(ctx context.Context, m *call.CallQualityMetric) error {
-	_, err := r.db.ExecContext(ctx, `
-        INSERT INTO call_quality_metrics (
-            id, call_id, user_id, recorded_at, packets_sent, packets_received, packets_lost, jitter_ms,
-            round_trip_time_ms, bitrate_kbps, frame_rate, resolution_width, resolution_height, audio_level,
-            connection_type, ice_candidate_type
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
-    `,
-		m.ID, m.CallID, m.UserID, m.RecordedAt, m.PacketsSent, m.PacketsReceived, m.PacketsLost, m.JitterMs,
-		m.RoundTripTimeMs, m.BitrateKbps, m.FrameRate, m.ResolutionWidth, m.ResolutionHeight, m.AudioLevel,
-		m.ConnectionType, m.IceCandidateType,
-	)
-	return err
-}
-
-func (r *PostgresCallRepository) GetCallQualityMetrics(ctx context.Context, callID uuid.UUID) ([]call.CallQualityMetric, error) {
-	var metrics []call.CallQualityMetric
-	rows, err := r.db.QueryContext(ctx, `
-        SELECT id, call_id, user_id, recorded_at, packets_sent, packets_received, packets_lost, jitter_ms,
-               round_trip_time_ms, bitrate_kbps, frame_rate, resolution_width, resolution_height, audio_level,
-               connection_type, ice_candidate_type
-        FROM call_quality_metrics WHERE call_id = $1 ORDER BY recorded_at ASC
-    `, callID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var m call.CallQualityMetric
-		if err := rows.Scan(
-			&m.ID, &m.CallID, &m.UserID, &m.RecordedAt, &m.PacketsSent, &m.PacketsReceived, &m.PacketsLost, &m.JitterMs,
-			&m.RoundTripTimeMs, &m.BitrateKbps, &m.FrameRate, &m.ResolutionWidth, &m.ResolutionHeight, &m.AudioLevel,
-			&m.ConnectionType, &m.IceCandidateType,
-		); err != nil {
-			return nil, err
-		}
-		metrics = append(metrics, m)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return metrics, nil
-}
-
-func (r *PostgresCallRepository) GetUserCallQualityMetrics(ctx context.Context, callID, userID uuid.UUID) ([]call.CallQualityMetric, error) {
-	var metrics []call.CallQualityMetric
-	rows, err := r.db.QueryContext(ctx, `
-        SELECT id, call_id, user_id, recorded_at, packets_sent, packets_received, packets_lost, jitter_ms,
-               round_trip_time_ms, bitrate_kbps, frame_rate, resolution_width, resolution_height, audio_level,
-               connection_type, ice_candidate_type
-        FROM call_quality_metrics WHERE call_id = $1 AND user_id = $2 ORDER BY recorded_at ASC
-    `, callID, userID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var m call.CallQualityMetric
-		if err := rows.Scan(
-			&m.ID, &m.CallID, &m.UserID, &m.RecordedAt, &m.PacketsSent, &m.PacketsReceived, &m.PacketsLost, &m.JitterMs,
-			&m.RoundTripTimeMs, &m.BitrateKbps, &m.FrameRate, &m.ResolutionWidth, &m.ResolutionHeight, &m.AudioLevel,
-			&m.ConnectionType, &m.IceCandidateType,
-		); err != nil {
-			return nil, err
-		}
-		metrics = append(metrics, m)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return metrics, nil
-}
-
-func (r *PostgresCallRepository) GetAverageCallQuality(ctx context.Context, callID uuid.UUID) (float64, error) {
-	var avg sql.NullFloat64
-	if err := r.db.QueryRowContext(ctx, "SELECT AVG(jitter_ms) FROM call_quality_metrics WHERE call_id = $1", callID).Scan(&avg); err != nil {
-		return 0, err
-	}
-	if avg.Valid {
-		return avg.Float64, nil
-	}
-	return 0, nil
 }

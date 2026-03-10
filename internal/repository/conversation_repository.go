@@ -20,27 +20,48 @@ func NewConversationRepository(db DBTX) ConversationRepository {
 	return &PostgresConversationRepository{db: db}
 }
 
+const convColumns = `id, type, subject, description, avatar_url, invite_link, invite_link_revoked_at,
+       dm_user_id_a, dm_user_id_b, disappearing_mode, created_by, created_at, updated_at`
+
+func scanConversation(scanner interface {
+	Scan(dest ...any) error
+}) (conversation.Conversation, error) {
+	var c conversation.Conversation
+	err := scanner.Scan(
+		&c.ID,
+		&c.Type,
+		&c.Subject,
+		&c.Description,
+		&c.AvatarURL,
+		&c.InviteLink,
+		&c.InviteLinkRevokedAt,
+		&c.DMUserIDA,
+		&c.DMUserIDB,
+		&c.DisappearingMode,
+		&c.CreatedBy,
+		&c.CreatedAt,
+		&c.UpdatedAt,
+	)
+	return c, err
+}
+
 func (r *PostgresConversationRepository) Create(ctx context.Context, c *conversation.Conversation) error {
 	_, err := r.db.ExecContext(ctx, `
         INSERT INTO conversations (
-            id, type, subject, description, avatar_url, expiry_seconds, disappearing_mode, message_expiry_seconds,
-            group_permissions, invite_link, invite_link_revoked_at, created_by, dm_user_id_a, dm_user_id_b, created_at, updated_at
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+             type, subject, description, avatar_url, invite_link, invite_link_revoked_at,
+            dm_user_id_a, dm_user_id_b, disappearing_mode, created_by, created_at, updated_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
     `,
-		c.ID,
 		c.Type,
 		c.Subject,
 		c.Description,
 		c.AvatarURL,
-		c.ExpirySeconds,
-		c.DisappearingMode,
-		c.MessageExpirySeconds,
-		c.GroupPermissions,
 		c.InviteLink,
 		c.InviteLinkRevokedAt,
-		c.CreatedBy,
 		c.DMUserIDA,
 		c.DMUserIDB,
+		c.DisappearingMode,
+		c.CreatedBy,
 		c.CreatedAt,
 		c.UpdatedAt,
 	)
@@ -54,30 +75,9 @@ func (r *PostgresConversationRepository) Create(ctx context.Context, c *conversa
 }
 
 func (r *PostgresConversationRepository) GetByID(ctx context.Context, id uuid.UUID) (conversation.Conversation, error) {
-	var c conversation.Conversation
-	err := r.db.QueryRowContext(ctx, `
-        SELECT id, type, subject, description, avatar_url, expiry_seconds, disappearing_mode, message_expiry_seconds,
-               group_permissions, invite_link, invite_link_revoked_at, created_by, dm_user_id_a, dm_user_id_b,
-               created_at, updated_at
-        FROM conversations WHERE id = $1
-    `, id).Scan(
-		&c.ID,
-		&c.Type,
-		&c.Subject,
-		&c.Description,
-		&c.AvatarURL,
-		&c.ExpirySeconds,
-		&c.DisappearingMode,
-		&c.MessageExpirySeconds,
-		&c.GroupPermissions,
-		&c.InviteLink,
-		&c.InviteLinkRevokedAt,
-		&c.CreatedBy,
-		&c.DMUserIDA,
-		&c.DMUserIDB,
-		&c.CreatedAt,
-		&c.UpdatedAt,
-	)
+	c, err := scanConversation(r.db.QueryRowContext(ctx, `
+        SELECT `+convColumns+` FROM conversations WHERE id = $1
+    `, id))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return conversation.Conversation{}, sentinal_errors.ErrNotFound
@@ -95,25 +95,22 @@ func (r *PostgresConversationRepository) GetByID(ctx context.Context, id uuid.UU
 
 func (r *PostgresConversationRepository) Update(ctx context.Context, c conversation.Conversation) error {
 	res, err := r.db.ExecContext(ctx, `
-	    UPDATE conversations
-	    SET type = $1, subject = $2, description = $3, avatar_url = $4, expiry_seconds = $5, disappearing_mode = $6,
-	        message_expiry_seconds = $7, group_permissions = $8, invite_link = $9, invite_link_revoked_at = $10,
-	        created_by = $11, dm_user_id_a = $12, dm_user_id_b = $13, updated_at = $14
-	    WHERE id = $15
-	`,
+        UPDATE conversations
+        SET type = $1, subject = $2, description = $3, avatar_url = $4, invite_link = $5,
+            invite_link_revoked_at = $6, dm_user_id_a = $7, dm_user_id_b = $8,
+            disappearing_mode = $9, created_by = $10, updated_at = $11
+        WHERE id = $12
+    `,
 		c.Type,
 		c.Subject,
 		c.Description,
 		c.AvatarURL,
-		c.ExpirySeconds,
-		c.DisappearingMode,
-		c.MessageExpirySeconds,
-		c.GroupPermissions,
 		c.InviteLink,
 		c.InviteLinkRevokedAt,
-		c.CreatedBy,
 		c.DMUserIDA,
 		c.DMUserIDB,
+		c.DisappearingMode,
+		c.CreatedBy,
 		c.UpdatedAt,
 		c.ID,
 	)
@@ -152,15 +149,13 @@ func (r *PostgresConversationRepository) GetUserConversations(ctx context.Contex
 
 	offset := (page - 1) * limit
 	rows, err := r.db.QueryContext(ctx, `
-	    SELECT c.id, c.type, c.subject, c.description, c.avatar_url, c.expiry_seconds, c.disappearing_mode,
-	           c.message_expiry_seconds, c.group_permissions, c.invite_link, c.invite_link_revoked_at, c.created_by,
-	           c.dm_user_id_a, c.dm_user_id_b, c.created_at, c.updated_at,
-	           (SELECT MAX(m.created_at) FROM messages m WHERE m.conversation_id = c.id) AS last_message_at
-	    FROM conversations c
-	    WHERE c.id IN (SELECT conversation_id FROM participants WHERE user_id = $1)
-	    ORDER BY COALESCE((SELECT MAX(m.created_at) FROM messages m WHERE m.conversation_id = c.id), c.created_at) DESC
-	    OFFSET $2 LIMIT $3
-	`, userID, offset, limit)
+        SELECT `+convColumns+`,
+               (SELECT MAX(m.created_at) FROM messages m WHERE m.conversation_id = c.id) AS last_message_at
+        FROM conversations c
+        WHERE c.id IN (SELECT conversation_id FROM participants WHERE user_id = $1)
+        ORDER BY COALESCE((SELECT MAX(m.created_at) FROM messages m WHERE m.conversation_id = c.id), c.created_at) DESC
+        OFFSET $2 LIMIT $3
+    `, userID, offset, limit)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -175,15 +170,12 @@ func (r *PostgresConversationRepository) GetUserConversations(ctx context.Contex
 			&c.Subject,
 			&c.Description,
 			&c.AvatarURL,
-			&c.ExpirySeconds,
-			&c.DisappearingMode,
-			&c.MessageExpirySeconds,
-			&c.GroupPermissions,
 			&c.InviteLink,
 			&c.InviteLinkRevokedAt,
-			&c.CreatedBy,
 			&c.DMUserIDA,
 			&c.DMUserIDB,
+			&c.DisappearingMode,
+			&c.CreatedBy,
 			&c.CreatedAt,
 			&c.UpdatedAt,
 			&lastMessageAt,
@@ -208,34 +200,14 @@ func (r *PostgresConversationRepository) GetUserConversations(ctx context.Contex
 }
 
 func (r *PostgresConversationRepository) GetDirectConversation(ctx context.Context, userID1, userID2 uuid.UUID) (conversation.Conversation, error) {
-	var c conversation.Conversation
-	err := r.db.QueryRowContext(ctx, `
-	    SELECT c.id, c.type, c.subject, c.description, c.avatar_url, c.expiry_seconds, c.disappearing_mode,
-	           c.message_expiry_seconds, c.group_permissions, c.invite_link, c.invite_link_revoked_at, c.created_by,
-	           c.dm_user_id_a, c.dm_user_id_b, c.created_at, c.updated_at
-	    FROM conversations c
-	    WHERE c.type = 'DM'
-	      AND c.dm_user_id_a = LEAST($1, $2)
-	      AND c.dm_user_id_b = GREATEST($1, $2)
-	    LIMIT 1
-	`, userID1, userID2).Scan(
-		&c.ID,
-		&c.Type,
-		&c.Subject,
-		&c.Description,
-		&c.AvatarURL,
-		&c.ExpirySeconds,
-		&c.DisappearingMode,
-		&c.MessageExpirySeconds,
-		&c.GroupPermissions,
-		&c.InviteLink,
-		&c.InviteLinkRevokedAt,
-		&c.CreatedBy,
-		&c.DMUserIDA,
-		&c.DMUserIDB,
-		&c.CreatedAt,
-		&c.UpdatedAt,
-	)
+	c, err := scanConversation(r.db.QueryRowContext(ctx, `
+        SELECT `+convColumns+`
+        FROM conversations
+        WHERE type = 'DM'
+          AND dm_user_id_a = LEAST($1, $2)
+          AND dm_user_id_b = GREATEST($1, $2)
+        LIMIT 1
+    `, userID1, userID2))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return conversation.Conversation{}, sentinal_errors.ErrNotFound
@@ -253,37 +225,18 @@ func (r *PostgresConversationRepository) GetDirectConversation(ctx context.Conte
 func (r *PostgresConversationRepository) SearchConversations(ctx context.Context, userID uuid.UUID, query string) ([]conversation.Conversation, error) {
 	var conversations []conversation.Conversation
 	rows, err := r.db.QueryContext(ctx, `
-	    SELECT c.id, c.type, c.subject, c.description, c.avatar_url, c.expiry_seconds, c.disappearing_mode,
-	           c.message_expiry_seconds, c.group_permissions, c.invite_link, c.invite_link_revoked_at, c.created_by,
-	           c.dm_user_id_a, c.dm_user_id_b, c.created_at, c.updated_at
-	    FROM conversations c
-	    WHERE c.id IN (SELECT conversation_id FROM participants WHERE user_id = $1)
-	      AND c.subject ILIKE $2
-	`, userID, "%"+query+"%")
+        SELECT `+convColumns+`
+        FROM conversations c
+        WHERE c.id IN (SELECT conversation_id FROM participants WHERE user_id = $1)
+          AND c.subject ILIKE $2
+    `, userID, "%"+query+"%")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var c conversation.Conversation
-		if err := rows.Scan(
-			&c.ID,
-			&c.Type,
-			&c.Subject,
-			&c.Description,
-			&c.AvatarURL,
-			&c.ExpirySeconds,
-			&c.DisappearingMode,
-			&c.MessageExpirySeconds,
-			&c.GroupPermissions,
-			&c.InviteLink,
-			&c.InviteLinkRevokedAt,
-			&c.CreatedBy,
-			&c.DMUserIDA,
-			&c.DMUserIDB,
-			&c.CreatedAt,
-			&c.UpdatedAt,
-		); err != nil {
+		c, err := scanConversation(rows)
+		if err != nil {
 			return nil, err
 		}
 		participants, err := r.GetParticipants(ctx, c.ID)
@@ -302,37 +255,18 @@ func (r *PostgresConversationRepository) SearchConversations(ctx context.Context
 func (r *PostgresConversationRepository) GetConversationsByType(ctx context.Context, userID uuid.UUID, convType string) ([]conversation.Conversation, error) {
 	var conversations []conversation.Conversation
 	rows, err := r.db.QueryContext(ctx, `
-	    SELECT c.id, c.type, c.subject, c.description, c.avatar_url, c.expiry_seconds, c.disappearing_mode,
-	           c.message_expiry_seconds, c.group_permissions, c.invite_link, c.invite_link_revoked_at, c.created_by,
-	           c.dm_user_id_a, c.dm_user_id_b, c.created_at, c.updated_at
-	    FROM conversations c
-	    WHERE c.id IN (SELECT conversation_id FROM participants WHERE user_id = $1)
-	      AND c.type = $2
-	`, userID, convType)
+        SELECT `+convColumns+`
+        FROM conversations c
+        WHERE c.id IN (SELECT conversation_id FROM participants WHERE user_id = $1)
+          AND c.type = $2
+    `, userID, convType)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var c conversation.Conversation
-		if err := rows.Scan(
-			&c.ID,
-			&c.Type,
-			&c.Subject,
-			&c.Description,
-			&c.AvatarURL,
-			&c.ExpirySeconds,
-			&c.DisappearingMode,
-			&c.MessageExpirySeconds,
-			&c.GroupPermissions,
-			&c.InviteLink,
-			&c.InviteLinkRevokedAt,
-			&c.CreatedBy,
-			&c.DMUserIDA,
-			&c.DMUserIDB,
-			&c.CreatedAt,
-			&c.UpdatedAt,
-		); err != nil {
+		c, err := scanConversation(rows)
+		if err != nil {
 			return nil, err
 		}
 		participants, err := r.GetParticipants(ctx, c.ID)
@@ -349,31 +283,11 @@ func (r *PostgresConversationRepository) GetConversationsByType(ctx context.Cont
 }
 
 func (r *PostgresConversationRepository) GetByInviteLink(ctx context.Context, link string) (conversation.Conversation, error) {
-	var c conversation.Conversation
-	err := r.db.QueryRowContext(ctx, `
-	    SELECT id, type, subject, description, avatar_url, expiry_seconds, disappearing_mode, message_expiry_seconds,
-	           group_permissions, invite_link, invite_link_revoked_at, created_by, dm_user_id_a, dm_user_id_b,
-	           created_at, updated_at
-	    FROM conversations
-	    WHERE invite_link = $1 AND (invite_link_revoked_at IS NULL OR invite_link_revoked_at > NOW())
-	`, link).Scan(
-		&c.ID,
-		&c.Type,
-		&c.Subject,
-		&c.Description,
-		&c.AvatarURL,
-		&c.ExpirySeconds,
-		&c.DisappearingMode,
-		&c.MessageExpirySeconds,
-		&c.GroupPermissions,
-		&c.InviteLink,
-		&c.InviteLinkRevokedAt,
-		&c.CreatedBy,
-		&c.DMUserIDA,
-		&c.DMUserIDB,
-		&c.CreatedAt,
-		&c.UpdatedAt,
-	)
+	c, err := scanConversation(r.db.QueryRowContext(ctx, `
+        SELECT `+convColumns+`
+        FROM conversations
+        WHERE invite_link = $1 AND (invite_link_revoked_at IS NULL OR invite_link_revoked_at > NOW())
+    `, link))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return conversation.Conversation{}, sentinal_errors.ErrNotFound
@@ -407,8 +321,8 @@ func (r *PostgresConversationRepository) RegenerateInviteLink(ctx context.Contex
 
 func (r *PostgresConversationRepository) AddParticipant(ctx context.Context, p *conversation.Participant) error {
 	_, err := r.db.ExecContext(ctx, `
-        INSERT INTO participants (conversation_id, user_id, role, joined_at, added_by, muted_until, pinned_at, archived, last_read_sequence, permissions)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+        INSERT INTO participants (conversation_id, user_id, role, joined_at, added_by, muted_until, archived, last_read_sequence)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
     `,
 		p.ConversationID,
 		p.UserID,
@@ -416,10 +330,8 @@ func (r *PostgresConversationRepository) AddParticipant(ctx context.Context, p *
 		p.JoinedAt,
 		p.AddedBy,
 		p.MutedUntil,
-		p.PinnedAt,
 		p.Archived,
 		p.LastReadSequence,
-		p.Permissions,
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -445,8 +357,8 @@ func (r *PostgresConversationRepository) RemoveParticipant(ctx context.Context, 
 func (r *PostgresConversationRepository) GetParticipants(ctx context.Context, conversationID uuid.UUID) ([]conversation.Participant, error) {
 	var participants []conversation.Participant
 	rows, err := r.db.QueryContext(ctx, `
-        SELECT p.conversation_id, p.user_id, p.role, p.joined_at, p.added_by, p.muted_until, p.pinned_at,
-               p.archived, p.last_read_sequence, p.permissions,
+        SELECT p.conversation_id, p.user_id, p.role, p.joined_at, p.added_by, p.muted_until,
+               p.archived, p.last_read_sequence,
                COALESCE(u.display_name, ''), COALESCE(u.username, ''), COALESCE(u.avatar_url, ''), COALESCE(u.is_online, false)
         FROM participants p
         LEFT JOIN users u ON u.id = p.user_id
@@ -465,10 +377,8 @@ func (r *PostgresConversationRepository) GetParticipants(ctx context.Context, co
 			&p.JoinedAt,
 			&p.AddedBy,
 			&p.MutedUntil,
-			&p.PinnedAt,
 			&p.Archived,
 			&p.LastReadSequence,
-			&p.Permissions,
 			&p.DisplayName,
 			&p.Username,
 			&p.AvatarURL,
@@ -487,7 +397,7 @@ func (r *PostgresConversationRepository) GetParticipants(ctx context.Context, co
 func (r *PostgresConversationRepository) GetParticipant(ctx context.Context, conversationID, userID uuid.UUID) (conversation.Participant, error) {
 	var p conversation.Participant
 	err := r.db.QueryRowContext(ctx, `
-        SELECT conversation_id, user_id, role, joined_at, added_by, muted_until, pinned_at, archived, last_read_sequence, permissions
+        SELECT conversation_id, user_id, role, joined_at, added_by, muted_until, archived, last_read_sequence
         FROM participants WHERE conversation_id = $1 AND user_id = $2
     `, conversationID, userID).Scan(
 		&p.ConversationID,
@@ -496,10 +406,8 @@ func (r *PostgresConversationRepository) GetParticipant(ctx context.Context, con
 		&p.JoinedAt,
 		&p.AddedBy,
 		&p.MutedUntil,
-		&p.PinnedAt,
 		&p.Archived,
 		&p.LastReadSequence,
-		&p.Permissions,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -562,30 +470,6 @@ func (r *PostgresConversationRepository) UnmuteConversation(ctx context.Context,
 	return err
 }
 
-func (r *PostgresConversationRepository) PinConversation(ctx context.Context, conversationID, userID uuid.UUID) error {
-	res, err := r.db.ExecContext(ctx, "UPDATE participants SET pinned_at = $1 WHERE conversation_id = $2 AND user_id = $3", time.Now(), conversationID, userID)
-	if err != nil {
-		return err
-	}
-	rows, err := res.RowsAffected()
-	if err == nil && rows == 0 {
-		return sentinal_errors.ErrNotFound
-	}
-	return err
-}
-
-func (r *PostgresConversationRepository) UnpinConversation(ctx context.Context, conversationID, userID uuid.UUID) error {
-	res, err := r.db.ExecContext(ctx, "UPDATE participants SET pinned_at = NULL WHERE conversation_id = $1 AND user_id = $2", conversationID, userID)
-	if err != nil {
-		return err
-	}
-	rows, err := res.RowsAffected()
-	if err == nil && rows == 0 {
-		return sentinal_errors.ErrNotFound
-	}
-	return err
-}
-
 func (r *PostgresConversationRepository) ArchiveConversation(ctx context.Context, conversationID, userID uuid.UUID) error {
 	res, err := r.db.ExecContext(ctx, "UPDATE participants SET archived = true WHERE conversation_id = $1 AND user_id = $2", conversationID, userID)
 	if err != nil {
@@ -620,6 +504,30 @@ func (r *PostgresConversationRepository) UpdateLastReadSequence(ctx context.Cont
 		return sentinal_errors.ErrNotFound
 	}
 	return err
+}
+
+func (r *PostgresConversationRepository) ClearConversation(ctx context.Context, conversationID, userID uuid.UUID) error {
+	_, err := r.db.ExecContext(ctx, `
+        INSERT INTO conversation_clears (conversation_id, user_id, cleared_at)
+        VALUES ($1, $2, NOW())
+        ON CONFLICT (conversation_id, user_id) DO UPDATE SET cleared_at = NOW()
+    `, conversationID, userID)
+	return err
+}
+
+func (r *PostgresConversationRepository) GetConversationClear(ctx context.Context, conversationID, userID uuid.UUID) (conversation.ConversationClear, error) {
+	var cc conversation.ConversationClear
+	err := r.db.QueryRowContext(ctx, `
+        SELECT conversation_id, user_id, cleared_at
+        FROM conversation_clears WHERE conversation_id = $1 AND user_id = $2
+    `, conversationID, userID).Scan(&cc.ConversationID, &cc.UserID, &cc.ClearedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return conversation.ConversationClear{}, sentinal_errors.ErrNotFound
+		}
+		return conversation.ConversationClear{}, err
+	}
+	return cc, nil
 }
 
 func (r *PostgresConversationRepository) GetConversationSequence(ctx context.Context, conversationID uuid.UUID) (conversation.ConversationSequence, error) {

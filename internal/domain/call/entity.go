@@ -13,7 +13,6 @@ type Call struct {
 	ConversationID  uuid.UUID
 	InitiatedBy     uuid.UUID
 	Type            string
-	Topology        string
 	IsGroupCall     bool
 	StartedAt       time.Time
 	ConnectedAt     sql.NullTime
@@ -32,7 +31,6 @@ type CallParticipant struct {
 	LeftAt     sql.NullTime
 	MutedAudio bool
 	MutedVideo bool
-	DeviceType string
 }
 
 func (Call) TableName() string {
@@ -41,28 +39,4 @@ func (Call) TableName() string {
 
 func (CallParticipant) TableName() string {
 	return "call_participants"
-}
-
-// CallQualityMetric represents call_quality_metrics
-type CallQualityMetric struct {
-	ID               uuid.UUID
-	CallID           uuid.UUID
-	UserID           uuid.UUID
-	RecordedAt       time.Time
-	PacketsSent      int64
-	PacketsReceived  int64
-	PacketsLost      int64
-	JitterMs         float64
-	RoundTripTimeMs  float64
-	BitrateKbps      int
-	FrameRate        int
-	ResolutionWidth  int
-	ResolutionHeight int
-	AudioLevel       float64
-	ConnectionType   string
-	IceCandidateType string
-}
-
-func (CallQualityMetric) TableName() string {
-	return "call_quality_metrics"
 }

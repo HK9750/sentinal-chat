@@ -15,7 +15,6 @@ type User struct {
 	Email        sql.NullString
 	PasswordHash string
 	DisplayName  string
-	Role         string // SUPER_ADMIN, ADMIN, MODERATOR, USER
 	Bio          string
 	AvatarURL    string
 	IsOnline     bool
@@ -26,28 +25,8 @@ type User struct {
 	UpdatedAt    time.Time
 
 	// Relationships
-	Settings UserSettings
 	Devices  []Device
 	Sessions []UserSession
-}
-
-// UserSettings represents the user_settings table
-type UserSettings struct {
-	UserID                  uuid.UUID
-	PrivacyLastSeen         string
-	PrivacyProfilePhoto     string
-	PrivacyAbout            string
-	PrivacyGroups           string
-	ReadReceipts            bool
-	NotificationsEnabled    bool
-	NotificationSound       string
-	NotificationVibrate     bool
-	Theme                   string
-	Language                string
-	EnterToSend             bool
-	MediaAutoDownloadWiFi   bool
-	MediaAutoDownloadMobile bool
-	UpdatedAt               time.Time
 }
 
 // Device represents the devices table
@@ -60,12 +39,10 @@ type Device struct {
 	IsActive     bool
 	RegisteredAt time.Time
 	LastSeenAt   sql.NullTime
-
-	// Unique constraint handled by index in SQL, but good to note: UNIQUE(user_id, device_id)
 }
 
-// PushToken represents the push_tokens table
-type PushToken struct {
+// FcmToken represents the fcm_tokens table
+type FcmToken struct {
 	ID         uuid.UUID
 	UserID     uuid.UUID
 	DeviceID   uuid.UUID
@@ -101,16 +78,12 @@ func (User) TableName() string {
 	return "users"
 }
 
-func (UserSettings) TableName() string {
-	return "user_settings"
-}
-
 func (Device) TableName() string {
 	return "devices"
 }
 
-func (PushToken) TableName() string {
-	return "push_tokens"
+func (FcmToken) TableName() string {
+	return "fcm_tokens"
 }
 
 func (UserSession) TableName() string {

@@ -5,34 +5,29 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	// Import user package for FK references if needed, or just use uuid.UUID
 )
 
 // Conversation represents the conversations table
 type Conversation struct {
-	ID                   uuid.UUID
-	Type                 string
-	Subject              sql.NullString
-	Description          sql.NullString
-	AvatarURL            sql.NullString
-	ExpirySeconds        sql.NullInt32
-	DisappearingMode     string
-	MessageExpirySeconds sql.NullInt32
-	GroupPermissions     *string
-	InviteLink           sql.NullString
-	InviteLinkRevokedAt  sql.NullTime
-	CreatedBy            uuid.NullUUID
-	DMUserIDA            uuid.NullUUID
-	DMUserIDB            uuid.NullUUID
-	CreatedAt            time.Time
-	UpdatedAt            time.Time
+	ID                  uuid.UUID
+	Type                string
+	Subject             sql.NullString
+	Description         sql.NullString
+	AvatarURL           sql.NullString
+	InviteLink          sql.NullString
+	InviteLinkRevokedAt sql.NullTime
+	DMUserIDA           uuid.NullUUID
+	DMUserIDB           uuid.NullUUID
+	DisappearingMode    string
+	CreatedBy           uuid.NullUUID
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 
 	// Computed fields (populated via subquery, not stored in conversations table)
 	LastMessageAt *time.Time
 
 	// Relationships
 	Participants []Participant
-	// Sequence     ConversationSequence
 }
 
 // Participant represents the participants table
@@ -43,10 +38,8 @@ type Participant struct {
 	JoinedAt         time.Time
 	AddedBy          uuid.NullUUID
 	MutedUntil       sql.NullTime
-	PinnedAt         sql.NullTime
 	Archived         bool
 	LastReadSequence int64
-	Permissions      *string
 
 	// Joined user fields (populated via JOIN, not stored in participants table)
 	DisplayName string
@@ -62,6 +55,13 @@ type ConversationSequence struct {
 	UpdatedAt      time.Time
 }
 
+// ConversationClear represents the conversation_clears table
+type ConversationClear struct {
+	ConversationID uuid.UUID
+	UserID         uuid.UUID
+	ClearedAt      time.Time
+}
+
 func (Conversation) TableName() string {
 	return "conversations"
 }
@@ -72,4 +72,8 @@ func (Participant) TableName() string {
 
 func (ConversationSequence) TableName() string {
 	return "conversation_sequences"
+}
+
+func (ConversationClear) TableName() string {
+	return "conversation_clears"
 }
