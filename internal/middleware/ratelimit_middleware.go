@@ -3,59 +3,41 @@ package middleware
 import (
 	"net/http"
 	"strconv"
-
-	"sentinal-chat/internal/redis"
-	"sentinal-chat/internal/services"
-	"sentinal-chat/internal/transport/httpdto"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
-// RateLimitMiddleware creates a middleware that applies rate limiting
-// Uses the RateLimiter from the redis package
-func RateLimitMiddleware(limiter *redis.RateLimiter) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// Get client IP for auth rate limiting
-		clientIP := c.ClientIP()
+// RateLimitResult holds the result of a rate limit check
+type RateLimitResult struct {
+	Allowed   bool
+	Limit     int
+	Remaining int
+	ResetIn   time.Duration
+}
 
-		// Check if this is an auth endpoint
+// RateLimitChecker defines a function that checks whether a request is allowed
+type RateLimitChecker func(key string) (*RateLimitResult, error)
+
+// RateLimitMiddleware creates a middleware that applies rate limiting on auth endpoints.
+// The checker function receives the client IP and returns a rate limit result.
+func RateLimitMiddleware(checker RateLimitChecker) gin.HandlerFunc {
+	return func(c *gin.Context) {
 		path := c.Request.URL.Path
-		if isAuthEndpoint(path) {
-			result, err := limiter.AllowAuth(c.Request.Context(), clientIP)
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, httpdto.NewErrorResponse("rate limit error", "INTERNAL_ERROR"))
-				c.Abort()
-				return
-			}
-
-			// Set rate limit headers
-			setRateLimitHeaders(c, result)
-
-			if !result.Allowed {
-				c.JSON(http.StatusTooManyRequests, httpdto.NewErrorResponse("rate limit exceeded", "RATE_LIMITED"))
-				c.Abort()
-				return
-			}
-		}
-
-		c.Next()
-	}
-}
-
-// MessageRateLimitMiddleware creates a middleware for message rate limiting
-// Should be applied to message endpoints after auth middleware
-func MessageRateLimitMiddleware(limiter *redis.RateLimiter) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		userID, ok := services.UserIDFromContext(c.Request.Context())
-		if !ok {
-			// No user context, skip rate limiting (auth middleware will handle)
+		if !isAuthEndpoint(path) {
 			c.Next()
 			return
 		}
 
-		result, err := limiter.AllowMessage(c.Request.Context(), userID.String())
+		clientIP := c.ClientIP()
+		result, err := checker(clientIP)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, httpdto.NewErrorResponse("rate limit error", "INTERNAL_ERROR"))
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"error":   "rate limit error",
+				"code":    "INTERNAL_ERROR",
+			})
 			c.Abort()
 			return
 		}
@@ -63,7 +45,11 @@ func MessageRateLimitMiddleware(limiter *redis.RateLimiter) gin.HandlerFunc {
 		setRateLimitHeaders(c, result)
 
 		if !result.Allowed {
-			c.JSON(http.StatusTooManyRequests, httpdto.NewErrorResponse("message rate limit exceeded", "RATE_LIMITED"))
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"success": false,
+				"error":   "rate limit exceeded",
+				"code":    "RATE_LIMITED",
+			})
 			c.Abort()
 			return
 		}
@@ -72,19 +58,29 @@ func MessageRateLimitMiddleware(limiter *redis.RateLimiter) gin.HandlerFunc {
 	}
 }
 
-// CallRateLimitMiddleware creates a middleware for call rate limiting
-// Should be applied to call initiation endpoints after auth middleware
-func CallRateLimitMiddleware(limiter *redis.RateLimiter) gin.HandlerFunc {
+// MessageRateLimitMiddleware creates a middleware for message rate limiting.
+// Requires user_id to be set in gin context by AuthMiddleware.
+func MessageRateLimitMiddleware(checker RateLimitChecker) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		userID, ok := services.UserIDFromContext(c.Request.Context())
+		userIDVal, exists := c.Get("user_id")
+		if !exists {
+			c.Next()
+			return
+		}
+
+		userID, ok := userIDVal.(uuid.UUID)
 		if !ok {
 			c.Next()
 			return
 		}
 
-		result, err := limiter.AllowCall(c.Request.Context(), userID.String())
+		result, err := checker(userID.String())
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, httpdto.NewErrorResponse("rate limit error", "INTERNAL_ERROR"))
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"error":   "rate limit error",
+				"code":    "INTERNAL_ERROR",
+			})
 			c.Abort()
 			return
 		}
@@ -92,7 +88,54 @@ func CallRateLimitMiddleware(limiter *redis.RateLimiter) gin.HandlerFunc {
 		setRateLimitHeaders(c, result)
 
 		if !result.Allowed {
-			c.JSON(http.StatusTooManyRequests, httpdto.NewErrorResponse("call rate limit exceeded", "RATE_LIMITED"))
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"success": false,
+				"error":   "message rate limit exceeded",
+				"code":    "RATE_LIMITED",
+			})
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+}
+
+// CallRateLimitMiddleware creates a middleware for call rate limiting.
+// Requires user_id to be set in gin context by AuthMiddleware.
+func CallRateLimitMiddleware(checker RateLimitChecker) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userIDVal, exists := c.Get("user_id")
+		if !exists {
+			c.Next()
+			return
+		}
+
+		userID, ok := userIDVal.(uuid.UUID)
+		if !ok {
+			c.Next()
+			return
+		}
+
+		result, err := checker(userID.String())
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"error":   "rate limit error",
+				"code":    "INTERNAL_ERROR",
+			})
+			c.Abort()
+			return
+		}
+
+		setRateLimitHeaders(c, result)
+
+		if !result.Allowed {
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"success": false,
+				"error":   "call rate limit exceeded",
+				"code":    "RATE_LIMITED",
+			})
 			c.Abort()
 			return
 		}
@@ -102,7 +145,7 @@ func CallRateLimitMiddleware(limiter *redis.RateLimiter) gin.HandlerFunc {
 }
 
 // setRateLimitHeaders sets standard rate limit response headers
-func setRateLimitHeaders(c *gin.Context, result *redis.RateLimitResult) {
+func setRateLimitHeaders(c *gin.Context, result *RateLimitResult) {
 	c.Header("X-RateLimit-Limit", strconv.Itoa(result.Limit))
 	c.Header("X-RateLimit-Remaining", strconv.Itoa(result.Remaining))
 	c.Header("X-RateLimit-Reset", strconv.FormatInt(int64(result.ResetIn.Seconds()), 10))

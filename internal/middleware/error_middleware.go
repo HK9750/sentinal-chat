@@ -1,12 +1,13 @@
 package middleware
 
 import (
-	"sentinal-chat/internal/transport/httpdto"
 	"sentinal-chat/pkg/logger"
 
 	"github.com/gin-gonic/gin"
 )
 
+// ErrorHandler catches any gin errors registered during request processing
+// and logs them before returning a generic error response.
 func ErrorHandler(l *logger.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Next()
@@ -19,6 +20,10 @@ func ErrorHandler(l *logger.Logger) gin.HandlerFunc {
 		if l != nil {
 			l.Errorf("request error: %s", err.Error())
 		}
-		c.JSON(c.Writer.Status(), httpdto.NewErrorResponse(err.Error(), "INTERNAL_ERROR"))
+		c.JSON(c.Writer.Status(), gin.H{
+			"success": false,
+			"error":   err.Error(),
+			"code":    "INTERNAL_ERROR",
+		})
 	}
 }

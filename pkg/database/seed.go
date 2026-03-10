@@ -18,7 +18,7 @@ import (
 type SeedConfig struct {
 	AdminEmail       string
 	AdminPassword    string
-	AdminUsername    string
+	AdminUsername     string
 	AdminDisplayName string
 	CreateTestUsers  bool
 	TestUserCount    int
@@ -29,7 +29,7 @@ func DefaultSeedConfig() *SeedConfig {
 	return &SeedConfig{
 		AdminEmail:       "admin@sentinal.chat",
 		AdminPassword:    "Admin@123!",
-		AdminUsername:    "admin",
+		AdminUsername:     "admin",
 		AdminDisplayName: "System Admin",
 		CreateTestUsers:  true,
 		TestUserCount:    5,
@@ -42,7 +42,7 @@ type SeedResult struct {
 	TestUsers []*user.User
 }
 
-// Seed runs the complete database seeding (users + devices + encryption keys only)
+// Seed runs the complete database seeding (users + devices + encryption keys)
 func Seed(cfg *SeedConfig) (*SeedResult, error) {
 	if cfg == nil {
 		cfg = DefaultSeedConfig()
@@ -114,7 +114,6 @@ func seedAdminUser(cfg *SeedConfig) (*user.User, error) {
 		Username:     sql.NullString{String: cfg.AdminUsername, Valid: true},
 		PasswordHash: string(hashedPassword),
 		DisplayName:  cfg.AdminDisplayName,
-		Role:         "SUPER_ADMIN",
 		Bio:          "System Administrator",
 		IsActive:     true,
 		IsVerified:   true,
@@ -125,23 +124,22 @@ func seedAdminUser(cfg *SeedConfig) (*user.User, error) {
 
 	ctx := context.Background()
 	err = WithTx(ctx, DB, func(tx *sql.Tx) error {
-		var existing user.User
-		if err := tx.QueryRowContext(ctx, "SELECT id FROM users WHERE email = $1", cfg.AdminEmail).Scan(&existing.ID); err == nil {
+		var existingID uuid.UUID
+		if err := tx.QueryRowContext(ctx, "SELECT id FROM users WHERE email = $1", cfg.AdminEmail).Scan(&existingID); err == nil {
 			log.Println("Admin user already exists, skipping creation")
-			adminUser.ID = existing.ID
+			adminUser.ID = existingID
 			return nil
 		}
 
 		_, err := tx.ExecContext(ctx, `
-            INSERT INTO users (id, email, username, password_hash, display_name, role, bio, is_active, is_verified, is_online, created_at, updated_at)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-        `,
+			INSERT INTO users (id, email, username, password_hash, display_name, bio, is_active, is_verified, is_online, created_at, updated_at)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+		`,
 			adminUser.ID,
 			adminUser.Email,
 			adminUser.Username,
 			adminUser.PasswordHash,
 			adminUser.DisplayName,
-			adminUser.Role,
 			adminUser.Bio,
 			adminUser.IsActive,
 			adminUser.IsVerified,
@@ -153,45 +151,29 @@ func seedAdminUser(cfg *SeedConfig) (*user.User, error) {
 			return err
 		}
 
-		settings := &user.UserSettings{
-			UserID:                  adminUser.ID,
-			PrivacyLastSeen:         "CONTACTS",
-			PrivacyProfilePhoto:     "CONTACTS",
-			PrivacyAbout:            "CONTACTS",
-			PrivacyGroups:           "CONTACTS",
-			ReadReceipts:            true,
-			NotificationsEnabled:    true,
-			NotificationSound:       "default",
-			NotificationVibrate:     true,
-			Theme:                   "SYSTEM",
-			Language:                "en",
-			EnterToSend:             true,
-			MediaAutoDownloadWiFi:   true,
-			MediaAutoDownloadMobile: false,
-			UpdatedAt:               time.Now(),
-		}
+		// Insert default user settings
 		_, err = tx.ExecContext(ctx, `
-            INSERT INTO user_settings (
-                user_id, privacy_last_seen, privacy_profile_photo, privacy_about, privacy_groups,
-                read_receipts, notifications_enabled, notification_sound, notification_vibrate,
-                theme, language, enter_to_send, media_auto_download_wifi, media_auto_download_mobile, updated_at
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
-        `,
-			settings.UserID,
-			settings.PrivacyLastSeen,
-			settings.PrivacyProfilePhoto,
-			settings.PrivacyAbout,
-			settings.PrivacyGroups,
-			settings.ReadReceipts,
-			settings.NotificationsEnabled,
-			settings.NotificationSound,
-			settings.NotificationVibrate,
-			settings.Theme,
-			settings.Language,
-			settings.EnterToSend,
-			settings.MediaAutoDownloadWiFi,
-			settings.MediaAutoDownloadMobile,
-			settings.UpdatedAt,
+			INSERT INTO user_settings (
+				user_id, privacy_last_seen, privacy_profile_photo, privacy_about, privacy_groups,
+				read_receipts, notifications_enabled, notification_sound, notification_vibrate,
+				theme, language, enter_to_send, media_auto_download_wifi, media_auto_download_mobile, updated_at
+			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+		`,
+			adminUser.ID,
+			"CONTACTS",  // privacy_last_seen
+			"CONTACTS",  // privacy_profile_photo
+			"CONTACTS",  // privacy_about
+			"CONTACTS",  // privacy_groups
+			true,        // read_receipts
+			true,        // notifications_enabled
+			"default",   // notification_sound
+			true,        // notification_vibrate
+			"SYSTEM",    // theme
+			"en",        // language
+			true,        // enter_to_send
+			true,        // media_auto_download_wifi
+			false,       // media_auto_download_mobile
+			time.Now(),  // updated_at
 		)
 		return err
 	})
@@ -249,7 +231,6 @@ func seedTestUsers(count int) ([]*user.User, error) {
 			PhoneNumber:  sql.NullString{String: data.phone, Valid: true},
 			PasswordHash: string(hashedPassword),
 			DisplayName:  data.displayName,
-			Role:         "USER",
 			Bio:          data.bio,
 			IsActive:     true,
 			IsVerified:   true,
@@ -260,31 +241,31 @@ func seedTestUsers(count int) ([]*user.User, error) {
 
 		err := WithTx(ctx, DB, func(tx *sql.Tx) error {
 			_, err := tx.ExecContext(ctx, `
-                INSERT INTO users (id, email, username, phone_number, password_hash, display_name, role, bio, is_active, is_verified, is_online, created_at, updated_at)
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-            `, newUser.ID, newUser.Email, newUser.Username, newUser.PhoneNumber, newUser.PasswordHash, newUser.DisplayName, newUser.Role, newUser.Bio, newUser.IsActive, newUser.IsVerified, newUser.IsOnline, newUser.CreatedAt, newUser.UpdatedAt)
+				INSERT INTO users (id, email, username, phone_number, password_hash, display_name, bio, is_active, is_verified, is_online, created_at, updated_at)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+			`, newUser.ID, newUser.Email, newUser.Username, newUser.PhoneNumber, newUser.PasswordHash, newUser.DisplayName, newUser.Bio, newUser.IsActive, newUser.IsVerified, newUser.IsOnline, newUser.CreatedAt, newUser.UpdatedAt)
 			if err != nil {
 				return err
 			}
 
-			settings := &user.UserSettings{
-				UserID:               newUser.ID,
-				PrivacyLastSeen:      "EVERYONE",
-				PrivacyProfilePhoto:  "EVERYONE",
-				PrivacyAbout:         "EVERYONE",
-				PrivacyGroups:        "EVERYONE",
-				ReadReceipts:         true,
-				NotificationsEnabled: true,
-				Theme:                "SYSTEM",
-				Language:             "en",
-				UpdatedAt:            time.Now(),
-			}
+			// Insert default user settings
 			_, err = tx.ExecContext(ctx, `
-                INSERT INTO user_settings (
-                    user_id, privacy_last_seen, privacy_profile_photo, privacy_about, privacy_groups,
-                    read_receipts, notifications_enabled, theme, language, updated_at
-                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-            `, settings.UserID, settings.PrivacyLastSeen, settings.PrivacyProfilePhoto, settings.PrivacyAbout, settings.PrivacyGroups, settings.ReadReceipts, settings.NotificationsEnabled, settings.Theme, settings.Language, settings.UpdatedAt)
+				INSERT INTO user_settings (
+					user_id, privacy_last_seen, privacy_profile_photo, privacy_about, privacy_groups,
+					read_receipts, notifications_enabled, theme, language, updated_at
+				) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+			`,
+				newUser.ID,
+				"EVERYONE",  // privacy_last_seen
+				"EVERYONE",  // privacy_profile_photo
+				"EVERYONE",  // privacy_about
+				"EVERYONE",  // privacy_groups
+				true,        // read_receipts
+				true,        // notifications_enabled
+				"SYSTEM",    // theme
+				"en",        // language
+				time.Now(),  // updated_at
+			)
 			return err
 		})
 		if err != nil {
@@ -313,11 +294,11 @@ func seedDevices(users []*user.User) (map[uuid.UUID][]user.Device, error) {
 				LastSeenAt:   sql.NullTime{Time: time.Now(), Valid: true},
 			}
 			if err := DB.QueryRow(`
-                INSERT INTO devices (id, user_id, device_id, device_name, device_type, is_active, registered_at, last_seen_at)
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-                ON CONFLICT (user_id, device_id) DO UPDATE SET last_seen_at = EXCLUDED.last_seen_at
-                RETURNING id
-            `, device.ID, device.UserID, device.DeviceID, device.DeviceName, device.DeviceType, device.IsActive, device.RegisteredAt, device.LastSeenAt).Scan(&device.ID); err != nil {
+				INSERT INTO devices (id, user_id, device_id, device_name, device_type, is_active, registered_at, last_seen_at)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+				ON CONFLICT (user_id, device_id) DO UPDATE SET last_seen_at = EXCLUDED.last_seen_at
+				RETURNING id
+			`, device.ID, device.UserID, device.DeviceID, device.DeviceName, device.DeviceType, device.IsActive, device.RegisteredAt, device.LastSeenAt).Scan(&device.ID); err != nil {
 				return nil, err
 			}
 			deviceMap[u.ID] = append(deviceMap[u.ID], device)
@@ -332,29 +313,29 @@ func seedEncryptionKeys(deviceMap map[uuid.UUID][]user.Device) error {
 			identityID := uuid.New()
 			pubKey := randomBytes(32)
 			if _, err := DB.Exec(`
-                INSERT INTO identity_keys (id, user_id, device_id, public_key, is_active, created_at)
-                VALUES ($1,$2,$3,$4,$5,$6)
-                ON CONFLICT (user_id, device_id) DO UPDATE SET public_key = EXCLUDED.public_key, is_active = EXCLUDED.is_active
-            `, identityID, userID, device.ID, pubKey, true, time.Now()); err != nil {
+				INSERT INTO identity_keys (id, user_id, device_id, public_key, is_active, created_at)
+				VALUES ($1,$2,$3,$4,$5,$6)
+				ON CONFLICT (user_id, device_id) DO UPDATE SET public_key = EXCLUDED.public_key, is_active = EXCLUDED.is_active
+			`, identityID, userID, device.ID, pubKey, true, time.Now()); err != nil {
 				return err
 			}
 
 			signedID := uuid.New()
 			if _, err := DB.Exec(`
-                INSERT INTO signed_prekeys (id, user_id, device_id, key_id, public_key, signature, created_at, is_active)
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-                ON CONFLICT (device_id, key_id) DO UPDATE SET public_key = EXCLUDED.public_key, signature = EXCLUDED.signature, is_active = EXCLUDED.is_active
-            `, signedID, userID, device.ID, 1, randomBytes(32), randomBytes(64), time.Now(), true); err != nil {
+				INSERT INTO signed_prekeys (id, user_id, device_id, key_id, public_key, signature, created_at, is_active)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+				ON CONFLICT (device_id, key_id) DO UPDATE SET public_key = EXCLUDED.public_key, signature = EXCLUDED.signature, is_active = EXCLUDED.is_active
+			`, signedID, userID, device.ID, 1, randomBytes(32), randomBytes(64), time.Now(), true); err != nil {
 				return err
 			}
 
 			for k := 0; k < 5; k++ {
 				prekeyID := uuid.New()
 				if _, err := DB.Exec(`
-                    INSERT INTO onetime_prekeys (id, user_id, device_id, key_id, public_key, uploaded_at)
-                    VALUES ($1,$2,$3,$4,$5,$6)
-                    ON CONFLICT (device_id, key_id) DO NOTHING
-                `, prekeyID, userID, device.ID, 100+k, randomBytes(32), time.Now()); err != nil {
+					INSERT INTO onetime_prekeys (id, user_id, device_id, key_id, public_key, uploaded_at)
+					VALUES ($1,$2,$3,$4,$5,$6)
+					ON CONFLICT (device_id, key_id) DO NOTHING
+				`, prekeyID, userID, device.ID, 100+k, randomBytes(32), time.Now()); err != nil {
 					return err
 				}
 			}
@@ -393,7 +374,7 @@ func SeedProduction(adminEmail, adminPassword string) (*user.User, error) {
 	cfg := &SeedConfig{
 		AdminEmail:       adminEmail,
 		AdminPassword:    adminPassword,
-		AdminUsername:    "admin",
+		AdminUsername:     "admin",
 		AdminDisplayName: "System Administrator",
 		CreateTestUsers:  false,
 	}

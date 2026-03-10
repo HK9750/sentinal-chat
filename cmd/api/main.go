@@ -1,37 +1,28 @@
 package main
 
 import (
-	"context"
 	"log"
-	"time"
 
 	"sentinal-chat/config"
-	"sentinal-chat/internal/events"
-	"sentinal-chat/internal/handler"
-	"sentinal-chat/internal/redis"
-	"sentinal-chat/internal/repository"
 	"sentinal-chat/internal/server"
-	"sentinal-chat/internal/services"
-	"sentinal-chat/internal/storage"
 	"sentinal-chat/pkg/database"
 	"sentinal-chat/pkg/logger"
 )
 
 func main() {
-	// Load config
+	// Load configuration from environment / .env
 	cfg := config.LoadConfig()
 
-	// Connect the database
+	// Connect to the database (singleton)
 	database.Connect(cfg)
+	defer database.Close()
 
-	// Run migrations
+	// Run migrations on startup
 	if err := database.RunFullMigration("migrations"); err != nil {
 		log.Fatalf("Failed to run migrations: %v", err)
 	}
 
-	log.Printf("Starting server on port %s", cfg.AppPort)
-
-	// Initialize logger singleton
+	// Initialize logger singleton based on app mode
 	if cfg.AppMode == server.ReleaseMode {
 		logger.Init(logger.ProductionMode)
 	} else {
@@ -39,131 +30,12 @@ func main() {
 	}
 	logInstance := logger.GetGlobalLogger()
 
-	// Repositories - using database singleton
-	userRepo := repository.NewUserRepository(database.GetInstance())
-	encryptionRepo := repository.NewEncryptionRepository(database.GetInstance())
-	messageRepo := repository.NewMessageRepository(database.GetInstance())
-	conversationRepo := repository.NewConversationRepository(database.GetInstance())
-	uploadRepo := repository.NewUploadRepository(database.GetInstance())
-	broadcastRepo := repository.NewBroadcastRepository(database.GetInstance())
-	callRepo := repository.NewCallRepository(database.GetInstance())
+	// Create and configure the server
+	srv := server.New(cfg, logInstance)
+	srv.SetupBaseRoutes()
 
-	// Initialize Redis singleton
-	redis.Initialize(redis.Config{
-		Host:     cfg.RedisHost,
-		Port:     cfg.RedisPort,
-		Password: cfg.RedisPassword,
-		DB:       0,
-	})
-	redisClient := redis.GetClient()
-	signalingStore := redis.NewSignalingStore(redisClient)
-	rateLimiter := redis.NewRateLimiter(redisClient, redis.DefaultRateLimitConfig())
-	cacheStore := redis.NewCacheStore(redisClient, redis.DefaultCacheConfig())
-
-	// Initialize Event Bus (Redis Pub/Sub)
-	channelResolver := events.NewHybridChannelResolver()
-	eventBus := events.NewRedisEventBus(redisClient, channelResolver)
-	if err := eventBus.Start(); err != nil {
-		log.Fatalf("Failed to start event bus: %v", err)
-	}
-
-	// Create Outbox Repository
-	outboxRepo := repository.NewOutboxRepository(database.GetInstance())
-
-	// Create Command Repository
-	commandRepo := repository.NewCommandRepository(database.GetInstance())
-
-	// Create Event Publisher
-	eventPublisher := services.NewEventPublisher(outboxRepo)
-
-	// Create Command Executor
-	commandExecutor := services.NewCommandExecutor(
-		database.GetInstance(),
-		commandRepo,
-		messageRepo,
-		conversationRepo,
-		userRepo,
-		eventPublisher,
-	)
-
-	// Start Outbox Worker
-	outboxWorker := services.NewOutboxWorker(outboxRepo, eventBus)
-	outboxWorker.Start()
-
-	//Services
-	authService := services.NewAuthService(userRepo, cfg)
-	messageService := services.NewMessageService(database.GetDB(), messageRepo, conversationRepo, eventPublisher, commandExecutor)
-	conversationService := services.NewConversationService(
-		database.GetDB(),
-		conversationRepo,
-		userRepo,
-		eventPublisher,
-	)
-	userService := services.NewUserService(userRepo)
-	var uploadS3Service *services.UploadS3Service
-	if cfg.S3Region != "" && cfg.S3Bucket != "" {
-		s3Client, err := storage.NewClient(context.Background(), storage.S3Config{
-			Region:     cfg.S3Region,
-			Bucket:     cfg.S3Bucket,
-			AccessKey:  cfg.S3AccessKeyID,
-			SecretKey:  cfg.S3SecretKey,
-			Endpoint:   cfg.S3Endpoint,
-			PublicBase: cfg.S3PublicBase,
-			PresignTTL: time.Duration(cfg.S3PresignTTL) * time.Second,
-		})
-		if err != nil {
-			log.Fatalf("Failed to initialize S3 client: %v", err)
-		}
-		uploadS3Service = services.NewUploadS3Service(uploadRepo, s3Client)
-	}
-	encryptionService := services.NewEncryptionService(encryptionRepo)
-	broadcastService := services.NewBroadcastService(broadcastRepo)
-	callService := services.NewCallService(database.GetDB(), callRepo, signalingStore, eventPublisher)
-
-	// Initialize WebSocket Hub
-	hub := server.NewHub(eventBus, conversationService, messageService, userService, callService)
-	go hub.Run()
-
-	// Create WebSocket Handler
-	wsHandler := server.NewWebSocketHandler(hub, authService)
-
-	//Handlers
-	authHandler := handler.NewAuthHandler(authService)
-	messageHandler := handler.NewMessageHandler(messageService)
-	conversationHandler := handler.NewConversationHandler(conversationService)
-	userHandler := handler.NewUserHandler(userService)
-	uploadHandler := handler.NewUploadHandler(uploadS3Service)
-	encryptionHandler := handler.NewEncryptionHandler(encryptionService)
-	broadcastHandler := handler.NewBroadcastHandler(broadcastService)
-	callHandler := handler.NewCallHandler(callService)
-
-	// Server Instance init
-	serverInstance := server.New(cfg, logInstance)
-
-	// struct to init the handlers
-	handlers := &server.Handlers{
-		Auth:         authHandler,
-		Message:      messageHandler,
-		Conversation: conversationHandler,
-		User:         userHandler,
-		Call:         callHandler,
-		Upload:       uploadHandler,
-		Encryption:   encryptionHandler,
-		Broadcast:    broadcastHandler,
-	}
-
-	// Setup routes
-	serverInstance.SetupRoutes(handlers, authService, rateLimiter, cacheStore, wsHandler)
-
-	// Graceful shutdown
-	defer func() {
-		hub.Stop()
-		outboxWorker.Stop()
-		eventBus.Stop()
-	}()
-
-	// Server start
-	if err := serverInstance.Start(); err != nil {
+	// Start the server (blocks until shutdown signal)
+	if err := srv.Start(); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
 }

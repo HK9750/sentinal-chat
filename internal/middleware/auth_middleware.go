@@ -4,61 +4,59 @@ import (
 	"net/http"
 	"strings"
 
-	"sentinal-chat/internal/services"
-	"sentinal-chat/internal/transport/httpdto"
-
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
 
-func AuthMiddleware(service *services.AuthService) gin.HandlerFunc {
+// TokenValidator defines the interface required by AuthMiddleware.
+// Implementations should parse a JWT and return user/session/device identifiers.
+type TokenValidator interface {
+	ParseAccessToken(token string) (*TokenClaims, error)
+	ValidateSession(ctx gin.Context, sessionID, userID uuid.UUID) error
+}
+
+// TokenClaims holds the parsed claims from a JWT access token
+type TokenClaims struct {
+	UserID    string
+	SessionID string
+	DeviceID  string
+}
+
+// AuthMiddleware verifies the Authorization Bearer token and injects
+// user_id, session_id, and device_id into the request context.
+func AuthMiddleware(validate func(token string) (*TokenClaims, error)) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token := extractBearer(c)
-		claims, err := service.ParseAccessToken(token)
+		if token == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"success": false, "error": "missing token", "code": "UNAUTHORIZED"})
+			c.Abort()
+			return
+		}
+
+		claims, err := validate(token)
 		if err != nil {
-			c.JSON(http.StatusUnauthorized, httpdto.NewErrorResponse("unauthorized", "UNAUTHORIZED"))
+			c.JSON(http.StatusUnauthorized, gin.H{"success": false, "error": "unauthorized", "code": "UNAUTHORIZED"})
 			c.Abort()
 			return
 		}
 
 		userID, err := uuid.Parse(claims.UserID)
 		if err != nil {
-			c.JSON(http.StatusUnauthorized, httpdto.NewErrorResponse("unauthorized", "UNAUTHORIZED"))
+			c.JSON(http.StatusUnauthorized, gin.H{"success": false, "error": "unauthorized", "code": "UNAUTHORIZED"})
 			c.Abort()
 			return
 		}
 
-		sessionID, err := uuid.Parse(claims.SessionID)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, httpdto.NewErrorResponse("unauthorized", "UNAUTHORIZED"))
-			c.Abort()
-			return
-		}
+		// Store parsed values in context for downstream handlers
+		c.Set("user_id", userID)
+		c.Set("session_id", claims.SessionID)
+		c.Set("device_id", claims.DeviceID)
 
-		session, err := service.ValidateSession(c.Request.Context(), sessionID, userID)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, httpdto.NewErrorResponse("unauthorized", "UNAUTHORIZED"))
-			c.Abort()
-			return
-		}
-
-		if claims.DeviceID != "" && session.DeviceID != nil && session.DeviceID.String() != claims.DeviceID {
-			c.JSON(http.StatusUnauthorized, httpdto.NewErrorResponse("unauthorized", "UNAUTHORIZED"))
-			c.Abort()
-			return
-		}
-
-		devID := uuid.NullUUID{}
-		if session.DeviceID != nil {
-			devID = uuid.NullUUID{UUID: *session.DeviceID, Valid: true}
-		}
-
-		ctx := services.WithUserSessionContext(c.Request.Context(), userID, sessionID, devID)
-		c.Request = c.Request.WithContext(ctx)
 		c.Next()
 	}
 }
 
+// extractBearer extracts a Bearer token from the Authorization header
 func extractBearer(c *gin.Context) string {
 	value := c.GetHeader("Authorization")
 	parts := strings.SplitN(value, " ", 2)

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	"sentinal-chat/config"
 	"sentinal-chat/pkg/database"
@@ -169,7 +170,7 @@ func runReset(migrationsDir string) {
 	fmt.Print("Proceeding in: ")
 	for i := 5; i > 0; i-- {
 		fmt.Printf("%d... ", i)
-		// time.Sleep(time.Second)
+		time.Sleep(time.Second)
 	}
 	fmt.Println()
 
