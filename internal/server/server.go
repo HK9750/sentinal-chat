@@ -67,7 +67,7 @@ func (s *Server) Engine() *gin.Engine {
 func (s *Server) SetupBaseRoutes() {
 	// Global middleware
 	s.engine.Use(middleware.RequestIDMiddleware())
-	s.engine.Use(middleware.CORSMiddleware())
+	s.engine.Use(middleware.CORSMiddleware(s.config.FrontendURL))
 	s.engine.Use(middleware.LoggingMiddleware(s.logger))
 	s.engine.Use(middleware.ErrorHandler(s.logger))
 

@@ -1,19 +1,13 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
-
-// TokenValidator defines the interface required by AuthMiddleware.
-// Implementations should parse a JWT and return user/session/device identifiers.
-type TokenValidator interface {
-	ParseAccessToken(token string) (*TokenClaims, error)
-	ValidateSession(ctx gin.Context, sessionID, userID uuid.UUID) error
-}
 
 // TokenClaims holds the parsed claims from a JWT access token
 type TokenClaims struct {
@@ -24,8 +18,17 @@ type TokenClaims struct {
 
 // AuthMiddleware verifies the Authorization Bearer token and injects
 // user_id, session_id, and device_id into the request context.
-func AuthMiddleware(validate func(token string) (*TokenClaims, error)) gin.HandlerFunc {
+func AuthMiddleware(
+	parseToken func(token string) (*TokenClaims, error),
+	validateSession func(ctx context.Context, claims *TokenClaims) error,
+) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if parseToken == nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"success": false, "error": "unauthorized", "code": "UNAUTHORIZED"})
+			c.Abort()
+			return
+		}
+
 		token := extractBearer(c)
 		if token == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{"success": false, "error": "missing token", "code": "UNAUTHORIZED"})
@@ -33,11 +36,23 @@ func AuthMiddleware(validate func(token string) (*TokenClaims, error)) gin.Handl
 			return
 		}
 
-		claims, err := validate(token)
+		claims, err := parseToken(token)
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"success": false, "error": "unauthorized", "code": "UNAUTHORIZED"})
 			c.Abort()
 			return
+		}
+		if claims == nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"success": false, "error": "unauthorized", "code": "UNAUTHORIZED"})
+			c.Abort()
+			return
+		}
+		if validateSession != nil {
+			if err := validateSession(c.Request.Context(), claims); err != nil {
+				c.JSON(http.StatusUnauthorized, gin.H{"success": false, "error": "unauthorized", "code": "UNAUTHORIZED"})
+				c.Abort()
+				return
+			}
 		}
 
 		userID, err := uuid.Parse(claims.UserID)

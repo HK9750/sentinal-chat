@@ -53,10 +53,15 @@ const userColumns = `id, phone_number, username, email, password_hash, display_n
        is_online, last_seen_at, is_active, is_verified, created_at, updated_at`
 
 func (r *PostgresUserRepository) Create(ctx context.Context, u *user.User) error {
+	if u.ID == uuid.Nil {
+		u.ID = uuid.New()
+	}
+
 	_, err := r.db.ExecContext(ctx, `
-        INSERT INTO users (phone_number, username, email, password_hash, display_name, bio, avatar_url, is_online, last_seen_at, is_active, is_verified, created_at, updated_at)
+        INSERT INTO users (id, phone_number, username, email, password_hash, display_name, bio, avatar_url, is_online, last_seen_at, is_active, is_verified, created_at, updated_at)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
     `,
+		u.ID,
 		u.PhoneNumber,
 		u.Username,
 		u.Email,
@@ -439,6 +444,41 @@ func (r *PostgresUserRepository) GetDeviceByID(ctx context.Context, deviceID uui
 	return d, nil
 }
 
+func (r *PostgresUserRepository) UpsertDevice(ctx context.Context, d *user.Device) error {
+	now := time.Now().UTC()
+	if d.ID == uuid.Nil {
+		d.ID = uuid.New()
+	}
+	if d.RegisteredAt.IsZero() {
+		d.RegisteredAt = now
+	}
+
+	err := r.db.QueryRowContext(ctx, `
+        INSERT INTO devices (id, user_id, device_id, device_name, device_type, is_active, registered_at, last_seen_at)
+        VALUES ($1,$2,$3,$4,$5,TRUE,$6,$7)
+        ON CONFLICT (user_id, device_id)
+        DO UPDATE SET
+            device_name = EXCLUDED.device_name,
+            device_type = EXCLUDED.device_type,
+            is_active = TRUE,
+            last_seen_at = EXCLUDED.last_seen_at
+        RETURNING id, user_id, device_id, device_name, device_type, is_active, registered_at, last_seen_at
+    `,
+		d.ID,
+		d.UserID,
+		d.DeviceID,
+		d.DeviceName,
+		d.DeviceType,
+		d.RegisteredAt,
+		now,
+	).Scan(&d.ID, &d.UserID, &d.DeviceID, &d.DeviceName, &d.DeviceType, &d.IsActive, &d.RegisteredAt, &d.LastSeenAt)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (r *PostgresUserRepository) DeactivateDevice(ctx context.Context, deviceID uuid.UUID) error {
 	res, err := r.db.ExecContext(ctx, "UPDATE devices SET is_active = false WHERE id = $1", deviceID)
 	if err != nil {
@@ -514,9 +554,9 @@ func (r *PostgresUserRepository) DeactivateFcmToken(ctx context.Context, tokenID
 
 func (r *PostgresUserRepository) CreateSession(ctx context.Context, s *user.UserSession) error {
 	_, err := r.db.ExecContext(ctx, `
-        INSERT INTO user_sessions (id, user_id, device_id, refresh_token_hash, expires_at, is_revoked, created_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7)
-    `, s.ID, s.UserID, s.DeviceID, s.RefreshTokenHash, s.ExpiresAt, s.IsRevoked, s.CreatedAt)
+        INSERT INTO user_sessions (id, user_id, device_id, refresh_token_hash, expires_at, is_revoked, auth_provider, created_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+    `, s.ID, s.UserID, s.DeviceID, s.RefreshTokenHash, s.ExpiresAt, s.IsRevoked, s.AuthProvider, s.CreatedAt)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return sentinal_errors.ErrAlreadyExists
@@ -530,10 +570,30 @@ func (r *PostgresUserRepository) GetSessionByID(ctx context.Context, sessionID u
 	var s user.UserSession
 	var deviceID uuid.NullUUID
 	err := r.db.QueryRowContext(ctx, `
-        SELECT id, user_id, device_id, refresh_token_hash, expires_at, is_revoked, created_at
+        SELECT id, user_id, device_id, refresh_token_hash, expires_at, is_revoked, auth_provider, created_at
         FROM user_sessions
         WHERE id = $1 AND is_revoked = false AND expires_at > NOW()
-    `, sessionID).Scan(&s.ID, &s.UserID, &deviceID, &s.RefreshTokenHash, &s.ExpiresAt, &s.IsRevoked, &s.CreatedAt)
+    `, sessionID).Scan(&s.ID, &s.UserID, &deviceID, &s.RefreshTokenHash, &s.ExpiresAt, &s.IsRevoked, &s.AuthProvider, &s.CreatedAt)
+	if err == nil && deviceID.Valid {
+		s.DeviceID = &deviceID.UUID
+	}
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return user.UserSession{}, sentinal_errors.ErrNotFound
+		}
+		return user.UserSession{}, err
+	}
+	return s, nil
+}
+
+func (r *PostgresUserRepository) GetSessionByRefreshTokenHash(ctx context.Context, refreshTokenHash string) (user.UserSession, error) {
+	var s user.UserSession
+	var deviceID uuid.NullUUID
+	err := r.db.QueryRowContext(ctx, `
+        SELECT id, user_id, device_id, refresh_token_hash, expires_at, is_revoked, auth_provider, created_at
+        FROM user_sessions
+        WHERE refresh_token_hash = $1 AND is_revoked = false AND expires_at > NOW()
+    `, refreshTokenHash).Scan(&s.ID, &s.UserID, &deviceID, &s.RefreshTokenHash, &s.ExpiresAt, &s.IsRevoked, &s.AuthProvider, &s.CreatedAt)
 	if err == nil && deviceID.Valid {
 		s.DeviceID = &deviceID.UUID
 	}
@@ -549,7 +609,7 @@ func (r *PostgresUserRepository) GetSessionByID(ctx context.Context, sessionID u
 func (r *PostgresUserRepository) GetUserSessions(ctx context.Context, userID uuid.UUID) ([]user.UserSession, error) {
 	var sessions []user.UserSession
 	rows, err := r.db.QueryContext(ctx, `
-        SELECT s.id, s.user_id, s.device_id, s.refresh_token_hash, s.expires_at, s.is_revoked, s.created_at,
+        SELECT s.id, s.user_id, s.device_id, s.refresh_token_hash, s.expires_at, s.is_revoked, s.auth_provider, s.created_at,
                d.id, d.user_id, d.device_id, d.device_name, d.device_type, d.is_active, d.registered_at, d.last_seen_at
         FROM user_sessions s
         LEFT JOIN devices d ON d.id = s.device_id
@@ -574,6 +634,7 @@ func (r *PostgresUserRepository) GetUserSessions(ctx context.Context, userID uui
 			&s.RefreshTokenHash,
 			&s.ExpiresAt,
 			&s.IsRevoked,
+			&s.AuthProvider,
 			&s.CreatedAt,
 			&device.ID,
 			&device.UserID,
@@ -604,9 +665,9 @@ func (r *PostgresUserRepository) GetUserSessions(ctx context.Context, userID uui
 func (r *PostgresUserRepository) UpdateSession(ctx context.Context, s user.UserSession) error {
 	res, err := r.db.ExecContext(ctx, `
         UPDATE user_sessions
-        SET refresh_token_hash = $1, expires_at = $2, is_revoked = $3
-        WHERE id = $4
-    `, s.RefreshTokenHash, s.ExpiresAt, s.IsRevoked, s.ID)
+        SET refresh_token_hash = $1, expires_at = $2, is_revoked = $3, auth_provider = $4
+        WHERE id = $5
+    `, s.RefreshTokenHash, s.ExpiresAt, s.IsRevoked, s.AuthProvider, s.ID)
 	if err != nil {
 		return err
 	}

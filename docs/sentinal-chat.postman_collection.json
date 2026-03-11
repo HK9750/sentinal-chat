@@ -1,0 +1,313 @@
+{
+  "info": {
+    "name": "Sentinal Chat API",
+    "_postman_id": "8f0e7efb-c798-4f0c-a99d-b92f36d04b16",
+    "description": "Postman collection for auth, OAuth, and upload flows.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {"key": "baseUrl", "value": "http://localhost:8080"},
+    {"key": "accessToken", "value": ""},
+    {"key": "refreshToken", "value": ""},
+    {"key": "deviceId", "value": "web-local-001"},
+    {"key": "uploadSessionId", "value": ""},
+    {"key": "attachmentId", "value": ""},
+    {"key": "messageId", "value": ""},
+    {"key": "oauthProvider", "value": "google"},
+    {"key": "oauthRedirectUri", "value": "http://localhost:3000/auth/callback/google"},
+    {"key": "oauthCodeChallenge", "value": "replace-with-s256-code-challenge"},
+    {"key": "oauthCodeVerifier", "value": "replace-with-code-verifier"},
+    {"key": "oauthCode", "value": "replace-with-provider-code"},
+    {"key": "oauthState", "value": "sentinal-local-state"},
+    {"key": "encryptedUrl", "value": "encrypted-storage-url"}
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Register",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('register returns success', function () { pm.response.to.have.status(201); });",
+                  "var json = pm.response.json();",
+                  "if (json && json.data && json.data.tokens) {",
+                  "  pm.collectionVariables.set('accessToken', json.data.tokens.access_token || '');",
+                  "  if (json.data.tokens.refresh_token) pm.collectionVariables.set('refreshToken', json.data.tokens.refresh_token);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"display_name\": \"Postman User\",\n  \"email\": \"postman-user@example.com\",\n  \"username\": \"postman_user\",\n  \"password\": \"Password123!\",\n  \"device\": {\n    \"device_id\": \"{{deviceId}}\",\n    \"device_name\": \"Postman Desktop\",\n    \"device_type\": \"web\"\n  }\n}"
+            },
+            "url": "{{baseUrl}}/v1/auth/register"
+          }
+        },
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('login returns success', function () { pm.response.to.have.status(200); });",
+                  "var json = pm.response.json();",
+                  "if (json && json.data && json.data.tokens) {",
+                  "  pm.collectionVariables.set('accessToken', json.data.tokens.access_token || '');",
+                  "  if (json.data.tokens.refresh_token) pm.collectionVariables.set('refreshToken', json.data.tokens.refresh_token);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"identifier\": \"postman-user@example.com\",\n  \"password\": \"Password123!\",\n  \"device\": {\n    \"device_id\": \"{{deviceId}}\",\n    \"device_name\": \"Postman Desktop\",\n    \"device_type\": \"web\"\n  }\n}"
+            },
+            "url": "{{baseUrl}}/v1/auth/login"
+          }
+        },
+        {
+          "name": "Refresh",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('refresh returns success', function () { pm.response.to.have.status(200); });",
+                  "var json = pm.response.json();",
+                  "if (json && json.data && json.data.tokens) {",
+                  "  pm.collectionVariables.set('accessToken', json.data.tokens.access_token || '');",
+                  "  if (json.data.tokens.refresh_token) pm.collectionVariables.set('refreshToken', json.data.tokens.refresh_token);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh_token\": \"{{refreshToken}}\"\n}"
+            },
+            "url": "{{baseUrl}}/v1/auth/refresh"
+          }
+        },
+        {
+          "name": "List Sessions",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{accessToken}}"}],
+            "url": "{{baseUrl}}/v1/auth/sessions"
+          }
+        },
+        {
+          "name": "Logout Current Session",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{accessToken}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {"mode": "raw", "raw": "{}"},
+            "url": "{{baseUrl}}/v1/auth/logout"
+          }
+        },
+        {
+          "name": "Logout All Sessions",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Authorization", "value": "Bearer {{accessToken}}"}],
+            "url": "{{baseUrl}}/v1/auth/logout-all"
+          }
+        }
+      ]
+    },
+    {
+      "name": "OAuth",
+      "item": [
+        {
+          "name": "Get OAuth Authorization URL",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/v1/auth/oauth/{{oauthProvider}}/url?redirect_uri={{oauthRedirectUri}}&code_challenge={{oauthCodeChallenge}}&state={{oauthState}}"
+          }
+        },
+        {
+          "name": "Exchange OAuth Code",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json && json.data && json.data.tokens) {",
+                  "  pm.collectionVariables.set('accessToken', json.data.tokens.access_token || '');",
+                  "  if (json.data.tokens.refresh_token) pm.collectionVariables.set('refreshToken', json.data.tokens.refresh_token);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"{{oauthCode}}\",\n  \"code_verifier\": \"{{oauthCodeVerifier}}\",\n  \"redirect_uri\": \"{{oauthRedirectUri}}\",\n  \"device\": {\n    \"device_id\": \"{{deviceId}}\",\n    \"device_name\": \"Postman Desktop\",\n    \"device_type\": \"web\"\n  }\n}"
+            },
+            "url": "{{baseUrl}}/v1/auth/oauth/{{oauthProvider}}/exchange"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Uploads",
+      "item": [
+        {
+          "name": "Create Upload Session",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('upload session created', function () { pm.response.to.have.status(201); });",
+                  "var json = pm.response.json();",
+                  "if (json && json.data && json.data.upload) pm.collectionVariables.set('uploadSessionId', json.data.upload.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{accessToken}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"filename\": \"photo.jpg\",\n  \"mime_type\": \"image/jpeg\",\n  \"size_bytes\": 1048576,\n  \"chunk_size\": 262144\n}"
+            },
+            "url": "{{baseUrl}}/v1/uploads"
+          }
+        },
+        {
+          "name": "Get Upload Session",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{accessToken}}"}],
+            "url": "{{baseUrl}}/v1/uploads/{{uploadSessionId}}"
+          }
+        },
+        {
+          "name": "List Upload Sessions",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{accessToken}}"}],
+            "url": "{{baseUrl}}/v1/uploads?status=IN_PROGRESS&page=1&limit=20"
+          }
+        },
+        {
+          "name": "Update Upload Progress",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{accessToken}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"uploaded_bytes\": 524288\n}"
+            },
+            "url": "{{baseUrl}}/v1/uploads/{{uploadSessionId}}/progress"
+          }
+        },
+        {
+          "name": "Complete Upload",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Authorization", "value": "Bearer {{accessToken}}"}],
+            "url": "{{baseUrl}}/v1/uploads/{{uploadSessionId}}/complete"
+          }
+        },
+        {
+          "name": "Create Attachment",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json && json.data && json.data.id) pm.collectionVariables.set('attachmentId', json.data.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{accessToken}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"upload_session_id\": \"{{uploadSessionId}}\",\n  \"message_id\": \"{{messageId}}\",\n  \"encrypted_url\": \"{{encryptedUrl}}\",\n  \"view_once\": false,\n  \"thumbnail_url\": \"https://cdn.example.com/thumb.jpg\",\n  \"width\": 1280,\n  \"height\": 720\n}"
+            },
+            "url": "{{baseUrl}}/v1/attachments"
+          }
+        },
+        {
+          "name": "Get Attachment",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{accessToken}}"}],
+            "url": "{{baseUrl}}/v1/attachments/{{attachmentId}}"
+          }
+        },
+        {
+          "name": "Mark Attachment Viewed",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Authorization", "value": "Bearer {{accessToken}}"}],
+            "url": "{{baseUrl}}/v1/attachments/{{attachmentId}}/viewed"
+          }
+        },
+        {
+          "name": "Get Message Attachments",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{accessToken}}"}],
+            "url": "{{baseUrl}}/v1/messages/{{messageId}}/attachments"
+          }
+        },
+        {
+          "name": "Fail Upload",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Authorization", "value": "Bearer {{accessToken}}"}],
+            "url": "{{baseUrl}}/v1/uploads/{{uploadSessionId}}/fail"
+          }
+        }
+      ]
+    }
+  ]
+}

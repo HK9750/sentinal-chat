@@ -16,6 +16,17 @@ import (
 	"sentinal-chat/internal/domain/user"
 )
 
+type OAuthIdentity struct {
+	ID             uuid.UUID
+	UserID         uuid.UUID
+	Provider       string
+	ProviderUserID string
+	ProviderEmail  string
+	EmailVerified  bool
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
 // UserRepository manages user data and related entities.
 type UserRepository interface {
 	Create(ctx context.Context, u *user.User) error
@@ -51,11 +62,19 @@ type UserRepository interface {
 
 	CreateSession(ctx context.Context, s *user.UserSession) error
 	GetSessionByID(ctx context.Context, sessionID uuid.UUID) (user.UserSession, error)
+	GetSessionByRefreshTokenHash(ctx context.Context, refreshTokenHash string) (user.UserSession, error)
 	GetUserSessions(ctx context.Context, userID uuid.UUID) ([]user.UserSession, error)
 	UpdateSession(ctx context.Context, s user.UserSession) error
 	RevokeSession(ctx context.Context, sessionID uuid.UUID) error
 	RevokeAllUserSessions(ctx context.Context, userID uuid.UUID) error
 	CleanExpiredSessions(ctx context.Context) error
+
+	UpsertDevice(ctx context.Context, d *user.Device) error
+}
+
+type OAuthIdentityRepository interface {
+	Create(ctx context.Context, identity *OAuthIdentity) error
+	GetByProviderSubject(ctx context.Context, provider, providerUserID string) (OAuthIdentity, error)
 }
 
 // ConversationRepository manages conversations and participants.
@@ -145,7 +164,9 @@ type MessageRepository interface {
 	GetMessageEdits(ctx context.Context, messageID uuid.UUID) ([]message.MessageEdit, error)
 
 	CreateAttachment(ctx context.Context, a *message.Attachment) error
+	CreateAttachmentWithLink(ctx context.Context, a *message.Attachment, ma *message.MessageAttachment) error
 	GetAttachmentByID(ctx context.Context, id uuid.UUID) (message.Attachment, error)
+	CanUserAccessAttachment(ctx context.Context, attachmentID, userID uuid.UUID) (bool, error)
 	LinkAttachmentToMessage(ctx context.Context, ma *message.MessageAttachment) error
 	GetMessageAttachments(ctx context.Context, messageID uuid.UUID) ([]message.Attachment, error)
 	MarkViewOnceViewed(ctx context.Context, attachmentID uuid.UUID) error

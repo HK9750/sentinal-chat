@@ -157,6 +157,8 @@ func isAuthEndpoint(path string) bool {
 		"/v1/auth/login",
 		"/v1/auth/register",
 		"/v1/auth/refresh",
+		"/v1/auth/oauth/google/exchange",
+		"/v1/auth/oauth/github/exchange",
 		"/v1/auth/password/forgot",
 		"/v1/auth/password/reset",
 	}

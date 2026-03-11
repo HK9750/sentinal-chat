@@ -24,6 +24,14 @@ type UploadSession struct {
 	UpdatedAt     time.Time
 }
 
+const (
+	StatusInProgress = "IN_PROGRESS"
+	StatusCompleted  = "COMPLETED"
+	StatusFailed     = "FAILED"
+
+	MaxUploadSizeBytes int64 = 15 * 1024 * 1024
+)
+
 func (UploadSession) TableName() string {
 	return "upload_sessions"
 }

@@ -374,6 +374,55 @@ These routes are necessary because the repo already has users, devices, sessions
 - created time
 - optional device name and type
 
+## 5.7 POST `/v1/auth/oauth/:provider/exchange`
+
+- Auth required: no
+- Rate limit: yes, IP-based
+- Main purpose:
+  - exchange OAuth authorization code for first-party app session
+  - link provider identity to user
+  - return app access token and session metadata
+
+### Path params
+
+- `provider`: `google` or `github`
+
+### Request body
+
+```json
+{
+  "code": "provider-oauth-code",
+  "code_verifier": "pkce-code-verifier",
+  "redirect_uri": "https://app.example.com/auth/callback/google",
+  "device": {
+    "device_id": "web-123",
+    "device_name": "Chrome on Linux",
+    "device_type": "web"
+  }
+}
+```
+
+### Backend actions
+
+- validate provider and PKCE payload
+- exchange code with provider token endpoint
+- fetch provider identity profile
+- find existing `oauth_identities(provider, provider_user_id)` mapping
+- if no mapping:
+  - require verified email
+  - find or create user by email
+  - create identity mapping
+- upsert device (if provided)
+- create `user_sessions` row with hashed refresh token
+- issue first-party JWT access token
+
+### Tables touched
+
+- `oauth_identities`
+- `users`
+- `devices`
+- `user_sessions`
+
 ---
 
 ## 6. User Endpoints
@@ -1383,19 +1432,19 @@ The repo already supports upload sessions, attachment metadata, and an S3 presig
 
 - Auth required: yes
 - Main purpose:
-  - create attachment metadata after or during upload completion
+	- create attachment metadata for a completed upload session
+	- optionally link the attachment to an existing message sent by the same user
 
 ### Request body
 
 ```json
 {
-  "encrypted_url": "encrypted-storage-url",
-  "filename": "photo.jpg",
-  "mime_type": "image/jpeg",
-  "size_bytes": 1048576,
-  "view_once": false,
-  "thumbnail_url": "https://cdn.example.com/thumb.jpg",
-  "width": 1280,
+	"upload_session_id": "uuid",
+	"message_id": "uuid-optional",
+	"encrypted_url": "encrypted-storage-url",
+	"view_once": false,
+	"thumbnail_url": "https://cdn.example.com/thumb.jpg",
+	"width": 1280,
   "height": 720,
   "duration_seconds": null
 }
@@ -1404,6 +1453,13 @@ The repo already supports upload sessions, attachment metadata, and an S3 presig
 ### Important DB constraint
 
 - attachment size must be `<= 15 MB`
+
+### Backend behavior
+
+- `upload_session_id` must belong to the current user
+- upload session must already be in `COMPLETED` state
+- attachment metadata must match the upload session when optional filename, mime type, or size overrides are supplied
+- if `message_id` is provided, it must belong to a message sent by the current user and the attachment is linked atomically through `message_attachments`
 
 ## 10.8 GET `/v1/attachments/:id`
 

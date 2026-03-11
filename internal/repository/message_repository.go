@@ -789,6 +789,49 @@ func (r *PostgresMessageRepository) CreateAttachment(ctx context.Context, a *mes
 	return err
 }
 
+func (r *PostgresMessageRepository) CreateAttachmentWithLink(ctx context.Context, a *message.Attachment, ma *message.MessageAttachment) error {
+	if a == nil || ma == nil {
+		return sentinal_errors.ErrInvalidInput
+	}
+
+	return WithTx(ctx, r.db, func(tx DBTX) error {
+		if _, err := tx.ExecContext(ctx, `
+        INSERT INTO attachments (
+            id, uploader_id, encrypted_url, filename, mime_type, size_bytes, view_once, viewed_at,
+            thumbnail_url, width, height, duration_seconds, created_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+    `,
+			a.ID,
+			a.UploaderID,
+			a.EncryptedURL,
+			a.Filename,
+			a.MimeType,
+			a.SizeBytes,
+			a.ViewOnce,
+			a.ViewedAt,
+			a.ThumbnailURL,
+			a.Width,
+			a.Height,
+			a.DurationSeconds,
+			a.CreatedAt,
+		); err != nil {
+			return err
+		}
+
+		if _, err := tx.ExecContext(ctx, `
+        INSERT INTO message_attachments (message_id, attachment_id)
+        VALUES ($1,$2)
+    `, ma.MessageID, ma.AttachmentID); err != nil {
+			if isUniqueViolation(err) {
+				return sentinal_errors.ErrAlreadyExists
+			}
+			return err
+		}
+
+		return nil
+	})
+}
+
 func (r *PostgresMessageRepository) GetAttachmentByID(ctx context.Context, id uuid.UUID) (message.Attachment, error) {
 	var a message.Attachment
 	err := r.db.QueryRowContext(ctx, `
@@ -817,6 +860,24 @@ func (r *PostgresMessageRepository) GetAttachmentByID(ctx context.Context, id uu
 		return message.Attachment{}, err
 	}
 	return a, nil
+}
+
+func (r *PostgresMessageRepository) CanUserAccessAttachment(ctx context.Context, attachmentID, userID uuid.UUID) (bool, error) {
+	var exists bool
+	err := r.db.QueryRowContext(ctx, `
+        SELECT EXISTS (
+            SELECT 1
+            FROM message_attachments ma
+            JOIN messages m ON m.id = ma.message_id
+            JOIN participants p ON p.conversation_id = m.conversation_id
+            WHERE ma.attachment_id = $1
+              AND p.user_id = $2
+        )
+    `, attachmentID, userID).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
 }
 
 func (r *PostgresMessageRepository) LinkAttachmentToMessage(ctx context.Context, ma *message.MessageAttachment) error {

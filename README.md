@@ -120,7 +120,7 @@ Errors return:
 ```
 
 Main routes (prefixes):
-- `/v1/auth`: `POST /register`, `POST /login`, `POST /refresh`, `POST /logout`, `POST /logout-all`, `GET /sessions`, `POST /password/forgot`, `POST /password/reset`
+- `/v1/auth`: `POST /register`, `POST /login`, `POST /refresh`, `POST /oauth/:provider/exchange`, `POST /logout`, `POST /logout-all`, `GET /sessions`
 - `/v1/messages`: `POST /`, `GET /`, `GET /:id`, `PUT /:id`, `DELETE /:id`, `DELETE /:id/hard`, `POST /:id/read`, `POST /:id/delivered`
 - `/v1/conversations`: `POST /`, `GET /`, `GET /:id`, `PUT /:id`, `DELETE /:id`, `GET /direct`, `GET /search`, `GET /type`, `GET /invite`, `POST /:id/invite`, `POST /:id/participants`, `DELETE /:id/participants/:user_id`, `GET /:id/participants`, `PUT /:id/participants/:user_id/role`, `POST /:id/mute`, `POST /:id/unmute`, `POST /:id/pin`, `POST /:id/unpin`, `POST /:id/archive`, `POST /:id/unarchive`, `POST /:id/read-sequence`, `GET /:id/sequence`, `POST /:id/sequence`
 - `/v1/users`: profile, settings, contacts, devices, sessions
@@ -136,8 +136,10 @@ Utility routes:
 
 **Authentication**
 - Access tokens are JWTs signed with `JWT_SECRET`.
+- Access token TTL is controlled with `JWT_EXPIRY_MIN`.
 - Refresh tokens are hashed (SHA-256) and stored in `user_sessions`.
-- Auth middleware validates JWT + session + device ID (if present).
+- Web refresh tokens are set as `HttpOnly` cookies (`refresh_token`).
+- Auth middleware validates JWT + active session + device identity (if present).
 
 **E2EE Messaging**
 - Messages store per-recipient ciphertexts in `message_ciphertexts`.

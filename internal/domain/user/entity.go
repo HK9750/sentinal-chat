@@ -62,6 +62,7 @@ type UserSession struct {
 	RefreshTokenHash string
 	ExpiresAt        time.Time
 	IsRevoked        bool
+	AuthProvider     string
 	CreatedAt        time.Time
 }
 
