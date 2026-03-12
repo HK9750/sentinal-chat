@@ -8,16 +8,18 @@ import (
 
 	"sentinal-chat/internal/domain/conversation"
 	sentinal_errors "sentinal-chat/pkg/errors"
+	"sentinal-chat/pkg/logger"
 
 	"github.com/google/uuid"
 )
 
 type PostgresConversationRepository struct {
-	db DBTX
+	db     DBTX
+	logger *logger.Logger
 }
 
-func NewConversationRepository(db DBTX) ConversationRepository {
-	return &PostgresConversationRepository{db: db}
+func NewConversationRepository(db DBTX, l *logger.Logger) ConversationRepository {
+	return &PostgresConversationRepository{db: db, logger: l}
 }
 
 const convColumns = `id, type, subject, description, avatar_url, invite_link, invite_link_revoked_at,
@@ -53,7 +55,7 @@ func (r *PostgresConversationRepository) Create(ctx context.Context, c *conversa
         INSERT INTO conversations (
 	            id, type, subject, description, avatar_url, invite_link, invite_link_revoked_at,
             dm_user_id_a, dm_user_id_b, disappearing_mode, created_by, created_at, updated_at
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
     `,
 		c.ID,
 		c.Type,
@@ -70,6 +72,26 @@ func (r *PostgresConversationRepository) Create(ctx context.Context, c *conversa
 		c.UpdatedAt,
 	)
 	if err != nil {
+		logSQLError(r.logger, "conversation.create", `
+        INSERT INTO conversations (
+	            id, type, subject, description, avatar_url, invite_link, invite_link_revoked_at,
+            dm_user_id_a, dm_user_id_b, disappearing_mode, created_by, created_at, updated_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+    `, []any{
+			c.ID,
+			c.Type,
+			c.Subject,
+			c.Description,
+			c.AvatarURL,
+			c.InviteLink,
+			c.InviteLinkRevokedAt,
+			c.DMUserIDA,
+			c.DMUserIDB,
+			c.DisappearingMode,
+			c.CreatedBy,
+			c.CreatedAt,
+			c.UpdatedAt,
+		}, err)
 		if isUniqueViolation(err) {
 			return sentinal_errors.ErrAlreadyExists
 		}
@@ -204,15 +226,27 @@ func (r *PostgresConversationRepository) GetUserConversations(ctx context.Contex
 }
 
 func (r *PostgresConversationRepository) GetDirectConversation(ctx context.Context, userID1, userID2 uuid.UUID) (conversation.Conversation, error) {
+	if userID2.String() < userID1.String() {
+		userID1, userID2 = userID2, userID1
+	}
+
 	c, err := scanConversation(r.db.QueryRowContext(ctx, `
         SELECT `+convColumns+`
         FROM conversations
         WHERE type = 'DM'
-          AND dm_user_id_a = LEAST($1, $2)
-          AND dm_user_id_b = GREATEST($1, $2)
+          AND dm_user_id_a = $1
+          AND dm_user_id_b = $2
         LIMIT 1
     `, userID1, userID2))
 	if err != nil {
+		logSQLError(r.logger, "conversation.get_direct", `
+        SELECT `+convColumns+`
+        FROM conversations
+        WHERE type = 'DM'
+          AND dm_user_id_a = $1
+          AND dm_user_id_b = $2
+        LIMIT 1
+    `, []any{userID1, userID2}, err)
 		if errors.Is(err, sql.ErrNoRows) {
 			return conversation.Conversation{}, sentinal_errors.ErrNotFound
 		}
@@ -338,6 +372,19 @@ func (r *PostgresConversationRepository) AddParticipant(ctx context.Context, p *
 		p.LastReadSequence,
 	)
 	if err != nil {
+		logSQLError(r.logger, "conversation.add_participant", `
+        INSERT INTO participants (conversation_id, user_id, role, joined_at, added_by, muted_until, archived, last_read_sequence)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+    `, []any{
+			p.ConversationID,
+			p.UserID,
+			p.Role,
+			p.JoinedAt,
+			p.AddedBy,
+			p.MutedUntil,
+			p.Archived,
+			p.LastReadSequence,
+		}, err)
 		if isUniqueViolation(err) {
 			return sentinal_errors.ErrAlreadyExists
 		}

@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"sentinal-chat/pkg/logger"
 )
 
 // DBTX abstracts *sql.DB and *sql.Tx.
@@ -34,6 +36,14 @@ func buildPlaceholders(start, count int) string {
 		parts[i] = fmt.Sprintf("$%d", start+i)
 	}
 	return strings.Join(parts, ",")
+}
+
+func logSQLError(l *logger.Logger, operation, query string, args []any, err error) {
+	if l == nil || err == nil {
+		return
+	}
+	compactQuery := strings.Join(strings.Fields(query), " ")
+	l.Errorf("sql error operation=%s err=%v query=%q args=%v", operation, err, compactQuery, args)
 }
 
 // WithTx executes fn inside a transaction when db is *sql.DB.

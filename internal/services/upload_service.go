@@ -7,6 +7,7 @@ import (
 	"io"
 	"mime"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -76,8 +77,8 @@ func NewUploadService(
 }
 
 func (s *UploadService) UploadFile(ctx context.Context, in UploadFileInput) (UploadedFile, error) {
-	if s == nil || s.s3 == nil {
-		return UploadedFile{}, sentinal_errors.ErrServiceUnavailable
+	if s == nil || uploadStorageUnavailable(s.s3) {
+		return UploadedFile{}, fmt.Errorf("upload storage unavailable: %w", sentinal_errors.ErrServiceUnavailable)
 	}
 	if err := validateUploadFileInput(in, s.s3); err != nil {
 		return UploadedFile{}, err
@@ -98,8 +99,8 @@ func (s *UploadService) UploadFile(ctx context.Context, in UploadFileInput) (Upl
 }
 
 func (s *UploadService) UploadFiles(ctx context.Context, uploaderID uuid.UUID, files []UploadFileInput) ([]UploadedFile, error) {
-	if s == nil || s.s3 == nil {
-		return nil, sentinal_errors.ErrServiceUnavailable
+	if s == nil {
+		return nil, fmt.Errorf("upload storage unavailable: %w", sentinal_errors.ErrServiceUnavailable)
 	}
 	if uploaderID == uuid.Nil {
 		return nil, sentinal_errors.ErrUnauthorized
@@ -429,4 +430,17 @@ func nullableInt32(v *int32) sql.NullInt32 {
 		return sql.NullInt32{}
 	}
 	return sql.NullInt32{Int32: *v, Valid: true}
+}
+
+func uploadStorageUnavailable(storage UploadStorage) bool {
+	if storage == nil {
+		return true
+	}
+	value := reflect.ValueOf(storage)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return value.IsNil()
+	default:
+		return false
+	}
 }

@@ -45,7 +45,7 @@ func main() {
 	userRepo := repository.NewUserRepository(db)
 	oauthRepo := repository.NewOAuthIdentityRepository(db)
 	messageRepo := repository.NewMessageRepository(db)
-	conversationRepo := repository.NewConversationRepository(db)
+	conversationRepo := repository.NewConversationRepository(db, logInstance)
 	callRepo := repository.NewCallRepository(db)
 	outboxRepo := repository.NewOutboxRepository(db)
 	commandRepo := repository.NewCommandRepository(db)
@@ -85,7 +85,9 @@ func main() {
 		PublicBase: cfg.S3PublicBase,
 	})
 	if err != nil {
-		logInstance.Errorf("S3 upload client disabled: %v", err)
+		logInstance.Errorf("S3 upload client disabled: %v (region=%q bucket=%q endpoint=%q public_base=%q access_key_configured=%t secret_configured=%t)", err, cfg.S3Region, cfg.S3Bucket, cfg.S3Endpoint, cfg.S3PublicBase, cfg.S3AccessKeyID != "", cfg.S3SecretKey != "")
+	} else {
+		logInstance.Infof("S3 upload client enabled (region=%q bucket=%q endpoint=%q public_base=%q)", cfg.S3Region, cfg.S3Bucket, cfg.S3Endpoint, cfg.S3PublicBase)
 	}
 
 	// Upload API services

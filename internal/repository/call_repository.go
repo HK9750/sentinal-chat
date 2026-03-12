@@ -177,7 +177,7 @@ func (r *PostgresCallRepository) GetActiveCalls(ctx context.Context, userID uuid
         SELECT `+callColumns+`
         FROM calls
         WHERE ended_at IS NULL AND (initiated_by = $1 OR id IN (
-            SELECT call_id FROM call_participants WHERE user_id = $1 AND status IN ('INVITED','JOINED')
+            SELECT call_id FROM call_participants WHERE user_id = $1 AND status IN ('INVITED','CONNECTED')
         ))
     `, userID)
 	if err != nil {

@@ -10,6 +10,7 @@ import (
 
 	convdomain "sentinal-chat/internal/domain/conversation"
 	"sentinal-chat/internal/domain/outbox"
+	"sentinal-chat/internal/events"
 	chatproxy "sentinal-chat/internal/proxy"
 	"sentinal-chat/internal/repository"
 	chatws "sentinal-chat/internal/websocket"
@@ -124,12 +125,12 @@ func (s *ConversationService) Create(ctx context.Context, in CreateConversationI
 	}
 
 	if s.outbox != nil {
-		envelope := chatws.NewConversationEvent("conversation:created", conv.ID, map[string]any{
+		envelope := chatws.NewConversationEvent(events.ConversationCreated, conv.ID, map[string]any{
 			"conversation_id": conv.ID.String(),
 			"created_by":      in.CreatorID.String(),
 			"type":            conv.Type,
 		})
-		if event, err := chatws.NewOutboxEvent("conversation:created", outbox.AggregateConversation, conv.ID, envelope); err == nil {
+		if event, err := chatws.NewOutboxEvent(events.ConversationCreated, outbox.AggregateConversation, conv.ID, envelope); err == nil {
 			_ = s.outbox.Create(ctx, nil, event)
 		}
 	}
@@ -194,13 +195,13 @@ func (s *ConversationService) AddParticipant(ctx context.Context, in AddParticip
 		return ConversationView{}, err
 	}
 	if s.outbox != nil {
-		envelope := chatws.NewConversationEvent("conversation:participant_added", in.ConversationID, map[string]any{
+		envelope := chatws.NewConversationEvent(events.ConversationParticipantAdded, in.ConversationID, map[string]any{
 			"conversation_id": in.ConversationID.String(),
 			"user_id":         in.UserID.String(),
 			"added_by":        in.ActorID.String(),
 			"role":            participant.Role,
 		})
-		if event, err := chatws.NewOutboxEvent("conversation:participant_added", outbox.AggregateConversation, in.ConversationID, envelope); err == nil {
+		if event, err := chatws.NewOutboxEvent(events.ConversationParticipantAdded, outbox.AggregateConversation, in.ConversationID, envelope); err == nil {
 			_ = s.outbox.Create(ctx, nil, event)
 		}
 	}
@@ -223,12 +224,12 @@ func (s *ConversationService) RemoveParticipant(ctx context.Context, in RemovePa
 		return ConversationView{}, err
 	}
 	if s.outbox != nil {
-		envelope := chatws.NewConversationEvent("conversation:participant_removed", in.ConversationID, map[string]any{
+		envelope := chatws.NewConversationEvent(events.ConversationParticipantRemoved, in.ConversationID, map[string]any{
 			"conversation_id": in.ConversationID.String(),
 			"user_id":         in.UserID.String(),
 			"removed_by":      in.ActorID.String(),
 		})
-		if event, err := chatws.NewOutboxEvent("conversation:participant_removed", outbox.AggregateConversation, in.ConversationID, envelope); err == nil {
+		if event, err := chatws.NewOutboxEvent(events.ConversationParticipantRemoved, outbox.AggregateConversation, in.ConversationID, envelope); err == nil {
 			_ = s.outbox.Create(ctx, nil, event)
 		}
 	}

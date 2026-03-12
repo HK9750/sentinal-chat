@@ -34,17 +34,11 @@ func NewClient(ctx context.Context, cfg S3Config) (*Client, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
-	loadOptions := []func(*config.LoadOptions) error{
-		config.WithRegion(cfg.Region),
-	}
 
 	hasAccessKey := strings.TrimSpace(cfg.AccessKey) != ""
 	hasSecretKey := strings.TrimSpace(cfg.SecretKey) != ""
 	if hasAccessKey != hasSecretKey {
 		return nil, errors.New("s3 access key and secret key must be provided together")
-	}
-	if hasAccessKey {
-		loadOptions = append(loadOptions, config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(cfg.AccessKey, cfg.SecretKey, "")))
 	}
 
 	endpoint := strings.TrimSpace(cfg.Endpoint)
@@ -56,9 +50,18 @@ func NewClient(ctx context.Context, cfg S3Config) (*Client, error) {
 		endpoint = u.String()
 	}
 
-	awsCfg, err := config.LoadDefaultConfig(ctx, loadOptions...)
-	if err != nil {
-		return nil, err
+	var awsCfg aws.Config
+	if hasAccessKey {
+		awsCfg = aws.Config{
+			Region:      cfg.Region,
+			Credentials: aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(cfg.AccessKey, cfg.SecretKey, "")),
+		}
+	} else {
+		var err error
+		awsCfg, err = config.LoadDefaultConfig(ctx, config.WithRegion(cfg.Region))
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	s3Client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {

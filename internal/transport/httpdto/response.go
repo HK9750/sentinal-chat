@@ -9,6 +9,15 @@ type Response[T any] struct {
 	Code    string `json:"code,omitempty"`
 }
 
+type ItemsPayload[T any] struct {
+	Items []T `json:"items"`
+}
+
+type ListPayload[T any] struct {
+	Items []T   `json:"items"`
+	Total int64 `json:"total"`
+}
+
 func WriteSuccess[T any](c *gin.Context, status int, data T) {
 	c.JSON(status, Response[T]{
 		Success: true,

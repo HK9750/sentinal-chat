@@ -2,6 +2,7 @@ package handler
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -58,6 +59,7 @@ func (h *ConversationHandler) Create(c *gin.Context) {
 		ParticipantIDs:   participantIDs,
 		DisappearingMode: req.DisappearingMode,
 	})
+	fmt.Println(err)
 	if err != nil {
 		h.writeError(c, err)
 		return
@@ -78,7 +80,7 @@ func (h *ConversationHandler) List(c *gin.Context) {
 		h.writeError(c, err)
 		return
 	}
-	httpdto.WriteSuccess(c, http.StatusOK, gin.H{"items": items, "total": total})
+	httpdto.WriteSuccess(c, http.StatusOK, httpdto.ListPayload[services.ConversationView]{Items: items, Total: total})
 }
 
 func (h *ConversationHandler) Get(c *gin.Context) {
@@ -169,7 +171,7 @@ func (h *ConversationHandler) Participants(c *gin.Context) {
 		h.writeError(c, err)
 		return
 	}
-	httpdto.WriteSuccess(c, http.StatusOK, gin.H{"items": conv.Participants})
+	httpdto.WriteSuccess(c, http.StatusOK, httpdto.ItemsPayload[services.ParticipantView]{Items: conv.Participants})
 }
 
 func (h *ConversationHandler) Clear(c *gin.Context) {
@@ -219,6 +221,9 @@ func (h *ConversationHandler) writeError(c *gin.Context, err error) {
 		status = http.StatusServiceUnavailable
 		code = "SERVICE_UNAVAILABLE"
 		message = "service unavailable"
+	}
+	if status >= http.StatusInternalServerError && h.logger != nil {
+		h.logger.Errorf("conversation handler error: %v", err)
 	}
 	httpdto.WriteError(c, status, message, code)
 }

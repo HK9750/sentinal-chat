@@ -12,6 +12,7 @@ import (
 	"sentinal-chat/internal/domain/command"
 	msgdomain "sentinal-chat/internal/domain/message"
 	"sentinal-chat/internal/domain/outbox"
+	"sentinal-chat/internal/events"
 	chatproxy "sentinal-chat/internal/proxy"
 	"sentinal-chat/internal/repository"
 	chatws "sentinal-chat/internal/websocket"
@@ -105,10 +106,10 @@ func (s *MessageService) Send(ctx context.Context, in SendMessageInput) (Message
 	}
 
 	if s.outbox != nil {
-		envelope := chatws.NewMessageEvent("message:new", in.ConversationID, map[string]any{
+		envelope := chatws.NewMessageEvent(events.MessageNew, in.ConversationID, map[string]any{
 			"message": view,
 		})
-		if event, err := chatws.NewOutboxEvent("message:new", outbox.AggregateMessage, stored.ID, envelope); err == nil {
+		if event, err := chatws.NewOutboxEvent(events.MessageNew, outbox.AggregateMessage, stored.ID, envelope); err == nil {
 			_ = s.outbox.Create(ctx, nil, event)
 		}
 	}
@@ -157,8 +158,8 @@ func (s *MessageService) Edit(ctx context.Context, in EditMessageInput) (Message
 		return MessageView{}, err
 	}
 	if s.outbox != nil {
-		envelope := chatws.NewMessageEvent("message:edited", in.ConversationID, map[string]any{"message": view})
-		if event, err := chatws.NewOutboxEvent("message:edited", outbox.AggregateMessage, in.MessageID, envelope); err == nil {
+		envelope := chatws.NewMessageEvent(events.MessageEdited, in.ConversationID, map[string]any{"message": view})
+		if event, err := chatws.NewOutboxEvent(events.MessageEdited, outbox.AggregateMessage, in.MessageID, envelope); err == nil {
 			_ = s.outbox.Create(ctx, nil, event)
 		}
 	}
@@ -189,8 +190,8 @@ func (s *MessageService) Delete(ctx context.Context, in DeleteMessageInput) (Mes
 		return MessageView{}, err
 	}
 	if s.outbox != nil {
-		envelope := chatws.NewMessageEvent("message:deleted", in.ConversationID, map[string]any{"message": view})
-		if event, err := chatws.NewOutboxEvent("message:deleted", outbox.AggregateMessage, in.MessageID, envelope); err == nil {
+		envelope := chatws.NewMessageEvent(events.MessageDeleted, in.ConversationID, map[string]any{"message": view})
+		if event, err := chatws.NewOutboxEvent(events.MessageDeleted, outbox.AggregateMessage, in.MessageID, envelope); err == nil {
 			_ = s.outbox.Create(ctx, nil, event)
 		}
 	}
@@ -435,8 +436,8 @@ func (s *MessageService) VotePoll(ctx context.Context, in VotePollInput) (PollVi
 		return PollView{}, err
 	}
 	if s.outbox != nil {
-		envelope := chatws.NewConversationEvent("poll:update", in.ConversationID, map[string]any{"poll": view})
-		if event, err := chatws.NewOutboxEvent("poll:update", outbox.AggregatePoll, in.PollID, envelope); err == nil {
+		envelope := chatws.NewConversationEvent(events.PollUpdate, in.ConversationID, map[string]any{"poll": view})
+		if event, err := chatws.NewOutboxEvent(events.PollUpdate, outbox.AggregatePoll, in.PollID, envelope); err == nil {
 			_ = s.outbox.Create(ctx, nil, event)
 		}
 	}
@@ -455,8 +456,8 @@ func (s *MessageService) ClosePoll(ctx context.Context, conversationID, pollID, 
 		return PollView{}, err
 	}
 	if s.outbox != nil {
-		envelope := chatws.NewConversationEvent("poll:update", conversationID, map[string]any{"poll": view})
-		if event, err := chatws.NewOutboxEvent("poll:update", outbox.AggregatePoll, pollID, envelope); err == nil {
+		envelope := chatws.NewConversationEvent(events.PollUpdate, conversationID, map[string]any{"poll": view})
+		if event, err := chatws.NewOutboxEvent(events.PollUpdate, outbox.AggregatePoll, pollID, envelope); err == nil {
 			_ = s.outbox.Create(ctx, nil, event)
 		}
 	}

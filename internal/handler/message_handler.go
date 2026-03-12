@@ -44,7 +44,7 @@ func (h *MessageHandler) History(c *gin.Context) {
 		h.writeError(c, err)
 		return
 	}
-	httpdto.WriteSuccess(c, http.StatusOK, gin.H{"items": items})
+	httpdto.WriteSuccess(c, http.StatusOK, httpdto.ItemsPayload[services.MessageView]{Items: items})
 }
 
 func (h *MessageHandler) Get(c *gin.Context) {

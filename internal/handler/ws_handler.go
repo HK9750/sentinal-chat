@@ -57,7 +57,7 @@ func (h *WSHandler) Connect(c *gin.Context) {
 		return
 	}
 	userID, _ := uuid.Parse(claims.UserID)
-	ctx, cancel := context.WithCancel(c.Request.Context())
+	ctx, cancel := context.WithCancel(context.Background())
 	client := &chatws.Client{
 		ID:         uuid.NewString(),
 		UserID:     userID,
