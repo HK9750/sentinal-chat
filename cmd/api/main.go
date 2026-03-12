@@ -7,11 +7,12 @@ import (
 
 	"sentinal-chat/config"
 	"sentinal-chat/internal/handler"
-	"sentinal-chat/internal/middleware"
+	redisclient "sentinal-chat/internal/redis"
 	"sentinal-chat/internal/repository"
 	"sentinal-chat/internal/server"
 	"sentinal-chat/internal/services"
 	"sentinal-chat/internal/storage"
+	chatws "sentinal-chat/internal/websocket"
 	"sentinal-chat/pkg/database"
 	"sentinal-chat/pkg/logger"
 )
@@ -38,15 +39,16 @@ func main() {
 
 	// Create and configure the server
 	srv := server.New(cfg, logInstance)
-	srv.SetupBaseRoutes()
 
 	// Repositories
 	db := database.GetDB()
 	userRepo := repository.NewUserRepository(db)
 	oauthRepo := repository.NewOAuthIdentityRepository(db)
-	uploadRepo := repository.NewUploadRepository(db)
 	messageRepo := repository.NewMessageRepository(db)
 	conversationRepo := repository.NewConversationRepository(db)
+	callRepo := repository.NewCallRepository(db)
+	outboxRepo := repository.NewOutboxRepository(db)
+	commandRepo := repository.NewCommandRepository(db)
 
 	// Token service
 	tokenService, err := services.NewTokenService(
@@ -81,25 +83,50 @@ func main() {
 		SecretKey:  cfg.S3SecretKey,
 		Endpoint:   cfg.S3Endpoint,
 		PublicBase: cfg.S3PublicBase,
-		PresignTTL: time.Duration(cfg.S3PresignTTL) * time.Second,
 	})
 	if err != nil {
 		logInstance.Errorf("S3 upload client disabled: %v", err)
 	}
 
 	// Upload API services
-	uploadService := services.NewUploadService(uploadRepo, messageRepo, conversationRepo, s3Client)
+	uploadService := services.NewUploadService(messageRepo, conversationRepo, s3Client)
 	uploadHandler := handler.NewUploadHandler(uploadService, logInstance)
+	commandService := services.NewCommandService(commandRepo)
+	messageService := services.NewMessageService(messageRepo, conversationRepo, outboxRepo, commandService)
+	conversationService := services.NewConversationService(conversationRepo, userRepo, outboxRepo, commandService)
+	conversationService.AttachMessageService(messageService)
+	callService := services.NewCallService(callRepo, conversationRepo, outboxRepo)
+	realtimeService := services.NewRealtimeService(nil, conversationService, messageService, callService)
+	conversationHandler := handler.NewConversationHandler(conversationService, logInstance)
+	messageHandler := handler.NewMessageHandler(messageService, logInstance)
+	redisClient, err := redisclient.NewRedis(cfg)
+	if err != nil {
+		logInstance.Errorf("Redis realtime disabled: %v", err)
+	}
+	realtimeHub := chatws.NewHub(redisClient, conversationRepo, logInstance)
+	realtimeService = services.NewRealtimeService(realtimeHub, conversationService, messageService, callService)
+	outboxWorker := chatws.NewOutboxWorker(outboxRepo, redisClient, logInstance)
+	wsHandler := handler.NewWSHandler(authService, realtimeHub, realtimeService, logInstance)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	outboxWorker.Start(ctx)
 
-	v1 := srv.Engine().Group("/v1")
-	authHandler.RegisterPublicRoutes(v1)
-
-	v1.Use(middleware.AuthMiddleware(authService.ParseAccessToken, authService.ValidateAccessSession))
-	authHandler.RegisterProtectedRoutes(v1)
-	uploadHandler.RegisterRoutes(v1)
+	srv.InitRoutes(server.RouteDependencies{
+		Handlers: server.RouteHandlers{
+			Auth:         authHandler,
+			Upload:       uploadHandler,
+			Conversation: conversationHandler,
+			Message:      messageHandler,
+			WS:           wsHandler,
+		},
+		AuthService: authService,
+	})
 
 	// defer the close of db
 	defer func() {
+		if redisClient != nil {
+			_ = redisClient.Close()
+		}
 		defer database.Close()
 	}()
 

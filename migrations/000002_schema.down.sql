@@ -7,7 +7,6 @@ DROP TABLE IF EXISTS calls;
 DROP TABLE IF EXISTS poll_votes;
 DROP TABLE IF EXISTS poll_options;
 DROP TABLE IF EXISTS polls;
-DROP TABLE IF EXISTS upload_sessions;
 DROP TABLE IF EXISTS message_attachments;
 DROP TABLE IF EXISTS attachments;
 DROP TABLE IF EXISTS message_mentions;

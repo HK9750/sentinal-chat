@@ -46,12 +46,16 @@ func scanConversation(scanner interface {
 }
 
 func (r *PostgresConversationRepository) Create(ctx context.Context, c *conversation.Conversation) error {
+	if c.ID == uuid.Nil {
+		c.ID = uuid.New()
+	}
 	_, err := r.db.ExecContext(ctx, `
         INSERT INTO conversations (
-             type, subject, description, avatar_url, invite_link, invite_link_revoked_at,
+	            id, type, subject, description, avatar_url, invite_link, invite_link_revoked_at,
             dm_user_id_a, dm_user_id_b, disappearing_mode, created_by, created_at, updated_at
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
     `,
+		c.ID,
 		c.Type,
 		c.Subject,
 		c.Description,

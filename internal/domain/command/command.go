@@ -11,17 +11,26 @@ import (
 type Status string
 
 const (
-	StatusPending   Status = "PENDING"
-	StatusExecuting Status = "EXECUTING"
-	StatusCompleted Status = "COMPLETED"
-	StatusFailed    Status = "FAILED"
-	StatusUndone    Status = "UNDONE"
+	StatusPending  Status = "PENDING"
+	StatusExecuted Status = "EXECUTED"
+	StatusFailed   Status = "FAILED"
+	StatusUndone   Status = "UNDONE"
+)
+
+type CommandType string
+
+const (
+	CommandDeleteMessage CommandType = "DELETE_MESSAGE"
+	CommandEditMessage   CommandType = "EDIT_MESSAGE"
+	CommandPinMessage    CommandType = "PIN_MESSAGE"
+	CommandUnpinMessage  CommandType = "UNPIN_MESSAGE"
+	CommandClearChat     CommandType = "CLEAR_CHAT"
 )
 
 // CommandLog stores command execution history
 type CommandLog struct {
 	ID              uuid.UUID
-	CommandType     string
+	CommandType     CommandType
 	UserID          uuid.UUID
 	ConversationID  *uuid.UUID
 	Status          Status

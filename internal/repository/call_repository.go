@@ -43,10 +43,13 @@ func scanCall(scanner interface {
 }
 
 func (r *PostgresCallRepository) Create(ctx context.Context, c *call.Call) error {
+	if c.ID == uuid.Nil {
+		c.ID = uuid.New()
+	}
 	_, err := r.db.ExecContext(ctx, `
-        INSERT INTO calls (conversation_id, initiated_by, type, is_group_call, started_at, connected_at, ended_at, end_reason, duration_seconds, created_at)
+        INSERT INTO calls (id, conversation_id, initiated_by, type, is_group_call, started_at, connected_at, ended_at, end_reason, duration_seconds, created_at)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-    `, c.ConversationID, c.InitiatedBy, c.Type, c.IsGroupCall, c.StartedAt, c.ConnectedAt, c.EndedAt, c.EndReason, c.DurationSeconds, c.CreatedAt)
+    `, c.ID, c.ConversationID, c.InitiatedBy, c.Type, c.IsGroupCall, c.StartedAt, c.ConnectedAt, c.EndedAt, c.EndReason, c.DurationSeconds, c.CreatedAt)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return sentinal_errors.ErrAlreadyExists
@@ -341,7 +344,7 @@ func (r *PostgresCallRepository) IsCallParticipant(ctx context.Context, callID, 
 }
 
 var (
-	StatusJoined = "JOINED"
+	StatusJoined = "CONNECTED"
 	StatusLeft   = "LEFT"
 )
 
@@ -389,7 +392,7 @@ func (r *PostgresCallRepository) UpdateParticipantMuteStatus(ctx context.Context
 
 func (r *PostgresCallRepository) GetActiveParticipantCount(ctx context.Context, callID uuid.UUID) (int64, error) {
 	var count int64
-	if err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM call_participants WHERE call_id = $1 AND status = 'JOINED'", callID).Scan(&count); err != nil {
+	if err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM call_participants WHERE call_id = $1 AND status = 'CONNECTED'", callID).Scan(&count); err != nil {
 		return 0, err
 	}
 	return count, nil

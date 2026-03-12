@@ -80,8 +80,6 @@ CREATE INDEX IF NOT EXISTS idx_pinned_conv
 -- ============================================================
 CREATE INDEX IF NOT EXISTS idx_attachments_uploader
     ON attachments (uploader_id);
-CREATE INDEX IF NOT EXISTS idx_upload_sessions_uploader
-    ON upload_sessions (uploader_id);
 
 -- ============================================================
 -- POLLS

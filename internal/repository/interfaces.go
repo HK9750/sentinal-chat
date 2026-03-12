@@ -12,7 +12,6 @@ import (
 	"sentinal-chat/internal/domain/conversation"
 	"sentinal-chat/internal/domain/message"
 	"sentinal-chat/internal/domain/outbox"
-	"sentinal-chat/internal/domain/upload"
 	"sentinal-chat/internal/domain/user"
 )
 
@@ -207,31 +206,14 @@ type CallRepository interface {
 	GetActiveParticipantCount(ctx context.Context, callID uuid.UUID) (int64, error)
 }
 
-type UploadRepository interface {
-	Create(ctx context.Context, u *upload.UploadSession) error
-	GetByID(ctx context.Context, id uuid.UUID) (upload.UploadSession, error)
-	Update(ctx context.Context, u upload.UploadSession) error
-	Delete(ctx context.Context, id uuid.UUID) error
-
-	GetUserUploadSessions(ctx context.Context, uploaderID uuid.UUID) ([]upload.UploadSession, error)
-	GetInProgressUploads(ctx context.Context, uploaderID uuid.UUID) ([]upload.UploadSession, error)
-	GetCompletedUploads(ctx context.Context, uploaderID uuid.UUID, page, limit int) ([]upload.UploadSession, int64, error)
-
-	UpdateProgress(ctx context.Context, sessionID uuid.UUID, uploadedBytes int64) error
-	MarkCompleted(ctx context.Context, sessionID uuid.UUID) error
-	MarkFailed(ctx context.Context, sessionID uuid.UUID) error
-
-	GetStaleUploads(ctx context.Context, olderThan time.Duration) ([]upload.UploadSession, error)
-	DeleteStaleUploads(ctx context.Context, olderThan time.Duration) (int64, error)
-}
-
 type OutboxRepository interface {
 	Create(ctx context.Context, tx DBTX, event *outbox.OutboxEvent) error
 	GetPending(ctx context.Context, limit int) ([]outbox.OutboxEvent, error)
-	MarkProcessing(ctx context.Context, id string) error
+	MarkProcessing(ctx context.Context, id string) (bool, error)
 	MarkCompleted(ctx context.Context, id string) error
 	MarkFailed(ctx context.Context, id string, errorMsg string) error
 	IncrementRetry(ctx context.Context, id string) error
+	ScheduleRetry(ctx context.Context, id string, nextRetryAt time.Time, errorMsg string) error
 }
 
 type CommandRepository interface {

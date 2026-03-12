@@ -396,7 +396,7 @@ func (s *AuthService) resolveOAuthUser(ctx context.Context, identity OAuthIdenti
 		}
 		return u, false, nil
 	}
-	if err != nil && !errors.Is(err, sentinal_errors.ErrNotFound) {
+	if !errors.Is(err, sentinal_errors.ErrNotFound) {
 		return user.User{}, false, err
 	}
 

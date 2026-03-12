@@ -45,11 +45,10 @@ sentinal-chat/
 │   │   ├── message/attachments.go      ✅ Attachment, MessageAttachment
 │   │   ├── message/polls.go            ✅ Poll, PollOption, PollVote
 │   │   ├── outbox/outbox.go            ✅ OutboxEvent, Status consts
-│   │   ├── upload/entity.go            ✅ UploadSession
 │   │   └── user/entity.go              ✅ User, Device, FcmToken, UserSession, UserContact
 │   ├── handler/
 │   │   ├── auth_handler.go             ✅ Register, Login, Refresh, OAuth, Logout, Sessions
-│   │   ├── upload_handler.go           ✅ Upload session CRUD, Attachments
+│   │   ├── upload_handler.go           ✅ Direct multipart uploads, Attachments
 │   │   ├── user_handler.go             ❌ TODO
 │   │   ├── conversation_handler.go     ❌ TODO
 │   │   ├── message_handler.go          ❌ TODO
@@ -1220,7 +1219,6 @@ var (
     ErrConflict           = errors.New("conflict")
     ErrInvalidTransition  = errors.New("invalid state transition")
     ErrTooLarge           = errors.New("too large")
-    ErrNotUploaded        = errors.New("upload not completed")
     ErrServiceUnavailable = errors.New("service unavailable")
 )
 ```
@@ -1237,7 +1235,6 @@ var (
 | `ErrConflict` | 409 | `CONFLICT` |
 | `ErrInvalidTransition` | 409 | `CONFLICT` |
 | `ErrTooLarge` | 413 | `TOO_LARGE` |
-| `ErrNotUploaded` | 409 | `UPLOAD_NOT_COMPLETED` |
 | `ErrServiceUnavailable` | 503 | `SERVICE_UNAVAILABLE` |
 | Unknown error | 500 | `INTERNAL_ERROR` |
 

@@ -19,7 +19,7 @@ func NewCommandRepository(db DBTX) CommandRepository {
 func (r *commandRepository) CreateLog(ctx context.Context, log *command.CommandLog) error {
 	_, err := r.db.ExecContext(ctx, `
         INSERT INTO command_logs ( command_type, user_id, conversation_id, status, payload, undo_payload, error_message, execution_time_ms, created_at, executed_at, undone_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
     `,
 		log.CommandType,
 		log.UserID,
@@ -186,5 +186,5 @@ func (r *commandRepository) CanUndo(ctx context.Context, commandID uuid.UUID, us
 	if err != nil {
 		return false, err
 	}
-	return log.Status == command.StatusCompleted && log.UndoneAt == nil, nil
+	return log.Status == command.StatusExecuted && log.UndoneAt == nil && log.ExecutedAt != nil, nil
 }

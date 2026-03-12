@@ -5,9 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"strings"
-	"time"
-
-	"github.com/google/uuid"
 
 	sentinal_errors "sentinal-chat/pkg/errors"
 )
@@ -33,25 +30,11 @@ func (r *PostgresOAuthIdentityRepository) Create(ctx context.Context, identity *
 		return sentinal_errors.ErrInvalidInput
 	}
 
-	now := time.Now().UTC()
-	if identity.ID == uuid.Nil {
-		identity.ID = uuid.New()
-	}
-	if identity.CreatedAt.IsZero() {
-		identity.CreatedAt = now
-	}
-	if identity.UpdatedAt.IsZero() {
-		identity.UpdatedAt = now
-	}
-
 	err := r.db.QueryRowContext(ctx, `
-        INSERT INTO oauth_identities (
-            id, user_id, provider, provider_user_id, provider_email, email_verified, created_at, updated_at
-        )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+        INSERT INTO oauth_identities (user_id, provider, provider_user_id, provider_email, email_verified, created_at, updated_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7)
         RETURNING created_at, updated_at
     `,
-		identity.ID,
 		identity.UserID,
 		strings.ToLower(strings.TrimSpace(identity.Provider)),
 		strings.TrimSpace(identity.ProviderUserID),

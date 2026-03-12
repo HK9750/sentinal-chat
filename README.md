@@ -51,7 +51,7 @@ Real-time chat backend written in Go. Supports end-to-end encrypted messaging, c
 | HTTP DTO layer | `internal/transport/httpdto/` |
 | Utility routes | `GET /ping`, `GET /health`, `GET /goroutines` |
 | Auth routes | `POST /v1/auth/register`, `login`, `refresh`, `logout`, `logout-all`, `GET sessions`, `oauth` |
-| Upload routes | `POST /v1/uploads`, progress, complete, fail, attachments |
+| Upload routes | `POST /v1/uploads`, `POST /v1/uploads/bulk`, attachment routes |
 | SQL migrations | `migrations/` |
 
 ### ❌ Not yet built
@@ -646,12 +646,8 @@ POST /v1/messages                   ❌ TODO
 GET  /v1/messages                   ❌ TODO
 ...
 
-POST /v1/uploads                    ✅
-GET  /v1/uploads/:id                ✅
-GET  /v1/uploads                    ✅
-PATCH /v1/uploads/:id/progress      ✅
-POST /v1/uploads/:id/complete       ✅
-POST /v1/uploads/:id/fail           ✅
+POST /v1/uploads                    ✅ multipart single upload
+POST /v1/uploads/bulk               ✅ multipart bulk upload
 POST /v1/attachments                ✅
 GET  /v1/attachments/:id            ✅
 POST /v1/attachments/:id/viewed     ✅
@@ -664,6 +660,27 @@ GET  /v1/ws                         ❌ TODO WebSocket
 ```
 
 See `docs/api-endpoints.md` for the full contract of every endpoint.
+
+### Upload flow
+
+The upload API is now intentionally simple:
+
+1. `POST /v1/uploads` with `multipart/form-data` field `file` for one real file upload.
+2. `POST /v1/uploads/bulk` with repeated `files` fields for bulk uploads.
+3. Use the returned `file_url`, `filename`, `mime_type`, and `size_bytes` when calling `POST /v1/attachments`.
+
+Example attachment body:
+
+```json
+{
+  "message_id": "uuid-optional",
+  "file_url": "https://cdn.example.com/uploads/user/file.png",
+  "filename": "file.png",
+  "mime_type": "image/png",
+  "size_bytes": 1024,
+  "view_once": false
+}
+```
 
 ---
 
@@ -732,7 +749,6 @@ The `RateLimitChecker` function type is injected — the Redis sliding window im
 | `ErrConflict` | 409 | `CONFLICT` |
 | `ErrInvalidTransition` | 409 | `CONFLICT` |
 | `ErrTooLarge` | 413 | `TOO_LARGE` |
-| `ErrNotUploaded` | 409 | `UPLOAD_NOT_COMPLETED` |
 | `ErrServiceUnavailable` | 503 | `SERVICE_UNAVAILABLE` |
 
 ### Handler pattern

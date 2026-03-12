@@ -17,7 +17,6 @@ var (
 	ErrQueueFull          = errors.New("queue full")
 	ErrServiceUnavailable = errors.New("service unavailable")
 	ErrAlreadyExists      = errors.New("already exists")
-	ErrNotUploaded        = errors.New("file not uploaded")
 )
 
 func NowPtr() *time.Time {

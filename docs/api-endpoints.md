@@ -1337,114 +1337,77 @@ These are all backed by existing schema and repository methods.
 
 ## 10. Attachment and Upload Endpoints
 
-The repo already supports upload sessions, attachment metadata, and an S3 presign helper.
+The active upload flow is direct multipart upload to the backend, followed by optional attachment creation.
 
 ## 10.1 POST `/v1/uploads`
 
 - Auth required: yes
 - Main purpose:
-  - create an upload session
-  - return upload target details
+  - accept one real file upload from frontend/Postman via `multipart/form-data`
+  - upload the file to S3
+  - return the final file metadata and URL
 
 ### Request body
 
-```json
-{
-  "filename": "photo.jpg",
-  "mime_type": "image/jpeg",
-  "size_bytes": 1048576,
-  "chunk_size": 262144
-}
-```
+- Content type: `multipart/form-data`
+- Field: `file`
 
 ### Backend actions
 
 - validate `size_bytes <= 15728640`
 - create object key
-- create row in `upload_sessions`
-- generate presigned PUT URL using S3 helper
+- stream upload body to S3
 
 ### Tables touched
 
-- `upload_sessions`
+- none
 
 ### Success response should include
 
-- upload session id
+- filename
+- mime type
+- size bytes
 - object key
-- presigned url
-- required headers
-- current status
+- final file url
 
-## 10.2 GET `/v1/uploads/:id`
+## 10.2 POST `/v1/uploads/bulk`
 
 - Auth required: yes
 - Main purpose:
-  - fetch upload session by id
+  - accept many real file uploads from frontend/Postman via `multipart/form-data`
+  - upload files concurrently to S3
+  - return a list of file metadata and URLs
 
-## 10.3 GET `/v1/uploads?status=IN_PROGRESS|COMPLETED&page=1&limit=20`
+### Request body
+
+- Content type: `multipart/form-data`
+- Repeated field: `files`
+
+### Backend actions
+
+- validate each file size and mime type
+- upload files concurrently with goroutines
+- return one result item per uploaded file
+
+## 10.3 POST `/v1/attachments`
 
 - Auth required: yes
 - Main purpose:
-  - list current user's uploads
-
-### Suggested service behavior
-
-- if no status filter, return all uploads
-- if `status = IN_PROGRESS`, use in-progress repository method
-- if `status = COMPLETED`, use paginated completed repository method
-
-## 10.4 PATCH `/v1/uploads/:id/progress`
-
-- Auth required: yes
-- Main purpose:
-  - update uploaded byte count
+  - create attachment metadata for an already uploaded file
+  - optionally link the attachment to an existing message sent by the same user
 
 ### Request body
 
 ```json
 {
-  "uploaded_bytes": 524288
-}
-```
-
-## 10.5 POST `/v1/uploads/:id/complete`
-
-- Auth required: yes
-- Main purpose:
-  - mark upload as completed
-
-### Backend behavior from repository
-
-- sets:
-  - `status = COMPLETED`
-  - `uploaded_bytes = size_bytes`
-  - `completed_at = now`
-  - `updated_at = now`
-
-## 10.6 POST `/v1/uploads/:id/fail`
-
-- Auth required: yes
-- Main purpose:
-  - mark upload as failed
-
-## 10.7 POST `/v1/attachments`
-
-- Auth required: yes
-- Main purpose:
-	- create attachment metadata for a completed upload session
-	- optionally link the attachment to an existing message sent by the same user
-
-### Request body
-
-```json
-{
-	"upload_session_id": "uuid",
-	"message_id": "uuid-optional",
-	"encrypted_url": "encrypted-storage-url",
-	"view_once": false,
-	"thumbnail_url": "https://cdn.example.com/thumb.jpg",
-	"width": 1280,
+  "message_id": "uuid-optional",
+  "file_url": "https://cdn.example.com/uploads/photo.jpg",
+  "filename": "photo.jpg",
+  "mime_type": "image/jpeg",
+  "size_bytes": 1048576,
+  "view_once": false,
+  "thumbnail_url": "https://cdn.example.com/thumb.jpg",
+  "width": 1280,
   "height": 720,
   "duration_seconds": null
 }
@@ -1456,18 +1419,16 @@ The repo already supports upload sessions, attachment metadata, and an S3 presig
 
 ### Backend behavior
 
-- `upload_session_id` must belong to the current user
-- upload session must already be in `COMPLETED` state
-- attachment metadata must match the upload session when optional filename, mime type, or size overrides are supplied
+- `file_url`, `filename`, `mime_type`, and `size_bytes` must describe the uploaded file
 - if `message_id` is provided, it must belong to a message sent by the current user and the attachment is linked atomically through `message_attachments`
 
-## 10.8 GET `/v1/attachments/:id`
+## 10.4 GET `/v1/attachments/:id`
 
 - Auth required: yes
 - Main purpose:
   - fetch one attachment metadata row
 
-## 10.9 POST `/v1/attachments/:id/viewed`
+## 10.5 POST `/v1/attachments/:id/viewed`
 
 - Auth required: yes
 - Main purpose:
@@ -1477,7 +1438,7 @@ The repo already supports upload sessions, attachment metadata, and an S3 presig
 
 - when `view_once = true` and `viewed_at` gets set, DB trigger clears `encrypted_url`
 
-## 10.10 GET `/v1/messages/:id/attachments`
+## 10.6 GET `/v1/messages/:id/attachments`
 
 - Auth required: yes
 - Main purpose:

@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"sentinal-chat/config"
+	"sentinal-chat/internal/handler"
 	"sentinal-chat/internal/middleware"
+	"sentinal-chat/internal/services"
 	"sentinal-chat/pkg/database"
 	"sentinal-chat/pkg/logger"
 
@@ -31,6 +33,19 @@ type Server struct {
 	engine     *gin.Engine
 	config     *config.Config
 	logger     *logger.Logger
+}
+
+type RouteHandlers struct {
+	Auth         *handler.AuthHandler
+	Upload       *handler.UploadHandler
+	Conversation *handler.ConversationHandler
+	Message      *handler.MessageHandler
+	WS           *handler.WSHandler
+}
+
+type RouteDependencies struct {
+	Handlers    RouteHandlers
+	AuthService *services.AuthService
 }
 
 // New creates a new Server instance and configures the gin engine mode
@@ -58,13 +73,8 @@ func New(cfg *config.Config, l *logger.Logger) *Server {
 	}
 }
 
-// Engine returns the underlying gin.Engine for external route registration
-func (s *Server) Engine() *gin.Engine {
-	return s.engine
-}
-
-// SetupBaseRoutes registers global middleware and core diagnostic endpoints
-func (s *Server) SetupBaseRoutes() {
+// InitRoutes registers middleware, diagnostics, and application routes.
+func (s *Server) InitRoutes(deps RouteDependencies) {
 	// Global middleware
 	s.engine.Use(middleware.RequestIDMiddleware())
 	s.engine.Use(middleware.CORSMiddleware(s.config.FrontendURL))
@@ -91,6 +101,32 @@ func (s *Server) SetupBaseRoutes() {
 	s.engine.GET("/goroutines", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"goroutines": runtime.NumGoroutine()})
 	})
+
+	v1 := s.engine.Group("/v1")
+	if deps.Handlers.WS != nil {
+		deps.Handlers.WS.RegisterRoutes(v1)
+	}
+	if deps.Handlers.Auth != nil {
+		deps.Handlers.Auth.RegisterPublicRoutes(v1)
+	}
+
+	protected := v1.Group("")
+	if deps.AuthService != nil {
+		protected.Use(middleware.AuthMiddleware(deps.AuthService.ParseAccessToken, deps.AuthService.ValidateAccessSession))
+	}
+
+	if deps.Handlers.Auth != nil {
+		deps.Handlers.Auth.RegisterProtectedRoutes(protected)
+	}
+	if deps.Handlers.Upload != nil {
+		deps.Handlers.Upload.RegisterRoutes(protected)
+	}
+	if deps.Handlers.Conversation != nil {
+		deps.Handlers.Conversation.RegisterRoutes(protected)
+	}
+	if deps.Handlers.Message != nil {
+		deps.Handlers.Message.RegisterRoutes(protected)
+	}
 }
 
 // Start begins listening and blocks until a shutdown signal is received.

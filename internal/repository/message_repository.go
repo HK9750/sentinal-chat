@@ -50,18 +50,20 @@ func scanMessage(scanner interface {
 }
 
 func (r *PostgresMessageRepository) Create(ctx context.Context, m *message.Message) error {
+	if m.ID == uuid.Nil {
+		m.ID = uuid.New()
+	}
 	_, err := r.db.ExecContext(ctx, `
         INSERT INTO messages (
-            id, conversation_id, sender_id, client_message_id, seq_id, type, encrypted_content,
+            id, conversation_id, sender_id, client_message_id, type, encrypted_content,
             is_forwarded, reply_to_msg_id, poll_id, mention_count,
             created_at, edited_at, deleted_at, expires_at
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
     `,
 		m.ID,
 		m.ConversationID,
 		m.SenderID,
 		m.ClientMessageID,
-		m.SeqID,
 		m.Type,
 		m.EncryptedContent,
 		m.IsForwarded,
@@ -483,11 +485,25 @@ func (r *PostgresMessageRepository) MarkAsRead(ctx context.Context, messageID, u
 
 func (r *PostgresMessageRepository) MarkAsPlayed(ctx context.Context, messageID, userID uuid.UUID) error {
 	now := time.Now()
-	_, err := r.db.ExecContext(ctx, `
+	res, err := r.db.ExecContext(ctx, `
         UPDATE message_receipts
-        SET played_at = $1, updated_at = $1
+        SET status = 'PLAYED', played_at = $1, updated_at = $1
         WHERE message_id = $2 AND user_id = $3
     `, now, messageID, userID)
+	if err != nil {
+		return err
+	}
+	rows, err := res.RowsAffected()
+	if err == nil && rows == 0 {
+		receipt := &message.MessageReceipt{
+			MessageID: messageID,
+			UserID:    userID,
+			Status:    "PLAYED",
+			PlayedAt:  toNullTime(now),
+			UpdatedAt: now,
+		}
+		return r.CreateReceipt(ctx, receipt)
+	}
 	return err
 }
 
@@ -734,6 +750,9 @@ func (r *PostgresMessageRepository) GetPinnedMessages(ctx context.Context, conve
 }
 
 func (r *PostgresMessageRepository) CreateMessageEdit(ctx context.Context, e *message.MessageEdit) error {
+	if e.ID == uuid.Nil {
+		e.ID = uuid.New()
+	}
 	_, err := r.db.ExecContext(ctx, `
         INSERT INTO message_edits (id, message_id, encrypted_content, edited_by, edited_at, version_number)
         VALUES ($1,$2,$3,$4,$5,$6)
@@ -766,6 +785,9 @@ func (r *PostgresMessageRepository) GetMessageEdits(ctx context.Context, message
 }
 
 func (r *PostgresMessageRepository) CreateAttachment(ctx context.Context, a *message.Attachment) error {
+	if a.ID == uuid.Nil {
+		a.ID = uuid.New()
+	}
 	_, err := r.db.ExecContext(ctx, `
         INSERT INTO attachments (
             id, uploader_id, encrypted_url, filename, mime_type, size_bytes, view_once, viewed_at,
@@ -793,6 +815,10 @@ func (r *PostgresMessageRepository) CreateAttachmentWithLink(ctx context.Context
 	if a == nil || ma == nil {
 		return sentinal_errors.ErrInvalidInput
 	}
+	if a.ID == uuid.Nil {
+		a.ID = uuid.New()
+	}
+	ma.AttachmentID = a.ID
 
 	return WithTx(ctx, r.db, func(tx DBTX) error {
 		if _, err := tx.ExecContext(ctx, `
@@ -948,10 +974,13 @@ func (r *PostgresMessageRepository) MarkViewOnceViewed(ctx context.Context, atta
 }
 
 func (r *PostgresMessageRepository) CreatePoll(ctx context.Context, p *message.Poll) error {
+	if p.ID == uuid.Nil {
+		p.ID = uuid.New()
+	}
 	_, err := r.db.ExecContext(ctx, `
-        INSERT INTO polls (message_id, question, allows_multiple, closes_at, created_at)
+        INSERT INTO polls (id, message_id, question, allows_multiple, closes_at, created_at)
         VALUES ($1,$2,$3,$4,$5,$6)
-    `, p.MessageID, p.Question, p.AllowsMultiple, p.ClosesAt, p.CreatedAt)
+    `, p.ID, p.MessageID, p.Question, p.AllowsMultiple, p.ClosesAt, p.CreatedAt)
 	return err
 }
 
@@ -983,6 +1012,9 @@ func (r *PostgresMessageRepository) ClosePoll(ctx context.Context, pollID uuid.U
 }
 
 func (r *PostgresMessageRepository) AddPollOption(ctx context.Context, o *message.PollOption) error {
+	if o.ID == uuid.Nil {
+		o.ID = uuid.New()
+	}
 	_, err := r.db.ExecContext(ctx, `
         INSERT INTO poll_options (id, poll_id, option_text, position)
         VALUES ($1,$2,$3,$4)

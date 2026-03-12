@@ -3,8 +3,10 @@ package handler
 import (
 	"database/sql"
 	"errors"
+	"mime"
+	"mime/multipart"
 	"net/http"
-	"strconv"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -12,7 +14,6 @@ import (
 	"github.com/google/uuid"
 
 	"sentinal-chat/internal/domain/message"
-	"sentinal-chat/internal/domain/upload"
 	"sentinal-chat/internal/services"
 	"sentinal-chat/internal/transport/httpdto"
 	sentinal_errors "sentinal-chat/pkg/errors"
@@ -29,12 +30,8 @@ func NewUploadHandler(service *services.UploadService, l *logger.Logger) *Upload
 }
 
 func (h *UploadHandler) RegisterRoutes(router gin.IRouter) {
-	router.POST("/uploads", h.CreateUploadSession)
-	router.GET("/uploads/:id", h.GetUploadSession)
-	router.GET("/uploads", h.ListUploads)
-	router.PATCH("/uploads/:id/progress", h.UpdateUploadProgress)
-	router.POST("/uploads/:id/complete", h.CompleteUpload)
-	router.POST("/uploads/:id/fail", h.FailUpload)
+	router.POST("/uploads", h.UploadFile)
+	router.POST("/uploads/bulk", h.UploadFiles)
 
 	router.POST("/attachments", h.CreateAttachment)
 	router.GET("/attachments/:id", h.GetAttachment)
@@ -42,162 +39,117 @@ func (h *UploadHandler) RegisterRoutes(router gin.IRouter) {
 	router.GET("/messages/:id/attachments", h.GetMessageAttachments)
 }
 
-func (h *UploadHandler) CreateUploadSession(c *gin.Context) {
+func (h *UploadHandler) UploadFile(c *gin.Context) {
 	userID, ok := h.mustUserID(c)
 	if !ok {
 		return
 	}
 
-	var req httpdto.CreateUploadSessionRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		h.writeError(c, sentinal_errors.ErrInvalidInput)
-		return
-	}
-
-	out, err := h.service.CreateUploadSession(c.Request.Context(), services.CreateUploadSessionInput{
-		UploaderID: userID,
-		Filename:   req.Filename,
-		MimeType:   req.MimeType,
-		SizeBytes:  req.SizeBytes,
-		ChunkSize:  req.ChunkSize,
-	})
-	if err != nil {
-		h.writeError(c, err)
-		return
-	}
-
-	httpdto.WriteSuccess(c, http.StatusCreated, httpdto.CreateUploadSessionPayload{
-		Upload: toUploadPayload(out.Session),
-		UploadTarget: httpdto.UploadTargetPayload{
-			URL:     out.URL,
-			Headers: out.Headers,
-		},
-	})
-}
-
-func (h *UploadHandler) GetUploadSession(c *gin.Context) {
-	userID, ok := h.mustUserID(c)
-	if !ok {
-		return
-	}
-
-	sessionID, err := parseUUIDParam(c, "id")
+	fileHeader, err := c.FormFile("file")
 	if err != nil {
 		h.writeError(c, sentinal_errors.ErrInvalidInput)
 		return
 	}
 
-	session, err := h.service.GetUploadSession(c.Request.Context(), userID, sessionID)
+	result, err := h.uploadMultipartFile(c, userID, fileHeader)
 	if err != nil {
 		h.writeError(c, err)
 		return
 	}
 
-	httpdto.WriteSuccess(c, http.StatusOK, toUploadPayload(session))
+	httpdto.WriteSuccess(c, http.StatusCreated, toUploadedFilePayload(result))
 }
 
-func (h *UploadHandler) ListUploads(c *gin.Context) {
+func (h *UploadHandler) UploadFiles(c *gin.Context) {
 	userID, ok := h.mustUserID(c)
 	if !ok {
 		return
 	}
 
-	page := parsePositiveIntQuery(c, "page", 1)
-	limit := parsePositiveIntQuery(c, "limit", 20)
-	status := strings.ToUpper(strings.TrimSpace(c.Query("status")))
+	form, err := c.MultipartForm()
+	if err != nil {
+		h.writeError(c, sentinal_errors.ErrInvalidInput)
+		return
+	}
+	files := form.File["files"]
+	if len(files) == 0 {
+		if single, singleErr := c.FormFile("file"); singleErr == nil {
+			files = []*multipart.FileHeader{single}
+		}
+	}
+	if len(files) == 0 {
+		h.writeError(c, sentinal_errors.ErrInvalidInput)
+		return
+	}
+	if len(files) > 20 {
+		h.writeError(c, sentinal_errors.ErrInvalidInput)
+		return
+	}
 
-	items, total, pageOut, limitOut, err := h.service.ListUploadSessions(c.Request.Context(), services.ListUploadSessionsInput{
-		UploaderID: userID,
-		Status:     status,
-		Page:       page,
-		Limit:      limit,
-	})
+	inputs := make([]services.UploadFileInput, 0, len(files))
+	closers := make([]multipart.File, 0, len(files))
+	defer func() {
+		for _, closer := range closers {
+			_ = closer.Close()
+		}
+	}()
+
+	for _, fileHeader := range files {
+		file, openErr := fileHeader.Open()
+		if openErr != nil {
+			h.writeError(c, openErr)
+			return
+		}
+		closers = append(closers, file)
+
+		mimeType := strings.TrimSpace(fileHeader.Header.Get("Content-Type"))
+		if mimeType == "" {
+			mimeType = mimeFromFilename(fileHeader.Filename)
+		}
+
+		inputs = append(inputs, services.UploadFileInput{
+			Filename:  fileHeader.Filename,
+			MimeType:  mimeType,
+			SizeBytes: fileHeader.Size,
+			Body:      file,
+		})
+	}
+
+	items, err := h.service.UploadFiles(c.Request.Context(), userID, inputs)
 	if err != nil {
 		h.writeError(c, err)
 		return
 	}
 
-	payloadItems := make([]httpdto.UploadSessionPayload, 0, len(items))
+	payload := make([]httpdto.UploadFilePayload, 0, len(items))
 	for _, item := range items {
-		payloadItems = append(payloadItems, toUploadPayload(item))
+		payload = append(payload, toUploadedFilePayload(item))
 	}
 
-	httpdto.WriteSuccess(c, http.StatusOK, httpdto.ListUploadSessionsPayload{
-		Items:  payloadItems,
-		Page:   pageOut,
-		Limit:  limitOut,
-		Total:  total,
-		Status: status,
+	httpdto.WriteSuccess(c, http.StatusCreated, httpdto.UploadFilesPayload{
+		Items: payload,
 	})
 }
 
-func (h *UploadHandler) UpdateUploadProgress(c *gin.Context) {
-	userID, ok := h.mustUserID(c)
-	if !ok {
-		return
-	}
-
-	sessionID, err := parseUUIDParam(c, "id")
+func (h *UploadHandler) uploadMultipartFile(c *gin.Context, userID uuid.UUID, fileHeader *multipart.FileHeader) (services.UploadedFile, error) {
+	file, err := fileHeader.Open()
 	if err != nil {
-		h.writeError(c, sentinal_errors.ErrInvalidInput)
-		return
+		return services.UploadedFile{}, err
+	}
+	defer file.Close()
+
+	mimeType := strings.TrimSpace(fileHeader.Header.Get("Content-Type"))
+	if mimeType == "" {
+		mimeType = mimeFromFilename(fileHeader.Filename)
 	}
 
-	var req httpdto.UpdateUploadProgressRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		h.writeError(c, sentinal_errors.ErrInvalidInput)
-		return
-	}
-
-	session, err := h.service.UpdateUploadProgress(c.Request.Context(), userID, sessionID, req.UploadedBytes)
-	if err != nil {
-		h.writeError(c, err)
-		return
-	}
-
-	httpdto.WriteSuccess(c, http.StatusOK, toUploadPayload(session))
-}
-
-func (h *UploadHandler) CompleteUpload(c *gin.Context) {
-	userID, ok := h.mustUserID(c)
-	if !ok {
-		return
-	}
-
-	sessionID, err := parseUUIDParam(c, "id")
-	if err != nil {
-		h.writeError(c, sentinal_errors.ErrInvalidInput)
-		return
-	}
-
-	session, err := h.service.CompleteUploadSession(c.Request.Context(), userID, sessionID)
-	if err != nil {
-		h.writeError(c, err)
-		return
-	}
-
-	httpdto.WriteSuccess(c, http.StatusOK, toUploadPayload(session))
-}
-
-func (h *UploadHandler) FailUpload(c *gin.Context) {
-	userID, ok := h.mustUserID(c)
-	if !ok {
-		return
-	}
-
-	sessionID, err := parseUUIDParam(c, "id")
-	if err != nil {
-		h.writeError(c, sentinal_errors.ErrInvalidInput)
-		return
-	}
-
-	session, err := h.service.FailUploadSession(c.Request.Context(), userID, sessionID)
-	if err != nil {
-		h.writeError(c, err)
-		return
-	}
-
-	httpdto.WriteSuccess(c, http.StatusOK, toUploadPayload(session))
+	return h.service.UploadFile(c.Request.Context(), services.UploadFileInput{
+		UploaderID: userID,
+		Filename:   fileHeader.Filename,
+		MimeType:   mimeType,
+		SizeBytes:  fileHeader.Size,
+		Body:       file,
+	})
 }
 
 func (h *UploadHandler) CreateAttachment(c *gin.Context) {
@@ -208,12 +160,6 @@ func (h *UploadHandler) CreateAttachment(c *gin.Context) {
 
 	var req httpdto.CreateAttachmentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		h.writeError(c, sentinal_errors.ErrInvalidInput)
-		return
-	}
-
-	uploadSessionID, err := uuid.Parse(strings.TrimSpace(req.UploadSessionID))
-	if err != nil {
 		h.writeError(c, sentinal_errors.ErrInvalidInput)
 		return
 	}
@@ -230,9 +176,8 @@ func (h *UploadHandler) CreateAttachment(c *gin.Context) {
 
 	attachment, err := h.service.CreateAttachment(c.Request.Context(), services.CreateAttachmentInput{
 		UploaderID:      userID,
-		UploadSessionID: uploadSessionID,
 		MessageID:       messageID,
-		EncryptedURL:    req.EncryptedURL,
+		EncryptedURL:    req.FileURL,
 		Filename:        req.Filename,
 		MimeType:        req.MimeType,
 		SizeBytes:       req.SizeBytes,
@@ -360,10 +305,6 @@ func (h *UploadHandler) writeError(c *gin.Context, err error) {
 		status = http.StatusRequestEntityTooLarge
 		code = "TOO_LARGE"
 		message = "file too large"
-	case errors.Is(err, sentinal_errors.ErrNotUploaded):
-		status = http.StatusConflict
-		code = "UPLOAD_NOT_COMPLETED"
-		message = "upload is not completed"
 	case errors.Is(err, sentinal_errors.ErrUnauthorized):
 		status = http.StatusUnauthorized
 		code = "UNAUTHORIZED"
@@ -393,45 +334,13 @@ func (h *UploadHandler) writeError(c *gin.Context, err error) {
 	httpdto.WriteError(c, status, message, code)
 }
 
-func parseUUIDParam(c *gin.Context, paramName string) (uuid.UUID, error) {
-	value := strings.TrimSpace(c.Param(paramName))
-	if value == "" {
-		return uuid.Nil, sentinal_errors.ErrInvalidInput
-	}
-	id, err := uuid.Parse(value)
-	if err != nil {
-		return uuid.Nil, sentinal_errors.ErrInvalidInput
-	}
-	return id, nil
-}
-
-func parsePositiveIntQuery(c *gin.Context, key string, fallback int) int {
-	raw := strings.TrimSpace(c.Query(key))
-	if raw == "" {
-		return fallback
-	}
-	value, err := strconv.Atoi(raw)
-	if err != nil || value <= 0 {
-		return fallback
-	}
-	return value
-}
-
-func toUploadPayload(session upload.UploadSession) httpdto.UploadSessionPayload {
-	return httpdto.UploadSessionPayload{
-		ID:            session.ID.String(),
-		UploaderID:    session.UploaderID.String(),
-		Filename:      session.Filename,
-		MimeType:      session.MimeType,
-		SizeBytes:     session.SizeBytes,
-		ChunkSize:     session.ChunkSize,
-		UploadedBytes: session.UploadedBytes,
-		Status:        session.Status,
-		ObjectKey:     session.ObjectKey,
-		FileURL:       nullStringPtr(session.FileURL),
-		CompletedAt:   nullTimePtr(session.CompletedAt),
-		CreatedAt:     session.CreatedAt,
-		UpdatedAt:     session.UpdatedAt,
+func toUploadedFilePayload(item services.UploadedFile) httpdto.UploadFilePayload {
+	return httpdto.UploadFilePayload{
+		Filename:  item.Filename,
+		MimeType:  item.MimeType,
+		SizeBytes: item.SizeBytes,
+		ObjectKey: item.ObjectKey,
+		FileURL:   item.FileURL,
 	}
 }
 
@@ -483,4 +392,12 @@ func nullUUIDPtr(value uuid.NullUUID) *string {
 	}
 	copy := value.UUID.String()
 	return &copy
+}
+
+func mimeFromFilename(filename string) string {
+	mimeType := strings.TrimSpace(mime.TypeByExtension(strings.ToLower(filepath.Ext(filename))))
+	if mimeType == "" {
+		return "application/octet-stream"
+	}
+	return mimeType
 }

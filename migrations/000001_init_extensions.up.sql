@@ -102,9 +102,6 @@ $$;
 CREATE OR REPLACE FUNCTION fn_mark_view_once()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
 BEGIN
-    IF NEW.view_once = TRUE AND NEW.viewed_at IS NOT NULL THEN
-        UPDATE attachments SET encrypted_url = NULL WHERE id = NEW.id;
-    END IF;
     RETURN NEW;
 END;
 $$;

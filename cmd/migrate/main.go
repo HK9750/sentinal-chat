@@ -147,7 +147,6 @@ func showStatus() {
 		"participants",
 		"messages",
 		"attachments",
-		"upload_sessions",
 		"oauth_identities",
 		"outbox_events",
 	}
@@ -184,7 +183,7 @@ func runSeed(devMode bool, options cliOptions) {
 		if err != nil {
 			failf("development seed failed: %v", err)
 		}
-		log.Printf("Seeded admin=%s test_users=%d created_users=%d existing_users=%d created_devices=%d updated_devices=%d created_contacts=%d created_dms=%d created_uploads=%d created_oauth_identities=%d",
+		log.Printf("Seeded admin=%s test_users=%d created_users=%d existing_users=%d created_devices=%d updated_devices=%d created_contacts=%d created_dms=%d created_oauth_identities=%d",
 			result.AdminUser.Email.String,
 			len(result.TestUsers),
 			result.CreatedUsers,
@@ -193,7 +192,6 @@ func runSeed(devMode bool, options cliOptions) {
 			result.UpdatedDevices,
 			result.CreatedContacts,
 			result.CreatedDMs,
-			result.CreatedUploads,
 			result.CreatedOAuthIDs,
 		)
 		return
@@ -214,14 +212,13 @@ func runReseedDev(options cliOptions) {
 	if err != nil {
 		failf("reseed failed: %v", err)
 	}
-	log.Printf("Reseed complete. admin=%s test_users=%d created_users=%d created_devices=%d created_contacts=%d created_dms=%d created_uploads=%d created_oauth_identities=%d",
+	log.Printf("Reseed complete. admin=%s test_users=%d created_users=%d created_devices=%d created_contacts=%d created_dms=%d created_oauth_identities=%d",
 		result.AdminUser.Email.String,
 		len(result.TestUsers),
 		result.CreatedUsers,
 		result.CreatedDevices,
 		result.CreatedContacts,
 		result.CreatedDMs,
-		result.CreatedUploads,
 		result.CreatedOAuthIDs,
 	)
 }

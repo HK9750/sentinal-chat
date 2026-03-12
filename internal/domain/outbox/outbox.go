@@ -16,11 +16,21 @@ const (
 	StatusFailed     Status = "FAILED"
 )
 
+type AggregateType string
+
+const (
+	AggregateConversation AggregateType = "conversation"
+	AggregateMessage      AggregateType = "message"
+	AggregatePoll         AggregateType = "poll"
+	AggregateCall         AggregateType = "call"
+	AggregatePresence     AggregateType = "presence"
+)
+
 // OutboxEvent stores domain events waiting to be published to Redis
 type OutboxEvent struct {
 	ID            uuid.UUID
 	EventType     string
-	AggregateType string
+	AggregateType AggregateType
 	AggregateID   string
 	Payload       []byte
 	Status        Status
@@ -29,6 +39,7 @@ type OutboxEvent struct {
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 	ProcessedAt   *time.Time
+	NextRetryAt   *time.Time
 }
 
 // TableName returns the database table name

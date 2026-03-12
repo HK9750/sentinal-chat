@@ -36,7 +36,6 @@ type SeedResult struct {
 	UpdatedDevices  int
 	CreatedContacts int
 	CreatedDMs      int
-	CreatedUploads  int
 	CreatedOAuthIDs int
 }
 
@@ -161,21 +160,14 @@ func Seed(cfg *SeedConfig) (*SeedResult, error) {
 	}
 	result.CreatedDMs = dmsCreated
 
-	uploadsCreated, err := seedUploadSessions(ctx, testUsers, now)
-	if err != nil {
-		return nil, fmt.Errorf("seed upload sessions: %w", err)
-	}
-	result.CreatedUploads = uploadsCreated
-
 	log.Printf(
-		"Database seed complete. created_users=%d existing_users=%d created_devices=%d updated_devices=%d created_contacts=%d created_dms=%d created_uploads=%d created_oauth_identities=%d",
+		"Database seed complete. created_users=%d existing_users=%d created_devices=%d updated_devices=%d created_contacts=%d created_dms=%d created_oauth_identities=%d",
 		result.CreatedUsers,
 		result.ExistingUsers,
 		result.CreatedDevices,
 		result.UpdatedDevices,
 		result.CreatedContacts,
 		result.CreatedDMs,
-		result.CreatedUploads,
 		result.CreatedOAuthIDs,
 	)
 
@@ -477,33 +469,6 @@ func seedDirectConversations(ctx context.Context, users []*user.User, now time.T
 		created++
 	}
 
-	return created, nil
-}
-
-func seedUploadSessions(ctx context.Context, users []*user.User, now time.Time) (int, error) {
-	created := 0
-	for idx, seededUser := range users {
-		status := "COMPLETED"
-		completedAt := sql.NullTime{Time: now.Add(time.Duration(idx+1) * time.Minute), Valid: true}
-		uploadedBytes := int64(1048576 + idx*2048)
-		if idx%3 == 2 {
-			status = "IN_PROGRESS"
-			completedAt = sql.NullTime{}
-			uploadedBytes = 524288
-		}
-
-		objectKey := fmt.Sprintf("seed/uploads/%s/demo-%d.jpg", seededUser.ID, idx+1)
-		result, err := DB.ExecContext(ctx, `
-			INSERT INTO upload_sessions (id, uploader_id, filename, mime_type, size_bytes, chunk_size, uploaded_bytes, status, object_key, file_url, completed_at, created_at, updated_at)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-			ON CONFLICT DO NOTHING
-		`, uuid.New(), seededUser.ID, fmt.Sprintf("demo-%d.jpg", idx+1), "image/jpeg", 1048576+int64(idx*2048), 262144, uploadedBytes, status, objectKey, fmt.Sprintf("https://cdn.sentinal.local/%s", objectKey), completedAt, now, now)
-		if err != nil {
-			return created, err
-		}
-		rows, _ := result.RowsAffected()
-		created += int(rows)
-	}
 	return created, nil
 }
 

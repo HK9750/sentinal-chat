@@ -2,24 +2,12 @@ package httpdto
 
 import "time"
 
-type CreateUploadSessionRequest struct {
-	Filename  string `json:"filename" binding:"required,max=255"`
-	MimeType  string `json:"mime_type" binding:"required,max=255"`
-	SizeBytes int64  `json:"size_bytes" binding:"required,gt=0"`
-	ChunkSize int    `json:"chunk_size" binding:"required,gt=0"`
-}
-
-type UpdateUploadProgressRequest struct {
-	UploadedBytes int64 `json:"uploaded_bytes" binding:"required,min=0"`
-}
-
 type CreateAttachmentRequest struct {
-	UploadSessionID string  `json:"upload_session_id" binding:"required,uuid"`
 	MessageID       *string `json:"message_id,omitempty" binding:"omitempty,uuid"`
-	EncryptedURL    string  `json:"encrypted_url" binding:"required,max=4096"`
-	Filename        string  `json:"filename,omitempty"`
-	MimeType        string  `json:"mime_type,omitempty" binding:"omitempty,max=255"`
-	SizeBytes       *int64  `json:"size_bytes,omitempty" binding:"omitempty,gt=0"`
+	FileURL         string  `json:"file_url" binding:"required,max=4096"`
+	Filename        string  `json:"filename" binding:"required,max=255"`
+	MimeType        string  `json:"mime_type" binding:"required,max=255"`
+	SizeBytes       int64   `json:"size_bytes" binding:"required,gt=0"`
 	ViewOnce        bool    `json:"view_once"`
 	ThumbnailURL    string  `json:"thumbnail_url,omitempty"`
 	Width           *int32  `json:"width,omitempty"`
@@ -27,38 +15,16 @@ type CreateAttachmentRequest struct {
 	DurationSeconds *int32  `json:"duration_seconds,omitempty"`
 }
 
-type UploadSessionPayload struct {
-	ID            string     `json:"id"`
-	UploaderID    string     `json:"uploader_id"`
-	Filename      string     `json:"filename"`
-	MimeType      string     `json:"mime_type"`
-	SizeBytes     int64      `json:"size_bytes"`
-	ChunkSize     int        `json:"chunk_size"`
-	UploadedBytes int64      `json:"uploaded_bytes"`
-	Status        string     `json:"status"`
-	ObjectKey     string     `json:"object_key"`
-	FileURL       *string    `json:"file_url,omitempty"`
-	CompletedAt   *time.Time `json:"completed_at,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
+type UploadFilePayload struct {
+	Filename  string `json:"filename"`
+	MimeType  string `json:"mime_type"`
+	SizeBytes int64  `json:"size_bytes"`
+	ObjectKey string `json:"object_key"`
+	FileURL   string `json:"file_url,omitempty"`
 }
 
-type UploadTargetPayload struct {
-	URL     string            `json:"url"`
-	Headers map[string]string `json:"headers"`
-}
-
-type CreateUploadSessionPayload struct {
-	Upload       UploadSessionPayload `json:"upload"`
-	UploadTarget UploadTargetPayload  `json:"upload_target"`
-}
-
-type ListUploadSessionsPayload struct {
-	Items  []UploadSessionPayload `json:"items"`
-	Page   int                    `json:"page"`
-	Limit  int                    `json:"limit"`
-	Total  int64                  `json:"total"`
-	Status string                 `json:"status,omitempty"`
+type UploadFilesPayload struct {
+	Items []UploadFilePayload `json:"items"`
 }
 
 type AttachmentPayload struct {

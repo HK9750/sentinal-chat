@@ -229,23 +229,6 @@ CREATE TABLE IF NOT EXISTS message_attachments (
     PRIMARY KEY (message_id, attachment_id)
 );
 
--- Chunked upload tracking (for large files up to 15 MB)
-CREATE TABLE IF NOT EXISTS upload_sessions (
-    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    uploader_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    filename        TEXT NOT NULL,
-    mime_type       TEXT NOT NULL,
-    size_bytes      BIGINT NOT NULL CHECK (size_bytes <= 15728640),
-    chunk_size      INTEGER NOT NULL,
-    uploaded_bytes  BIGINT DEFAULT 0,
-    status          upload_status DEFAULT 'IN_PROGRESS',
-    object_key      TEXT,
-    file_url        TEXT,
-    completed_at    TIMESTAMP,
-    created_at      TIMESTAMP DEFAULT NOW(),
-    updated_at      TIMESTAMP DEFAULT NOW()
-);
-
 -- ============================================================
 -- POLLS
 -- ============================================================

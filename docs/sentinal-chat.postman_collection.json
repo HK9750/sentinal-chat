@@ -10,7 +10,6 @@
     {"key": "accessToken", "value": ""},
     {"key": "refreshToken", "value": ""},
     {"key": "deviceId", "value": "web-local-001"},
-    {"key": "uploadSessionId", "value": ""},
     {"key": "attachmentId", "value": ""},
     {"key": "messageId", "value": ""},
     {"key": "oauthProvider", "value": "google"},
@@ -19,7 +18,7 @@
     {"key": "oauthCodeVerifier", "value": "replace-with-code-verifier"},
     {"key": "oauthCode", "value": "replace-with-provider-code"},
     {"key": "oauthState", "value": "sentinal-local-state"},
-    {"key": "encryptedUrl", "value": "encrypted-storage-url"}
+    {"key": "uploadedFileUrl", "value": ""}
   ],
   "item": [
     {
@@ -182,16 +181,16 @@
       "name": "Uploads",
       "item": [
         {
-          "name": "Create Upload Session",
+          "name": "Upload Single File",
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('upload session created', function () { pm.response.to.have.status(201); });",
+                  "pm.test('single file uploaded', function () { pm.response.to.have.status(201); });",
                   "var json = pm.response.json();",
-                  "if (json && json.data && json.data.upload) pm.collectionVariables.set('uploadSessionId', json.data.upload.id);"
+                  "if (json && json.data && json.data.file_url) pm.collectionVariables.set('uploadedFileUrl', json.data.file_url);"
                 ]
               }
             }
@@ -199,53 +198,43 @@
           "request": {
             "method": "POST",
             "header": [
-              {"key": "Authorization", "value": "Bearer {{accessToken}}"},
-              {"key": "Content-Type", "value": "application/json"}
+              {"key": "Authorization", "value": "Bearer {{accessToken}}"}
             ],
             "body": {
-              "mode": "raw",
-              "raw": "{\n  \"filename\": \"photo.jpg\",\n  \"mime_type\": \"image/jpeg\",\n  \"size_bytes\": 1048576,\n  \"chunk_size\": 262144\n}"
+              "mode": "formdata",
+              "formdata": [
+                {"key": "file", "type": "file", "src": ""}
+              ]
             },
             "url": "{{baseUrl}}/v1/uploads"
           }
         },
         {
-          "name": "Get Upload Session",
-          "request": {
-            "method": "GET",
-            "header": [{"key": "Authorization", "value": "Bearer {{accessToken}}"}],
-            "url": "{{baseUrl}}/v1/uploads/{{uploadSessionId}}"
-          }
-        },
-        {
-          "name": "List Upload Sessions",
-          "request": {
-            "method": "GET",
-            "header": [{"key": "Authorization", "value": "Bearer {{accessToken}}"}],
-            "url": "{{baseUrl}}/v1/uploads?status=IN_PROGRESS&page=1&limit=20"
-          }
-        },
-        {
-          "name": "Update Upload Progress",
-          "request": {
-            "method": "PATCH",
-            "header": [
-              {"key": "Authorization", "value": "Bearer {{accessToken}}"},
-              {"key": "Content-Type", "value": "application/json"}
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"uploaded_bytes\": 524288\n}"
-            },
-            "url": "{{baseUrl}}/v1/uploads/{{uploadSessionId}}/progress"
-          }
-        },
-        {
-          "name": "Complete Upload",
+          "name": "Upload Files Bulk",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('bulk upload returns success', function () { pm.response.to.have.status(201); });",
+                  "var json = pm.response.json();",
+                  "if (json && json.data && json.data.items && json.data.items.length > 0) pm.collectionVariables.set('uploadedFileUrl', json.data.items[0].file_url || '');"
+                ]
+              }
+            }
+          ],
           "request": {
             "method": "POST",
             "header": [{"key": "Authorization", "value": "Bearer {{accessToken}}"}],
-            "url": "{{baseUrl}}/v1/uploads/{{uploadSessionId}}/complete"
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {"key": "files", "type": "file", "src": ""},
+                {"key": "files", "type": "file", "src": ""}
+              ]
+            },
+            "url": "{{baseUrl}}/v1/uploads/bulk"
           }
         },
         {
@@ -270,7 +259,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"upload_session_id\": \"{{uploadSessionId}}\",\n  \"message_id\": \"{{messageId}}\",\n  \"encrypted_url\": \"{{encryptedUrl}}\",\n  \"view_once\": false,\n  \"thumbnail_url\": \"https://cdn.example.com/thumb.jpg\",\n  \"width\": 1280,\n  \"height\": 720\n}"
+              "raw": "{\n  \"message_id\": \"{{messageId}}\",\n  \"file_url\": \"{{uploadedFileUrl}}\",\n  \"filename\": \"photo.jpg\",\n  \"mime_type\": \"image/jpeg\",\n  \"size_bytes\": 1048576,\n  \"view_once\": false,\n  \"thumbnail_url\": \"https://cdn.example.com/thumb.jpg\",\n  \"width\": 1280,\n  \"height\": 720\n}"
             },
             "url": "{{baseUrl}}/v1/attachments"
           }
@@ -297,14 +286,6 @@
             "method": "GET",
             "header": [{"key": "Authorization", "value": "Bearer {{accessToken}}"}],
             "url": "{{baseUrl}}/v1/messages/{{messageId}}/attachments"
-          }
-        },
-        {
-          "name": "Fail Upload",
-          "request": {
-            "method": "POST",
-            "header": [{"key": "Authorization", "value": "Bearer {{accessToken}}"}],
-            "url": "{{baseUrl}}/v1/uploads/{{uploadSessionId}}/fail"
           }
         }
       ]

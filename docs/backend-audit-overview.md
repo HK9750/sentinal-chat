@@ -126,11 +126,7 @@ PKCE flow is fully supported. Both providers fetch user profile and verify email
 Registered protected routes:
 ```
 POST   /uploads
-GET    /uploads/:id
-GET    /uploads
-PATCH  /uploads/:id/progress
-POST   /uploads/:id/complete
-POST   /uploads/:id/fail
+POST   /uploads/bulk
 POST   /attachments
 GET    /attachments/:id
 POST   /attachments/:id/viewed
@@ -139,16 +135,9 @@ GET    /messages/:id/attachments
 
 #### Service: `internal/services/upload_service.go`
 
-- `CreateUploadSession`: validates mime type + file size, generates a presigned S3 PUT URL,
-  stores the session in `upload_sessions`.
-- `GetUploadSession`: fetches session and enforces ownership.
-- `ListUploadSessions`: filters by `status` query param (`IN_PROGRESS`, `COMPLETED`, etc.),
-  paginates results.
-- `UpdateUploadProgress`: validates `uploaded_bytes <= size_bytes`, updates progress.
-- `CompleteUploadSession`: verifies object exists in S3, marks session `COMPLETED`.
-- `FailUploadSession`: marks session `FAILED`.
-- `CreateAttachment`: validates the upload session is `COMPLETED`, inserts `attachments` row,
-  optionally links to a message via `message_attachments`.
+- `UploadFile`: validates metadata, uploads the incoming multipart file directly to S3, returns `file_url` and object metadata.
+- `UploadFiles`: uploads many multipart files concurrently with goroutines.
+- `CreateAttachment`: validates provided file metadata, inserts `attachments` row, and optionally links to a message via `message_attachments`.
 - `GetAttachment`: checks user can access the attachment (must be uploader or participant in
   the conversation the message belongs to).
 - `MarkAttachmentViewed`: marks `view_once` attachments as viewed (one-time only).
@@ -194,7 +183,6 @@ All domain structs are in `internal/domain/`. They are pure Go — no GORM tags,
 | `call` | `Call`, `CallParticipant` |
 | `command` | `CommandLog`, `Status` |
 | `outbox` | `OutboxEvent`, `Status` |
-| `upload` | `UploadSession` |
 
 ---
 
@@ -209,7 +197,6 @@ Each interface has a concrete implementation in its own file.
 | `ConversationRepository` | `conversation_repository.go` |
 | `MessageRepository` | `message_repository.go` |
 | `CallRepository` | `call_repository.go` |
-| `UploadRepository` | `upload_repository.go` |
 | `OutboxRepository` | `outbox_repository.go` |
 | `CommandRepository` | `command_repository.go` |
 | `OAuthIdentityRepository` | `oauth_identity_repository.go` |
@@ -245,7 +232,7 @@ All migrations exist and cover:
 - `conversations`, `participants`, `conversation_sequences`, `conversation_clears`
 - `messages`, `message_receipts`, `message_reactions`, `message_mentions`
 - `starred_messages`, `pinned_messages`, `message_edits`, `message_attachments`
-- `attachments`, `upload_sessions`
+- `attachments`
 - `polls`, `poll_options`, `poll_votes`
 - `calls`, `call_participants`
 - `command_logs`

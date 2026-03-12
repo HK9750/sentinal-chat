@@ -4,11 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"mime"
 	"net/url"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -24,21 +23,17 @@ type S3Config struct {
 	SecretKey  string
 	Endpoint   string
 	PublicBase string
-	PresignTTL time.Duration
 }
 
 type Client struct {
-	cfg     S3Config
-	s3      *s3.Client
-	presign *s3.PresignClient
+	cfg S3Config
+	s3  *s3.Client
 }
 
 func NewClient(ctx context.Context, cfg S3Config) (*Client, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
-	cfg.PresignTTL = normalizedPresignTTL(cfg.PresignTTL)
-
 	loadOptions := []func(*config.LoadOptions) error{
 		config.WithRegion(cfg.Region),
 	}
@@ -75,50 +70,39 @@ func NewClient(ctx context.Context, cfg S3Config) (*Client, error) {
 	})
 
 	return &Client{
-		cfg:     cfg,
-		s3:      s3Client,
-		presign: s3.NewPresignClient(s3Client),
+		cfg: cfg,
+		s3:  s3Client,
 	}, nil
 }
 
-func (c *Client) PresignPut(ctx context.Context, key, contentType string, sizeBytes int64) (string, map[string]string, error) {
+func (c *Client) PutObject(ctx context.Context, key, contentType string, body io.Reader, sizeBytes int64) error {
 	if c == nil {
-		return "", nil, errors.New("s3 client not initialized")
+		return errors.New("s3 client not initialized")
 	}
 	key = strings.TrimSpace(strings.TrimPrefix(key, "/"))
 	if key == "" {
-		return "", nil, errors.New("object key is required")
+		return errors.New("object key is required")
 	}
-
 	contentType = strings.TrimSpace(contentType)
 	if err := c.ValidateContentType(contentType); err != nil {
-		return "", nil, err
+		return err
+	}
+	if body == nil {
+		return errors.New("object body is required")
 	}
 
 	input := &s3.PutObjectInput{
 		Bucket:      aws.String(c.cfg.Bucket),
 		Key:         aws.String(key),
+		Body:        body,
 		ContentType: aws.String(contentType),
 	}
 	if sizeBytes > 0 {
 		input.ContentLength = aws.Int64(sizeBytes)
 	}
 
-	presigned, err := c.presign.PresignPutObject(ctx, input, func(opts *s3.PresignOptions) {
-		opts.Expires = c.cfg.PresignTTL
-	})
-	if err != nil {
-		return "", nil, err
-	}
-
-	headers := map[string]string{
-		"Content-Type": contentType,
-	}
-	if sizeBytes > 0 {
-		headers["Content-Length"] = strconv.FormatInt(sizeBytes, 10)
-	}
-
-	return presigned.URL, headers, nil
+	_, err := c.s3.PutObject(ctx, input)
+	return err
 }
 
 func (c *Client) FileURL(key string) string {
@@ -187,14 +171,4 @@ func (cfg S3Config) validate() error {
 		return errors.New("s3 bucket is required")
 	}
 	return nil
-}
-
-func normalizedPresignTTL(ttl time.Duration) time.Duration {
-	if ttl <= 0 {
-		return 15 * time.Minute
-	}
-	if ttl > 7*24*time.Hour {
-		return 7 * 24 * time.Hour
-	}
-	return ttl
 }
