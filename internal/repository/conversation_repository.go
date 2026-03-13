@@ -566,6 +566,26 @@ func (r *PostgresConversationRepository) ClearConversation(ctx context.Context, 
 	return err
 }
 
+func (r *PostgresConversationRepository) SetConversationClear(ctx context.Context, conversationID, userID uuid.UUID, clearedAt *time.Time) error {
+	if clearedAt == nil {
+		res, err := r.db.ExecContext(ctx, `DELETE FROM conversation_clears WHERE conversation_id = $1 AND user_id = $2`, conversationID, userID)
+		if err != nil {
+			return err
+		}
+		rows, err := res.RowsAffected()
+		if err == nil && rows == 0 {
+			return sentinal_errors.ErrNotFound
+		}
+		return err
+	}
+	_, err := r.db.ExecContext(ctx, `
+        INSERT INTO conversation_clears (conversation_id, user_id, cleared_at)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (conversation_id, user_id) DO UPDATE SET cleared_at = EXCLUDED.cleared_at
+    `, conversationID, userID, clearedAt.UTC())
+	return err
+}
+
 func (r *PostgresConversationRepository) GetConversationClear(ctx context.Context, conversationID, userID uuid.UUID) (conversation.ConversationClear, error) {
 	var cc conversation.ConversationClear
 	err := r.db.QueryRowContext(ctx, `

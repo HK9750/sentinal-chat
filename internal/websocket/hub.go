@@ -3,6 +3,7 @@ package websocket
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"sync"
 	"time"
@@ -19,6 +20,8 @@ import (
 type Broadcaster interface {
 	BroadcastConversation(ctx context.Context, conversationID uuid.UUID, envelope EventEnvelope, excludeUser *uuid.UUID) error
 	SendToUser(userID uuid.UUID, envelope EventEnvelope)
+	PublishConversation(ctx context.Context, conversationID uuid.UUID, envelope EventEnvelope) error
+	PublishToUser(ctx context.Context, userID uuid.UUID, envelope EventEnvelope) error
 }
 
 type Hub struct {
@@ -28,6 +31,7 @@ type Hub struct {
 	mu            sync.RWMutex
 	clients       map[string]*Client
 	byUser        map[string]map[string]*Client
+	listenOnce    sync.Once
 }
 
 type Client struct {
@@ -80,8 +84,10 @@ func (h *Hub) Unregister(client *Client) {
 }
 
 func (h *Hub) SendToUser(userID uuid.UUID, envelope EventEnvelope) {
+	envelope.UserID = userID.String()
 	body, err := json.Marshal(envelope)
 	if err != nil {
+		h.logf("hub.send_to_user.marshal", err)
 		return
 	}
 	h.mu.RLock()
@@ -90,75 +96,75 @@ func (h *Hub) SendToUser(userID uuid.UUID, envelope EventEnvelope) {
 		select {
 		case client.Send <- body:
 		default:
+			h.logf("hub.send_to_user.queue_full", errors.New("client send buffer full"))
 		}
 	}
 }
 
 func (h *Hub) BroadcastConversation(ctx context.Context, conversationID uuid.UUID, envelope EventEnvelope, excludeUser *uuid.UUID) error {
-	body, err := json.Marshal(envelope)
-	if err != nil {
-		return err
-	}
 	participants, err := h.conversations.GetParticipants(ctx, conversationID)
 	if err != nil {
 		return err
 	}
+	envelope.ConversationID = conversationID.String()
 	for _, participant := range participants {
 		if excludeUser != nil && participant.UserID == *excludeUser {
 			continue
 		}
 		h.SendToUser(participant.UserID, envelope)
 	}
-	if h.redis != nil {
-		return h.redis.Publish(ctx, events.ConversationChannel(conversationID.String()), body)
-	}
 	return nil
 }
 
-func (h *Hub) ListenConversation(ctx context.Context, conversationID uuid.UUID) {
+func (h *Hub) PublishConversation(ctx context.Context, conversationID uuid.UUID, envelope EventEnvelope) error {
+	if h.redis == nil {
+		return nil
+	}
+	envelope.ConversationID = conversationID.String()
+	envelope.Source = localPublishSource
+	body, err := json.Marshal(envelope)
+	if err != nil {
+		return err
+	}
+	return h.redis.Publish(ctx, events.ConversationChannel(conversationID.String()), body)
+}
+
+func (h *Hub) PublishToUser(ctx context.Context, userID uuid.UUID, envelope EventEnvelope) error {
+	if h.redis == nil {
+		return nil
+	}
+	envelope.UserID = userID.String()
+	envelope.Source = localPublishSource
+	body, err := json.Marshal(envelope)
+	if err != nil {
+		return err
+	}
+	return h.redis.Publish(ctx, events.UserChannel(userID.String()), body)
+}
+
+func (h *Hub) StartRedisListener(ctx context.Context) {
 	if h.redis == nil {
 		return
 	}
-	pubsub := h.redis.Subscribe(ctx, events.ConversationChannel(conversationID.String()))
-	if pubsub == nil {
-		return
-	}
-	go func() {
-		defer pubsub.Close()
-		for {
-			msg, err := pubsub.ReceiveMessage(ctx)
-			if err != nil {
-				return
-			}
-			var envelope EventEnvelope
-			if err := json.Unmarshal([]byte(msg.Payload), &envelope); err != nil {
-				continue
-			}
-			conversationIDStr := strings.TrimSpace(envelope.ConversationID)
-			var parsedConversationID uuid.UUID
-			if conversationIDStr != "" {
-				parsed, err := uuid.Parse(conversationIDStr)
-				if err != nil {
-					continue
-				}
-				parsedConversationID = parsed
-			}
-			h.mu.RLock()
-			for _, client := range h.clients {
-				if parsedConversationID != uuid.Nil {
-					participant, err := h.conversations.IsParticipant(ctx, parsedConversationID, client.UserID)
-					if err != nil || !participant {
-						continue
-					}
-				}
-				select {
-				case client.Send <- []byte(msg.Payload):
-				default:
-				}
-			}
-			h.mu.RUnlock()
+	h.listenOnce.Do(func() {
+		pubsub := h.redis.PSubscribe(ctx, "conversation:*", "call:*", "user:*")
+		if pubsub == nil {
+			return
 		}
-	}()
+		go func() {
+			defer pubsub.Close()
+			for {
+				msg, err := pubsub.ReceiveMessage(ctx)
+				if err != nil {
+					if ctx.Err() == nil {
+						h.logf("hub.redis_listener.receive", err)
+					}
+					return
+				}
+				h.dispatchRedisEnvelope(ctx, []byte(msg.Payload))
+			}
+		}()
+	})
 }
 
 func (c *Client) WritePump() {
@@ -194,4 +200,85 @@ func (c *Client) Close() {
 	if c.Hub != nil {
 		c.Hub.Unregister(c)
 	}
+}
+
+func (h *Hub) dispatchRedisEnvelope(ctx context.Context, payload []byte) {
+	var envelope EventEnvelope
+	if err := json.Unmarshal(payload, &envelope); err != nil {
+		h.logf("hub.redis_listener.unmarshal", err)
+		return
+	}
+	conversationID := parseEnvelopeConversationID(envelope)
+	callID := strings.TrimSpace(envelope.CallID)
+	targetUserID := parseEnvelopeUserID(envelope)
+	if strings.TrimSpace(envelope.Source) == localPublishSource {
+		return
+	}
+
+	h.mu.RLock()
+	clients := make([]*Client, 0, len(h.clients))
+	for _, client := range h.clients {
+		clients = append(clients, client)
+	}
+	h.mu.RUnlock()
+
+	for _, client := range clients {
+		if !h.shouldDeliverRedisEnvelope(ctx, client, conversationID, callID, targetUserID) {
+			continue
+		}
+		select {
+		case client.Send <- payload:
+		default:
+			h.logf("hub.redis_listener.queue_full", errors.New("client send buffer full"))
+		}
+	}
+}
+
+func (h *Hub) shouldDeliverRedisEnvelope(ctx context.Context, client *Client, conversationID uuid.UUID, callID string, targetUserID uuid.UUID) bool {
+	if targetUserID != uuid.Nil {
+		return client.UserID == targetUserID
+	}
+	if conversationID != uuid.Nil {
+		participant, err := h.conversations.IsParticipant(ctx, conversationID, client.UserID)
+		if err != nil {
+			h.logf("hub.redis_listener.participant_check", err)
+			return false
+		}
+		return participant
+	}
+	if callID != "" {
+		return true
+	}
+	return false
+}
+
+func parseEnvelopeConversationID(envelope EventEnvelope) uuid.UUID {
+	conversationIDStr := strings.TrimSpace(envelope.ConversationID)
+	if conversationIDStr == "" {
+		return uuid.Nil
+	}
+	conversationID, err := uuid.Parse(conversationIDStr)
+	if err != nil {
+		return uuid.Nil
+	}
+	return conversationID
+}
+
+func parseEnvelopeUserID(envelope EventEnvelope) uuid.UUID {
+	userIDStr := strings.TrimSpace(envelope.UserID)
+	if userIDStr == "" {
+		return uuid.Nil
+	}
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		return uuid.Nil
+	}
+	return userID
+}
+
+func (h *Hub) logf(operation string, err error) {
+	if h == nil || h.logger == nil || err == nil {
+		return
+	}
+	h.logger.Errorf("%s: %v", operation, err)
 }

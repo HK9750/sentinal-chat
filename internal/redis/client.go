@@ -49,6 +49,13 @@ func (r *Client) Subscribe(ctx context.Context, channels ...string) *goredis.Pub
 	return r.client.Subscribe(ctx, channels...)
 }
 
+func (r *Client) PSubscribe(ctx context.Context, patterns ...string) *goredis.PubSub {
+	if r == nil || r.client == nil {
+		return nil
+	}
+	return r.client.PSubscribe(ctx, patterns...)
+}
+
 func (r *Client) SetPresence(ctx context.Context, userID string, ttl time.Duration) error {
 	if r == nil || r.client == nil {
 		return nil

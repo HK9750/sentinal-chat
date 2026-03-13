@@ -53,7 +53,7 @@ func main() {
 	// Token service
 	tokenService, err := services.NewTokenService(
 		cfg.JWTSecret,
-		time.Duration(cfg.JWTExpiryMin)*time.Minute,
+		time.Duration(cfg.JWTExpiryHours)*time.Hour,
 		time.Duration(cfg.RefreshExpiry)*24*time.Hour,
 		"sentinal-chat",
 	)
@@ -90,15 +90,14 @@ func main() {
 		logInstance.Infof("S3 upload client enabled (region=%q bucket=%q endpoint=%q public_base=%q)", cfg.S3Region, cfg.S3Bucket, cfg.S3Endpoint, cfg.S3PublicBase)
 	}
 
-	// Upload API services
 	uploadService := services.NewUploadService(messageRepo, conversationRepo, s3Client)
-	uploadHandler := handler.NewUploadHandler(uploadService, logInstance)
 	commandService := services.NewCommandService(commandRepo)
 	messageService := services.NewMessageService(messageRepo, conversationRepo, outboxRepo, commandService)
 	conversationService := services.NewConversationService(conversationRepo, userRepo, outboxRepo, commandService)
 	conversationService.AttachMessageService(messageService)
 	callService := services.NewCallService(callRepo, conversationRepo, outboxRepo)
-	realtimeService := services.NewRealtimeService(nil, conversationService, messageService, callService)
+
+	uploadHandler := handler.NewUploadHandler(uploadService, logInstance)
 	conversationHandler := handler.NewConversationHandler(conversationService, logInstance)
 	messageHandler := handler.NewMessageHandler(messageService, logInstance)
 	redisClient, err := redisclient.NewRedis(cfg)
@@ -106,11 +105,12 @@ func main() {
 		logInstance.Errorf("Redis realtime disabled: %v", err)
 	}
 	realtimeHub := chatws.NewHub(redisClient, conversationRepo, logInstance)
-	realtimeService = services.NewRealtimeService(realtimeHub, conversationService, messageService, callService)
+	realtimeService := services.NewRealtimeService(realtimeHub, conversationService, messageService, callService, commandService)
 	outboxWorker := chatws.NewOutboxWorker(outboxRepo, redisClient, logInstance)
 	wsHandler := handler.NewWSHandler(authService, realtimeHub, realtimeService, logInstance)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	realtimeHub.StartRedisListener(ctx)
 	outboxWorker.Start(ctx)
 
 	srv.InitRoutes(server.RouteDependencies{

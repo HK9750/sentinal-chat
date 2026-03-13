@@ -245,3 +245,12 @@ type CallEndInput struct {
 	ActorID uuid.UUID
 	Reason  string
 }
+
+type CommandResult struct {
+	CommandID      string     `json:"command_id"`
+	Type           string     `json:"type"`
+	ConversationID *string    `json:"conversation_id,omitempty"`
+	Status         string     `json:"status"`
+	UndoneAt       *time.Time `json:"undone_at,omitempty"`
+	ExecutedAt     *time.Time `json:"executed_at,omitempty"`
+}

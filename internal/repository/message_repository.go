@@ -130,6 +130,18 @@ func (r *PostgresMessageRepository) Update(ctx context.Context, m message.Messag
 	return err
 }
 
+func (r *PostgresMessageRepository) Restore(ctx context.Context, id uuid.UUID) error {
+	res, err := r.db.ExecContext(ctx, "UPDATE messages SET deleted_at = NULL WHERE id = $1", id)
+	if err != nil {
+		return err
+	}
+	rows, err := res.RowsAffected()
+	if err == nil && rows == 0 {
+		return sentinal_errors.ErrNotFound
+	}
+	return err
+}
+
 func (r *PostgresMessageRepository) SoftDelete(ctx context.Context, id uuid.UUID) error {
 	res, err := r.db.ExecContext(ctx, "UPDATE messages SET deleted_at = $1 WHERE id = $2", time.Now(), id)
 	if err != nil {

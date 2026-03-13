@@ -10,6 +10,7 @@ import (
 
 	calldomain "sentinal-chat/internal/domain/call"
 	"sentinal-chat/internal/domain/outbox"
+	"sentinal-chat/internal/events"
 	chatproxy "sentinal-chat/internal/proxy"
 	"sentinal-chat/internal/repository"
 	chatws "sentinal-chat/internal/websocket"
@@ -80,9 +81,13 @@ func (s *CallService) Start(ctx context.Context, in CallStartInput) (calldomain.
 		resultParticipants = append(resultParticipants, conversationParticipant{UserID: participant.UserID, DisplayName: participant.DisplayName})
 	}
 	if s.outbox != nil {
-		envelope := chatws.NewCallEvent("call:incoming", in.ConversationID, call.ID, map[string]any{"call_id": call.ID.String(), "initiated_by": in.CallerID.String(), "type": call.Type})
-		if event, err := chatws.NewOutboxEvent("call:incoming", outbox.AggregateCall, call.ID, envelope); err == nil {
-			_ = s.outbox.Create(ctx, nil, event)
+		envelope := chatws.MarkLocal(chatws.NewCallEvent(events.CallIncoming, in.ConversationID, call.ID, map[string]any{"call_id": call.ID.String(), "initiated_by": in.CallerID.String(), "type": call.Type}))
+		if event, err := chatws.NewOutboxEvent(events.CallIncoming, outbox.AggregateCall, call.ID, envelope); err == nil {
+			if err := s.outbox.Create(ctx, nil, event); err != nil {
+				return calldomain.Call{}, nil, err
+			}
+		} else {
+			return calldomain.Call{}, nil, err
 		}
 	}
 	return call, resultParticipants, nil
@@ -113,9 +118,13 @@ func (s *CallService) End(ctx context.Context, in CallEndInput) error {
 		return err
 	}
 	if s.outbox != nil {
-		envelope := chatws.NewCallEvent("call:ended", call.ConversationID, in.CallID, map[string]any{"call_id": in.CallID.String(), "reason": in.Reason, "actor_id": in.ActorID.String()})
-		if event, err := chatws.NewOutboxEvent("call:ended", outbox.AggregateCall, in.CallID, envelope); err == nil {
-			_ = s.outbox.Create(ctx, nil, event)
+		envelope := chatws.NewCallEvent(events.CallEnded, call.ConversationID, in.CallID, map[string]any{"call_id": in.CallID.String(), "reason": in.Reason, "actor_id": in.ActorID.String()})
+		if event, err := chatws.NewOutboxEvent(events.CallEnded, outbox.AggregateCall, in.CallID, envelope); err == nil {
+			if err := s.outbox.Create(ctx, nil, event); err != nil {
+				return err
+			}
+		} else {
+			return err
 		}
 	}
 	return nil

@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -38,7 +39,7 @@ func NewMessageService(messages repository.MessageRepository, conversations repo
 }
 
 func (s *MessageService) Send(ctx context.Context, in SendMessageInput) (MessageView, error) {
-	if s == nil || s.messages == nil || s.conversations == nil {
+	if s == nil || s.messages == nil {
 		return MessageView{}, sentinal_errors.ErrServiceUnavailable
 	}
 	if err := s.proxy.RequireParticipant(ctx, in.ConversationID, in.SenderID); err != nil {
@@ -109,8 +110,8 @@ func (s *MessageService) Send(ctx context.Context, in SendMessageInput) (Message
 		envelope := chatws.NewMessageEvent(events.MessageNew, in.ConversationID, map[string]any{
 			"message": view,
 		})
-		if event, err := chatws.NewOutboxEvent(events.MessageNew, outbox.AggregateMessage, stored.ID, envelope); err == nil {
-			_ = s.outbox.Create(ctx, nil, event)
+		if err := s.enqueueOutboxEvent(ctx, events.MessageNew, outbox.AggregateMessage, stored.ID, envelope, true); err != nil {
+			return MessageView{}, err
 		}
 	}
 	return view, nil
@@ -124,10 +125,21 @@ func (s *MessageService) Edit(ctx context.Context, in EditMessageInput) (Message
 	if err != nil {
 		return MessageView{}, err
 	}
+	if msg.DeletedAt.Valid {
+		return MessageView{}, sentinal_errors.ErrConflict
+	}
 	if msg.ConversationID != in.ConversationID || msg.SenderID != in.EditorID {
 		return MessageView{}, sentinal_errors.ErrForbidden
 	}
+	newContent := strings.TrimSpace(in.EncryptedContent)
+	if newContent == "" {
+		return MessageView{}, sentinal_errors.ErrInvalidInput
+	}
 	oldContent := msg.EncryptedContent.String
+	oldExpiresAt := chatNullTime(msg.ExpiresAt)
+	if oldContent == newContent && sameTimePtr(msg.ExpiresAt, in.ExpiresAt) {
+		return s.GetByID(ctx, in.MessageID, in.EditorID)
+	}
 	version := 1
 	if edits, editErr := s.messages.GetMessageEdits(ctx, in.MessageID); editErr == nil {
 		version = len(edits) + 1
@@ -142,16 +154,26 @@ func (s *MessageService) Edit(ctx context.Context, in EditMessageInput) (Message
 			VersionNumber:    version,
 		})
 	}
-	msg.EncryptedContent = chatNullableString(strings.TrimSpace(in.EncryptedContent))
+	msg.EncryptedContent = chatNullableString(newContent)
 	msg.EditedAt = sql.NullTime{Time: time.Now().UTC(), Valid: true}
 	msg.ExpiresAt = chatNullableTimePtr(in.ExpiresAt)
 	if err := s.messages.Update(ctx, msg); err != nil {
 		return MessageView{}, err
 	}
 	if s.command != nil {
-		_, _ = s.command.Record(ctx, command.CommandEditMessage, in.EditorID, &in.ConversationID, map[string]any{
-			"message_id": in.MessageID.String(),
-		}, map[string]any{"encrypted_content": oldContent})
+		_, err = s.command.Record(ctx, command.CommandEditMessage, in.EditorID, &in.ConversationID, map[string]any{
+			"message_id":        in.MessageID.String(),
+			"encrypted_content": newContent,
+			"expires_at":        chatTimeToRFC3339(in.ExpiresAt),
+		}, map[string]any{
+			"message_id":         in.MessageID.String(),
+			"encrypted_content":  oldContent,
+			"expires_at":         oldExpiresAt,
+			"restore_deleted_at": false,
+		})
+		if err != nil {
+			return MessageView{}, err
+		}
 	}
 	view, err := s.GetByID(ctx, in.MessageID, in.EditorID)
 	if err != nil {
@@ -159,8 +181,8 @@ func (s *MessageService) Edit(ctx context.Context, in EditMessageInput) (Message
 	}
 	if s.outbox != nil {
 		envelope := chatws.NewMessageEvent(events.MessageEdited, in.ConversationID, map[string]any{"message": view})
-		if event, err := chatws.NewOutboxEvent(events.MessageEdited, outbox.AggregateMessage, in.MessageID, envelope); err == nil {
-			_ = s.outbox.Create(ctx, nil, event)
+		if err := s.enqueueOutboxEvent(ctx, events.MessageEdited, outbox.AggregateMessage, in.MessageID, envelope, true); err != nil {
+			return MessageView{}, err
 		}
 	}
 	return view, nil
@@ -174,16 +196,23 @@ func (s *MessageService) Delete(ctx context.Context, in DeleteMessageInput) (Mes
 	if err != nil {
 		return MessageView{}, err
 	}
+	if msg.DeletedAt.Valid {
+		return s.GetByID(ctx, in.MessageID, in.ActorID)
+	}
 	if msg.ConversationID != in.ConversationID || msg.SenderID != in.ActorID {
 		return MessageView{}, sentinal_errors.ErrForbidden
 	}
 	if err := s.messages.SoftDelete(ctx, in.MessageID); err != nil {
 		return MessageView{}, err
 	}
+	deletedAt := chatTimePtr(time.Now().UTC())
 	if s.command != nil {
-		_, _ = s.command.Record(ctx, command.CommandDeleteMessage, in.ActorID, &in.ConversationID, map[string]any{
+		_, err = s.command.Record(ctx, command.CommandDeleteMessage, in.ActorID, &in.ConversationID, map[string]any{
 			"message_id": in.MessageID.String(),
-		}, nil)
+		}, map[string]any{"message_id": in.MessageID.String(), "deleted_at": deletedAt, "restore_deleted_at": true})
+		if err != nil {
+			return MessageView{}, err
+		}
 	}
 	view, err := s.GetByID(ctx, in.MessageID, in.ActorID)
 	if err != nil {
@@ -191,8 +220,8 @@ func (s *MessageService) Delete(ctx context.Context, in DeleteMessageInput) (Mes
 	}
 	if s.outbox != nil {
 		envelope := chatws.NewMessageEvent(events.MessageDeleted, in.ConversationID, map[string]any{"message": view})
-		if event, err := chatws.NewOutboxEvent(events.MessageDeleted, outbox.AggregateMessage, in.MessageID, envelope); err == nil {
-			_ = s.outbox.Create(ctx, nil, event)
+		if err := s.enqueueOutboxEvent(ctx, events.MessageDeleted, outbox.AggregateMessage, in.MessageID, envelope, true); err != nil {
+			return MessageView{}, err
 		}
 	}
 	return view, nil
@@ -215,17 +244,69 @@ func (s *MessageService) AddReaction(ctx context.Context, in ReactionInput) ([]R
 	if err := s.messages.AddReaction(ctx, reaction); err != nil {
 		return nil, err
 	}
-	return s.listReactions(ctx, in.MessageID)
+	if s.command != nil {
+		_, err := s.command.Record(ctx, command.CommandReactMessage, in.ActorID, &in.ConversationID, map[string]any{
+			"message_id":      in.MessageID.String(),
+			"reaction_code":   reaction.ReactionCode,
+			"reaction_action": "ADD",
+		}, map[string]any{
+			"message_id":      in.MessageID.String(),
+			"reaction_code":   reaction.ReactionCode,
+			"reaction_action": "REMOVE",
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	reactions, err := s.listReactions(ctx, in.MessageID)
+	if err != nil {
+		return nil, err
+	}
+	if s.outbox != nil {
+		envelope := chatws.NewMessageEvent(events.MessageReaction, in.ConversationID, map[string]any{"message_id": in.MessageID.String(), "reactions": reactions})
+		if err := s.enqueueOutboxEvent(ctx, events.MessageReaction, outbox.AggregateMessage, in.MessageID, envelope, true); err != nil {
+			return nil, err
+		}
+	}
+	return reactions, nil
 }
 
 func (s *MessageService) RemoveReaction(ctx context.Context, in ReactionInput) ([]ReactionView, error) {
 	if err := s.proxy.RequireParticipant(ctx, in.ConversationID, in.ActorID); err != nil {
 		return nil, err
 	}
-	if err := s.messages.RemoveReaction(ctx, in.MessageID, in.ActorID, strings.TrimSpace(in.Code)); err != nil {
+	reactionCode := strings.TrimSpace(in.Code)
+	if reactionCode == "" {
+		return nil, sentinal_errors.ErrInvalidInput
+	}
+	if err := s.messages.RemoveReaction(ctx, in.MessageID, in.ActorID, reactionCode); err != nil {
 		return nil, err
 	}
-	return s.listReactions(ctx, in.MessageID)
+	if s.command != nil {
+		_, err := s.command.Record(ctx, command.CommandReactMessage, in.ActorID, &in.ConversationID, map[string]any{
+			"message_id":      in.MessageID.String(),
+			"reaction_code":   reactionCode,
+			"reaction_action": "REMOVE",
+		}, map[string]any{
+			"message_id":      in.MessageID.String(),
+			"reaction_code":   reactionCode,
+			"reaction_action": "ADD",
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	reactions, err := s.listReactions(ctx, in.MessageID)
+	if err != nil {
+		return nil, err
+	}
+	if s.outbox != nil {
+		envelope := chatws.NewMessageEvent(events.MessageReaction, in.ConversationID, map[string]any{"message_id": in.MessageID.String(), "reactions": reactions})
+		if err := s.enqueueOutboxEvent(ctx, events.MessageReaction, outbox.AggregateMessage, in.MessageID, envelope, true); err != nil {
+			return nil, err
+		}
+	}
+	return reactions, nil
 }
 
 func (s *MessageService) Pin(ctx context.Context, in PinMessageInput) (bool, error) {
@@ -237,14 +318,32 @@ func (s *MessageService) Pin(ctx context.Context, in PinMessageInput) (bool, err
 			return false, err
 		}
 		if s.command != nil {
-			_, _ = s.command.Record(ctx, command.CommandPinMessage, in.ActorID, &in.ConversationID, map[string]any{"message_id": in.MessageID.String()}, nil)
+			_, err := s.command.Record(ctx, command.CommandPinMessage, in.ActorID, &in.ConversationID, map[string]any{"message_id": in.MessageID.String()}, map[string]any{"message_id": in.MessageID.String()})
+			if err != nil {
+				return false, err
+			}
+		}
+		if s.outbox != nil {
+			envelope := chatws.NewMessageEvent(events.MessagePinned, in.ConversationID, map[string]any{"message_id": in.MessageID.String(), "pinned": true})
+			if err := s.enqueueOutboxEvent(ctx, events.MessagePinned, outbox.AggregateMessage, in.MessageID, envelope, true); err != nil {
+				return false, err
+			}
 		}
 	} else {
 		if err := s.messages.UnpinMessage(ctx, in.ConversationID, in.MessageID); err != nil {
 			return false, err
 		}
 		if s.command != nil {
-			_, _ = s.command.Record(ctx, command.CommandUnpinMessage, in.ActorID, &in.ConversationID, map[string]any{"message_id": in.MessageID.String()}, nil)
+			_, err := s.command.Record(ctx, command.CommandUnpinMessage, in.ActorID, &in.ConversationID, map[string]any{"message_id": in.MessageID.String()}, map[string]any{"message_id": in.MessageID.String()})
+			if err != nil {
+				return false, err
+			}
+		}
+		if s.outbox != nil {
+			envelope := chatws.NewMessageEvent(events.MessageUnpinned, in.ConversationID, map[string]any{"message_id": in.MessageID.String(), "pinned": false})
+			if err := s.enqueueOutboxEvent(ctx, events.MessageUnpinned, outbox.AggregateMessage, in.MessageID, envelope, true); err != nil {
+				return false, err
+			}
 		}
 	}
 	return in.Pinned, nil
@@ -310,10 +409,19 @@ func (s *MessageService) GetByID(ctx context.Context, messageID, userID uuid.UUI
 	if err != nil {
 		return MessageView{}, err
 	}
-	if err := s.proxy.RequireParticipant(ctx, msg.ConversationID, userID); err != nil {
-		return MessageView{}, err
+	if userID != uuid.Nil {
+		if err := s.proxy.RequireParticipant(ctx, msg.ConversationID, userID); err != nil {
+			return MessageView{}, err
+		}
 	}
-	return s.buildMessageView(ctx, msg, userID)
+	return s.buildMessageView(ctx, msg, fallbackMessageViewUser(msg, userID))
+}
+
+func fallbackMessageViewUser(msg msgdomain.Message, userID uuid.UUID) uuid.UUID {
+	if userID != uuid.Nil {
+		return userID
+	}
+	return msg.SenderID
 }
 
 func (s *MessageService) getLatestView(ctx context.Context, conversationID, userID uuid.UUID) (MessageView, error) {
@@ -437,8 +545,8 @@ func (s *MessageService) VotePoll(ctx context.Context, in VotePollInput) (PollVi
 	}
 	if s.outbox != nil {
 		envelope := chatws.NewConversationEvent(events.PollUpdate, in.ConversationID, map[string]any{"poll": view})
-		if event, err := chatws.NewOutboxEvent(events.PollUpdate, outbox.AggregatePoll, in.PollID, envelope); err == nil {
-			_ = s.outbox.Create(ctx, nil, event)
+		if err := s.enqueueOutboxEvent(ctx, events.PollUpdate, outbox.AggregatePoll, in.PollID, envelope, true); err != nil {
+			return PollView{}, err
 		}
 	}
 	return view, nil
@@ -457,8 +565,8 @@ func (s *MessageService) ClosePoll(ctx context.Context, conversationID, pollID, 
 	}
 	if s.outbox != nil {
 		envelope := chatws.NewConversationEvent(events.PollUpdate, conversationID, map[string]any{"poll": view})
-		if event, err := chatws.NewOutboxEvent(events.PollUpdate, outbox.AggregatePoll, pollID, envelope); err == nil {
-			_ = s.outbox.Create(ctx, nil, event)
+		if err := s.enqueueOutboxEvent(ctx, events.PollUpdate, outbox.AggregatePoll, pollID, envelope, true); err != nil {
+			return PollView{}, err
 		}
 	}
 	return view, nil
@@ -510,4 +618,314 @@ func (s *MessageService) listReactions(ctx context.Context, messageID uuid.UUID)
 		items = append(items, ReactionView{UserID: reaction.UserID.String(), ReactionCode: reaction.ReactionCode, CreatedAt: reaction.CreatedAt})
 	}
 	return items, nil
+}
+
+func (s *MessageService) UndoLatest(ctx context.Context, userID uuid.UUID, conversationID *uuid.UUID) (CommandResult, error) {
+	if s == nil || s.command == nil {
+		return CommandResult{}, sentinal_errors.ErrServiceUnavailable
+	}
+	log, err := s.command.GetLatestUndoable(ctx, userID, conversationID)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	return s.applyCommandUndo(ctx, log)
+}
+
+func (s *MessageService) Redo(ctx context.Context, userID, commandID uuid.UUID) (CommandResult, error) {
+	if s == nil || s.command == nil {
+		return CommandResult{}, sentinal_errors.ErrServiceUnavailable
+	}
+	log, err := s.command.GetByID(ctx, commandID)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	if log.UserID != userID {
+		return CommandResult{}, sentinal_errors.ErrForbidden
+	}
+	if log.Status != command.StatusUndone || log.UndoneAt == nil {
+		return CommandResult{}, sentinal_errors.ErrConflict
+	}
+	return s.applyCommandRedo(ctx, &log)
+}
+
+func (s *MessageService) applyCommandUndo(ctx context.Context, log command.CommandLog) (CommandResult, error) {
+	if log.UndoPayload == nil {
+		return CommandResult{}, sentinal_errors.ErrConflict
+	}
+	var payload commandActionPayload
+	if err := json.Unmarshal(log.UndoPayload, &payload); err != nil {
+		return CommandResult{}, err
+	}
+	conversationID := uuidPtrValue(log.ConversationID)
+	switch log.CommandType {
+	case command.CommandEditMessage:
+		if payload.MessageID == uuid.Nil {
+			return CommandResult{}, sentinal_errors.ErrInvalidInput
+		}
+		msg, err := s.messages.GetByID(ctx, payload.MessageID)
+		if err != nil {
+			return CommandResult{}, err
+		}
+		msg.EncryptedContent = chatNullableString(payload.EncryptedContent)
+		msg.ExpiresAt = chatNullableTimePtr(payload.ExpiresAt)
+		if payload.RestoreDeletedAt {
+			if payload.DeletedAt == nil {
+				return CommandResult{}, sentinal_errors.ErrInvalidInput
+			}
+			msg.DeletedAt = sql.NullTime{Time: payload.DeletedAt.UTC(), Valid: true}
+		} else {
+			msg.DeletedAt = sql.NullTime{}
+		}
+		msg.EditedAt = sql.NullTime{Time: time.Now().UTC(), Valid: true}
+		if err := s.messages.Update(ctx, msg); err != nil {
+			return CommandResult{}, err
+		}
+		if err := s.broadcastMessageState(ctx, msg.ConversationID, payload.MessageID, events.MessageEdited); err != nil {
+			return CommandResult{}, err
+		}
+	case command.CommandDeleteMessage:
+		if payload.MessageID == uuid.Nil {
+			return CommandResult{}, sentinal_errors.ErrInvalidInput
+		}
+		if err := s.messages.Restore(ctx, payload.MessageID); err != nil {
+			return CommandResult{}, err
+		}
+		if conversationID != uuid.Nil {
+			if err := s.broadcastMessageState(ctx, conversationID, payload.MessageID, events.MessageEdited); err != nil {
+				return CommandResult{}, err
+			}
+		}
+	case command.CommandPinMessage:
+		if conversationID == uuid.Nil || payload.MessageID == uuid.Nil {
+			return CommandResult{}, sentinal_errors.ErrInvalidInput
+		}
+		if err := s.messages.UnpinMessage(ctx, conversationID, payload.MessageID); err != nil {
+			return CommandResult{}, err
+		}
+		if err := s.broadcastPinState(ctx, conversationID, payload.MessageID, false); err != nil {
+			return CommandResult{}, err
+		}
+	case command.CommandUnpinMessage:
+		if conversationID == uuid.Nil || payload.MessageID == uuid.Nil {
+			return CommandResult{}, sentinal_errors.ErrInvalidInput
+		}
+		if err := s.messages.PinMessage(ctx, &msgdomain.PinnedMessage{ConversationID: conversationID, MessageID: payload.MessageID, PinnedBy: log.UserID, PinnedAt: time.Now().UTC()}); err != nil {
+			return CommandResult{}, err
+		}
+		if err := s.broadcastPinState(ctx, conversationID, payload.MessageID, true); err != nil {
+			return CommandResult{}, err
+		}
+	case command.CommandReactMessage:
+		if payload.MessageID == uuid.Nil || strings.TrimSpace(payload.ReactionCode) == "" {
+			return CommandResult{}, sentinal_errors.ErrInvalidInput
+		}
+		if err := s.applyReactionUndoAction(ctx, log.UserID, conversationID, payload); err != nil {
+			return CommandResult{}, err
+		}
+		if err := s.broadcastReactionState(ctx, conversationID, payload.MessageID); err != nil {
+			return CommandResult{}, err
+		}
+	default:
+		return CommandResult{}, sentinal_errors.ErrConflict
+	}
+	if err := s.command.MarkUndone(ctx, &log); err != nil {
+		return CommandResult{}, err
+	}
+	updated, err := s.command.GetByID(ctx, log.ID)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	return commandResultFromLog(updated), nil
+}
+
+func (s *MessageService) applyCommandRedo(ctx context.Context, log *command.CommandLog) (CommandResult, error) {
+	var payload commandActionPayload
+	if err := json.Unmarshal(log.Payload, &payload); err != nil {
+		return CommandResult{}, err
+	}
+	conversationID := uuidPtrValue(log.ConversationID)
+	switch log.CommandType {
+	case command.CommandEditMessage:
+		if payload.MessageID == uuid.Nil {
+			return CommandResult{}, sentinal_errors.ErrInvalidInput
+		}
+		msg, err := s.messages.GetByID(ctx, payload.MessageID)
+		if err != nil {
+			return CommandResult{}, err
+		}
+		msg.EncryptedContent = chatNullableString(payload.EncryptedContent)
+		msg.ExpiresAt = chatNullableTimePtr(payload.ExpiresAt)
+		msg.EditedAt = sql.NullTime{Time: time.Now().UTC(), Valid: true}
+		if err := s.messages.Update(ctx, msg); err != nil {
+			return CommandResult{}, err
+		}
+		if err := s.broadcastMessageState(ctx, msg.ConversationID, payload.MessageID, events.MessageEdited); err != nil {
+			return CommandResult{}, err
+		}
+	case command.CommandDeleteMessage:
+		if payload.MessageID == uuid.Nil {
+			return CommandResult{}, sentinal_errors.ErrInvalidInput
+		}
+		if err := s.messages.SoftDelete(ctx, payload.MessageID); err != nil {
+			return CommandResult{}, err
+		}
+		if conversationID != uuid.Nil {
+			if err := s.broadcastMessageState(ctx, conversationID, payload.MessageID, events.MessageDeleted); err != nil {
+				return CommandResult{}, err
+			}
+		}
+	case command.CommandPinMessage:
+		if conversationID == uuid.Nil || payload.MessageID == uuid.Nil {
+			return CommandResult{}, sentinal_errors.ErrInvalidInput
+		}
+		if err := s.messages.PinMessage(ctx, &msgdomain.PinnedMessage{ConversationID: conversationID, MessageID: payload.MessageID, PinnedBy: log.UserID, PinnedAt: time.Now().UTC()}); err != nil {
+			return CommandResult{}, err
+		}
+		if err := s.broadcastPinState(ctx, conversationID, payload.MessageID, true); err != nil {
+			return CommandResult{}, err
+		}
+	case command.CommandUnpinMessage:
+		if conversationID == uuid.Nil || payload.MessageID == uuid.Nil {
+			return CommandResult{}, sentinal_errors.ErrInvalidInput
+		}
+		if err := s.messages.UnpinMessage(ctx, conversationID, payload.MessageID); err != nil {
+			return CommandResult{}, err
+		}
+		if err := s.broadcastPinState(ctx, conversationID, payload.MessageID, false); err != nil {
+			return CommandResult{}, err
+		}
+	case command.CommandReactMessage:
+		if payload.MessageID == uuid.Nil || strings.TrimSpace(payload.ReactionCode) == "" {
+			return CommandResult{}, sentinal_errors.ErrInvalidInput
+		}
+		if err := s.applyReactionUndoAction(ctx, log.UserID, conversationID, payload); err != nil {
+			return CommandResult{}, err
+		}
+		if err := s.broadcastReactionState(ctx, conversationID, payload.MessageID); err != nil {
+			return CommandResult{}, err
+		}
+	default:
+		return CommandResult{}, sentinal_errors.ErrConflict
+	}
+	if err := s.command.MarkRedone(ctx, log); err != nil {
+		return CommandResult{}, err
+	}
+	updated, err := s.command.GetByID(ctx, log.ID)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	return commandResultFromLog(updated), nil
+}
+
+func (s *MessageService) applyReactionUndoAction(ctx context.Context, userID, _ uuid.UUID, payload commandActionPayload) error {
+	switch strings.ToUpper(strings.TrimSpace(payload.ReactionAction)) {
+	case "ADD":
+		return s.messages.AddReaction(ctx, &msgdomain.MessageReaction{ID: uuid.New(), MessageID: payload.MessageID, UserID: userID, ReactionCode: payload.ReactionCode, CreatedAt: time.Now().UTC()})
+	case "REMOVE":
+		return s.messages.RemoveReaction(ctx, payload.MessageID, userID, payload.ReactionCode)
+	default:
+		return sentinal_errors.ErrInvalidInput
+	}
+}
+
+func (s *MessageService) broadcastMessageState(ctx context.Context, conversationID, messageID uuid.UUID, eventType string) error {
+	view, err := s.GetByID(ctx, messageID, uuid.Nil)
+	if err != nil && !errors.Is(err, sentinal_errors.ErrForbidden) {
+		return err
+	}
+	if errors.Is(err, sentinal_errors.ErrForbidden) {
+		msg, getErr := s.messages.GetByID(ctx, messageID)
+		if getErr != nil {
+			return getErr
+		}
+		view, err = s.buildMessageView(ctx, msg, msg.SenderID)
+		if err != nil {
+			return err
+		}
+	}
+	envelope := chatws.NewMessageEvent(eventType, conversationID, map[string]any{"message": view})
+	return s.enqueueOutboxEvent(ctx, eventType, outbox.AggregateMessage, messageID, envelope, false)
+}
+
+func (s *MessageService) broadcastPinState(ctx context.Context, conversationID, messageID uuid.UUID, pinned bool) error {
+	eventType := events.MessagePinned
+	if !pinned {
+		eventType = events.MessageUnpinned
+	}
+	envelope := chatws.NewMessageEvent(eventType, conversationID, map[string]any{"message_id": messageID.String(), "pinned": pinned})
+	return s.enqueueOutboxEvent(ctx, eventType, outbox.AggregateMessage, messageID, envelope, false)
+}
+
+func (s *MessageService) broadcastReactionState(ctx context.Context, conversationID, messageID uuid.UUID) error {
+	reactions, err := s.listReactions(ctx, messageID)
+	if err != nil {
+		return err
+	}
+	envelope := chatws.NewMessageEvent(events.MessageReaction, conversationID, map[string]any{"message_id": messageID.String(), "reactions": reactions})
+	return s.enqueueOutboxEvent(ctx, events.MessageReaction, outbox.AggregateMessage, messageID, envelope, false)
+}
+
+func (s *MessageService) enqueueOutboxEvent(ctx context.Context, eventType string, aggregateType outbox.AggregateType, aggregateID uuid.UUID, envelope chatws.EventEnvelope, markLocal bool) error {
+	if s.outbox == nil {
+		return nil
+	}
+	if markLocal {
+		envelope = chatws.MarkLocal(envelope)
+	}
+	event, err := chatws.NewOutboxEvent(eventType, aggregateType, aggregateID, envelope)
+	if err != nil {
+		return err
+	}
+	return s.outbox.Create(ctx, nil, event)
+}
+
+type commandActionPayload struct {
+	MessageID        uuid.UUID  `json:"message_id"`
+	EncryptedContent string     `json:"encrypted_content"`
+	ExpiresAt        *time.Time `json:"expires_at"`
+	DeletedAt        *time.Time `json:"deleted_at"`
+	RestoreDeletedAt bool       `json:"restore_deleted_at"`
+	ReactionCode     string     `json:"reaction_code"`
+	ReactionAction   string     `json:"reaction_action"`
+}
+
+func sameTimePtr(value sql.NullTime, candidate *time.Time) bool {
+	if !value.Valid && candidate == nil {
+		return true
+	}
+	if value.Valid != (candidate != nil) {
+		return false
+	}
+	return value.Time.UTC().Equal(candidate.UTC())
+}
+
+func chatTimeToRFC3339(value *time.Time) *string {
+	if value == nil {
+		return nil
+	}
+	raw := value.UTC().Format(time.RFC3339)
+	return &raw
+}
+
+func uuidPtrValue(value *uuid.UUID) uuid.UUID {
+	if value == nil {
+		return uuid.Nil
+	}
+	return *value
+}
+
+func commandResultFromLog(log command.CommandLog) CommandResult {
+	var conversationID *string
+	if log.ConversationID != nil {
+		value := log.ConversationID.String()
+		conversationID = &value
+	}
+	return CommandResult{
+		CommandID:      log.ID.String(),
+		Type:           string(log.CommandType),
+		ConversationID: conversationID,
+		Status:         string(log.Status),
+		UndoneAt:       log.UndoneAt,
+		ExecutedAt:     log.ExecutedAt,
+	}
 }

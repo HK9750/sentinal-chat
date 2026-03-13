@@ -2,7 +2,6 @@ package handler
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 
@@ -59,7 +58,6 @@ func (h *ConversationHandler) Create(c *gin.Context) {
 		ParticipantIDs:   participantIDs,
 		DisappearingMode: req.DisappearingMode,
 	})
-	fmt.Println(err)
 	if err != nil {
 		h.writeError(c, err)
 		return

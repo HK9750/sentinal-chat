@@ -17,7 +17,7 @@ type Config struct {
 	DBName             string
 	DBPort             string
 	JWTSecret          string
-	JWTExpiryMin       int
+	JWTExpiryHours     int
 	RefreshExpiry      int
 	CookieSecure       bool
 	CookieDomain       string
@@ -57,7 +57,7 @@ func LoadConfig() *Config {
 		DBName:             getEnv("DB_NAME", "sentinal_chat"),
 		DBPort:             getEnv("DB_PORT", "5432"),
 		JWTSecret:          getEnv("JWT_SECRET", "change-me"),
-		JWTExpiryMin:       getEnvAsInt("JWT_EXPIRY_MIN", 15),
+		JWTExpiryHours:     getEnvAsInt("JWT_EXPIRY_HOURS", 1),
 		RefreshExpiry:      getEnvAsInt("REFRESH_EXPIRY_DAYS", 14),
 		CookieSecure:       getEnvAsBool("COOKIE_SECURE", appMode == "release"),
 		CookieDomain:       getEnv("COOKIE_DOMAIN", ""),

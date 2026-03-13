@@ -3,11 +3,14 @@ package services
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"errors"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
+	"sentinal-chat/internal/domain/command"
 	convdomain "sentinal-chat/internal/domain/conversation"
 	"sentinal-chat/internal/domain/outbox"
 	"sentinal-chat/internal/events"
@@ -64,7 +67,7 @@ func (s *ConversationService) Create(ctx context.Context, in CreateConversationI
 		if err == nil {
 			return s.buildConversationView(ctx, existing, in.CreatorID)
 		}
-		if err != sentinal_errors.ErrNotFound {
+		if !errors.Is(err, sentinal_errors.ErrNotFound) {
 			return ConversationView{}, err
 		}
 	}
@@ -130,8 +133,8 @@ func (s *ConversationService) Create(ctx context.Context, in CreateConversationI
 			"created_by":      in.CreatorID.String(),
 			"type":            conv.Type,
 		})
-		if event, err := chatws.NewOutboxEvent(events.ConversationCreated, outbox.AggregateConversation, conv.ID, envelope); err == nil {
-			_ = s.outbox.Create(ctx, nil, event)
+		if err := s.enqueueOutboxEvent(ctx, events.ConversationCreated, outbox.AggregateConversation, conv.ID, envelope, false); err != nil {
+			return ConversationView{}, err
 		}
 	}
 
@@ -201,8 +204,8 @@ func (s *ConversationService) AddParticipant(ctx context.Context, in AddParticip
 			"added_by":        in.ActorID.String(),
 			"role":            participant.Role,
 		})
-		if event, err := chatws.NewOutboxEvent(events.ConversationParticipantAdded, outbox.AggregateConversation, in.ConversationID, envelope); err == nil {
-			_ = s.outbox.Create(ctx, nil, event)
+		if err := s.enqueueOutboxEvent(ctx, events.ConversationParticipantAdded, outbox.AggregateConversation, in.ConversationID, envelope, false); err != nil {
+			return ConversationView{}, err
 		}
 	}
 	updated, err := s.conversations.GetByID(ctx, in.ConversationID)
@@ -229,13 +232,13 @@ func (s *ConversationService) RemoveParticipant(ctx context.Context, in RemovePa
 			"user_id":         in.UserID.String(),
 			"removed_by":      in.ActorID.String(),
 		})
-		if event, err := chatws.NewOutboxEvent(events.ConversationParticipantRemoved, outbox.AggregateConversation, in.ConversationID, envelope); err == nil {
-			_ = s.outbox.Create(ctx, nil, event)
+		if err := s.enqueueOutboxEvent(ctx, events.ConversationParticipantRemoved, outbox.AggregateConversation, in.ConversationID, envelope, false); err != nil {
+			return ConversationView{}, err
 		}
 	}
 	updated, err := s.conversations.GetByID(ctx, in.ConversationID)
 	if err != nil {
-		if err == sentinal_errors.ErrNotFound {
+		if errors.Is(err, sentinal_errors.ErrNotFound) {
 			return ConversationView{ID: in.ConversationID.String()}, nil
 		}
 		return ConversationView{}, err
@@ -247,15 +250,89 @@ func (s *ConversationService) Clear(ctx context.Context, in ClearConversationInp
 	if err := s.proxy.RequireParticipant(ctx, in.ConversationID, in.ActorID); err != nil {
 		return err
 	}
+	previousClear, err := s.conversations.GetConversationClear(ctx, in.ConversationID, in.ActorID)
+	var undoClearedAt *time.Time
+	if err == nil {
+		undoClearedAt = chatTimePtr(previousClear.ClearedAt)
+	} else if !errors.Is(err, sentinal_errors.ErrNotFound) {
+		return err
+	}
 	if err := s.conversations.ClearConversation(ctx, in.ConversationID, in.ActorID); err != nil {
 		return err
 	}
 	if s.command != nil {
-		_, _ = s.command.Record(ctx, "CLEAR_CHAT", in.ActorID, &in.ConversationID, map[string]any{
+		_, err := s.command.Record(ctx, command.CommandClearChat, in.ActorID, &in.ConversationID, map[string]any{
 			"conversation_id": in.ConversationID.String(),
-		}, nil)
+		}, map[string]any{
+			"conversation_id": in.ConversationID.String(),
+			"cleared_at":      undoClearedAt,
+		})
+		if err != nil {
+			return err
+		}
+	}
+	if s.outbox != nil {
+		envelope := chatws.NewUserEvent(events.ConversationCleared, in.ActorID.String(), map[string]any{"conversation_id": in.ConversationID.String(), "user_id": in.ActorID.String(), "cleared": true})
+		if err := s.enqueueOutboxEvent(ctx, events.ConversationCleared, outbox.AggregateConversation, in.ConversationID, envelope, false); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+func (s *ConversationService) applyCommandUndo(ctx context.Context, log command.CommandLog) (CommandResult, error) {
+	if log.CommandType != command.CommandClearChat {
+		return CommandResult{}, sentinal_errors.ErrConflict
+	}
+	payload, err := conversationCommandPayloadFromJSON(log.UndoPayload)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	if payload.ConversationID == uuid.Nil {
+		return CommandResult{}, sentinal_errors.ErrInvalidInput
+	}
+	if err := s.conversations.SetConversationClear(ctx, payload.ConversationID, log.UserID, payload.ClearedAt); err != nil && !(payload.ClearedAt == nil && errors.Is(err, sentinal_errors.ErrNotFound)) {
+		return CommandResult{}, err
+	}
+	if err := s.command.MarkUndone(ctx, &log); err != nil {
+		return CommandResult{}, err
+	}
+	if err := s.publishClearState(ctx, payload.ConversationID, log.UserID, payload.ClearedAt != nil, payload.ClearedAt); err != nil {
+		return CommandResult{}, err
+	}
+	updated, err := s.command.GetByID(ctx, log.ID)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	return commandResultFromLog(updated), nil
+}
+
+func (s *ConversationService) applyCommandRedo(ctx context.Context, log *command.CommandLog) (CommandResult, error) {
+	if log == nil || log.CommandType != command.CommandClearChat {
+		return CommandResult{}, sentinal_errors.ErrConflict
+	}
+	payload, err := conversationCommandPayloadFromJSON(log.Payload)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	if payload.ConversationID == uuid.Nil {
+		return CommandResult{}, sentinal_errors.ErrInvalidInput
+	}
+	if err := s.conversations.ClearConversation(ctx, payload.ConversationID, log.UserID); err != nil {
+		return CommandResult{}, err
+	}
+	now := time.Now().UTC()
+	if err := s.command.MarkRedone(ctx, log); err != nil {
+		return CommandResult{}, err
+	}
+	if err := s.publishClearState(ctx, payload.ConversationID, log.UserID, true, &now); err != nil {
+		return CommandResult{}, err
+	}
+	updated, err := s.command.GetByID(ctx, log.ID)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	return commandResultFromLog(updated), nil
 }
 
 func (s *ConversationService) buildConversationView(ctx context.Context, conv convdomain.Conversation, userID uuid.UUID) (ConversationView, error) {
@@ -301,4 +378,44 @@ func nullableConversationString(value string) sql.NullString {
 		return sql.NullString{}
 	}
 	return sql.NullString{String: value, Valid: true}
+}
+
+type conversationCommandPayload struct {
+	ConversationID uuid.UUID  `json:"conversation_id"`
+	ClearedAt      *time.Time `json:"cleared_at"`
+}
+
+func conversationCommandPayloadFromJSON(raw []byte) (conversationCommandPayload, error) {
+	var payload conversationCommandPayload
+	if len(raw) == 0 {
+		return conversationCommandPayload{}, sentinal_errors.ErrInvalidInput
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return conversationCommandPayload{}, err
+	}
+	return payload, nil
+}
+
+func (s *ConversationService) publishClearState(ctx context.Context, conversationID, userID uuid.UUID, cleared bool, clearedAt *time.Time) error {
+	envelope := chatws.NewUserEvent(events.ConversationCleared, userID.String(), map[string]any{
+		"conversation_id": conversationID.String(),
+		"user_id":         userID.String(),
+		"cleared":         cleared,
+		"cleared_at":      clearedAt,
+	})
+	return s.enqueueOutboxEvent(ctx, events.ConversationCleared, outbox.AggregateConversation, conversationID, envelope, false)
+}
+
+func (s *ConversationService) enqueueOutboxEvent(ctx context.Context, eventType string, aggregateType outbox.AggregateType, aggregateID uuid.UUID, envelope chatws.EventEnvelope, markLocal bool) error {
+	if s.outbox == nil {
+		return nil
+	}
+	if markLocal {
+		envelope = chatws.MarkLocal(envelope)
+	}
+	event, err := chatws.NewOutboxEvent(eventType, aggregateType, aggregateID, envelope)
+	if err != nil {
+		return err
+	}
+	return s.outbox.Create(ctx, nil, event)
 }

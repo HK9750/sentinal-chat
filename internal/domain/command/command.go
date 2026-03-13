@@ -22,6 +22,7 @@ type CommandType string
 const (
 	CommandDeleteMessage CommandType = "DELETE_MESSAGE"
 	CommandEditMessage   CommandType = "EDIT_MESSAGE"
+	CommandReactMessage  CommandType = "REACT_MESSAGE"
 	CommandPinMessage    CommandType = "PIN_MESSAGE"
 	CommandUnpinMessage  CommandType = "UNPIN_MESSAGE"
 	CommandClearChat     CommandType = "CLEAR_CHAT"

@@ -10,10 +10,15 @@ import (
 	"sentinal-chat/internal/events"
 )
 
+var localPublishSource = uuid.NewString()
+
 type EventEnvelope struct {
 	Type           string         `json:"type"`
+	RequestID      string         `json:"request_id,omitempty"`
+	UserID         string         `json:"user_id,omitempty"`
 	ConversationID string         `json:"conversation_id,omitempty"`
 	CallID         string         `json:"call_id,omitempty"`
+	Source         string         `json:"source,omitempty"`
 	SentAt         time.Time      `json:"sent_at"`
 	Data           map[string]any `json:"data,omitempty"`
 }
@@ -36,6 +41,13 @@ func NewOutboxEvent(eventType string, aggregateType outbox.AggregateType, aggreg
 	}, nil
 }
 
+// MarkLocal tags an envelope with the current process id so the Redis listener
+// can ignore messages that were already delivered directly on this node.
+func MarkLocal(envelope EventEnvelope) EventEnvelope {
+	envelope.Source = localPublishSource
+	return envelope
+}
+
 func NewConversationEvent(eventType string, conversationID uuid.UUID, data map[string]any) EventEnvelope {
 	return EventEnvelope{
 		Type:           eventType,
@@ -56,6 +68,15 @@ func NewCallEvent(eventType string, conversationID, callID uuid.UUID, data map[s
 		CallID:         callID.String(),
 		SentAt:         time.Now().UTC(),
 		Data:           data,
+	}
+}
+
+func NewUserEvent(eventType, userID string, data map[string]any) EventEnvelope {
+	return EventEnvelope{
+		Type:   eventType,
+		UserID: userID,
+		SentAt: time.Now().UTC(),
+		Data:   data,
 	}
 }
 

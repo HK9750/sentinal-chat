@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"sentinal-chat/internal/domain/command"
 	"sentinal-chat/internal/events"
 	chatws "sentinal-chat/internal/websocket"
 	sentinal_errors "sentinal-chat/pkg/errors"
@@ -17,14 +18,16 @@ type RealtimeService struct {
 	messageService  *MessageService
 	callService     *CallService
 	conversationSvc *ConversationService
+	commandService  *CommandService
 }
 
-func NewRealtimeService(broadcaster chatws.Broadcaster, conversationSvc *ConversationService, messageSvc *MessageService, callSvc *CallService) *RealtimeService {
+func NewRealtimeService(broadcaster chatws.Broadcaster, conversationSvc *ConversationService, messageSvc *MessageService, callSvc *CallService, commandSvc *CommandService) *RealtimeService {
 	return &RealtimeService{
 		broadcaster:     broadcaster,
 		messageService:  messageSvc,
 		callService:     callSvc,
 		conversationSvc: conversationSvc,
+		commandService:  commandSvc,
 	}
 }
 
@@ -39,7 +42,11 @@ func (s *RealtimeService) HandleTyping(ctx context.Context, conversationID, user
 	if !started {
 		eventType = events.TypingStopped
 	}
-	return s.broadcaster.BroadcastConversation(ctx, conversationID, chatws.NewConversationEvent(eventType, conversationID, map[string]any{"user_id": userID.String()}), &userID)
+	envelope := chatws.NewConversationEvent(eventType, conversationID, map[string]any{"user_id": userID.String()})
+	if err := s.broadcaster.BroadcastConversation(ctx, conversationID, envelope, &userID); err != nil {
+		return err
+	}
+	return s.broadcaster.PublishConversation(ctx, conversationID, envelope)
 }
 
 func (s *RealtimeService) SendMessage(ctx context.Context, userID uuid.UUID, in SendMessageInput) (MessageView, error) {
@@ -120,7 +127,10 @@ func (s *RealtimeService) UpdateReceipt(ctx context.Context, userID uuid.UUID, i
 	}
 	if s.broadcaster != nil {
 		envelope := chatws.NewMessageEvent(events.ReceiptUpdate, in.ConversationID, map[string]any{"message_ids": uuidSliceToStrings(in.MessageIDs), "user_id": userID.String(), "status": in.Status, "up_to_seq_id": in.UpToSeqID})
-		_ = s.broadcaster.BroadcastConversation(ctx, in.ConversationID, envelope, &userID)
+		if err := s.broadcaster.BroadcastConversation(ctx, in.ConversationID, envelope, &userID); err != nil {
+			return err
+		}
+		return s.broadcaster.PublishConversation(ctx, in.ConversationID, envelope)
 	}
 	return nil
 }
@@ -180,12 +190,74 @@ func (s *RealtimeService) ForwardCallSignal(ctx context.Context, frameType strin
 	if frameType == events.InboundCallICE {
 		eventType = events.CallICE
 	}
-	s.broadcaster.SendToUser(in.ToUserID, chatws.NewCallEvent(eventType, in.ConversationID, in.CallID, map[string]any{"from_user_id": in.FromUserID.String(), "payload": in.Payload}))
-	return nil
+	envelope := chatws.NewCallEvent(eventType, in.ConversationID, in.CallID, map[string]any{"from_user_id": in.FromUserID.String(), "payload": in.Payload})
+	s.broadcaster.SendToUser(in.ToUserID, envelope)
+	return s.broadcaster.PublishToUser(ctx, in.ToUserID, envelope)
 }
 
 func (s *RealtimeService) EndCall(ctx context.Context, in CallEndInput) error {
 	return s.callService.End(ctx, in)
+}
+
+func (s *RealtimeService) UndoLatest(ctx context.Context, userID uuid.UUID, conversationID *uuid.UUID) (CommandResult, error) {
+	if s == nil || s.commandService == nil {
+		return CommandResult{}, sentinal_errors.ErrServiceUnavailable
+	}
+	log, err := s.commandService.GetLatestUndoable(ctx, userID, conversationID)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	return s.undoCommand(ctx, log)
+}
+
+func (s *RealtimeService) Redo(ctx context.Context, userID, commandID uuid.UUID) (CommandResult, error) {
+	if s == nil || s.commandService == nil {
+		return CommandResult{}, sentinal_errors.ErrServiceUnavailable
+	}
+	log, err := s.commandService.GetByID(ctx, commandID)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	if log.UserID != userID {
+		return CommandResult{}, sentinal_errors.ErrForbidden
+	}
+	if log.Status != command.StatusUndone || log.UndoneAt == nil {
+		return CommandResult{}, sentinal_errors.ErrConflict
+	}
+	return s.redoCommand(ctx, &log)
+}
+
+func (s *RealtimeService) undoCommand(ctx context.Context, log command.CommandLog) (CommandResult, error) {
+	switch log.CommandType {
+	case command.CommandClearChat:
+		if s.conversationSvc == nil {
+			return CommandResult{}, sentinal_errors.ErrServiceUnavailable
+		}
+		return s.conversationSvc.applyCommandUndo(ctx, log)
+	default:
+		if s.messageService == nil {
+			return CommandResult{}, sentinal_errors.ErrServiceUnavailable
+		}
+		return s.messageService.applyCommandUndo(ctx, log)
+	}
+}
+
+func (s *RealtimeService) redoCommand(ctx context.Context, log *command.CommandLog) (CommandResult, error) {
+	if log == nil {
+		return CommandResult{}, sentinal_errors.ErrInvalidInput
+	}
+	switch log.CommandType {
+	case command.CommandClearChat:
+		if s.conversationSvc == nil {
+			return CommandResult{}, sentinal_errors.ErrServiceUnavailable
+		}
+		return s.conversationSvc.applyCommandRedo(ctx, log)
+	default:
+		if s.messageService == nil {
+			return CommandResult{}, sentinal_errors.ErrServiceUnavailable
+		}
+		return s.messageService.applyCommandRedo(ctx, log)
+	}
 }
 
 func AnyToUUIDSlice(value any) ([]uuid.UUID, error) {

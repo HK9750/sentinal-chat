@@ -3,6 +3,7 @@ package websocket
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -58,23 +59,38 @@ func (w *OutboxWorker) processBatch(ctx context.Context) {
 	for _, event := range eventsBatch {
 		claimed, err := w.repo.MarkProcessing(ctx, event.ID.String())
 		if err != nil || !claimed {
+			if err != nil {
+				w.logf("outbox.mark_processing", err)
+			}
 			continue
 		}
 		var envelope EventEnvelope
 		if err := json.Unmarshal(event.Payload, &envelope); err != nil {
-			_ = w.repo.MarkFailed(ctx, event.ID.String(), err.Error())
+			w.markFailed(ctx, event.ID.String(), err)
+			continue
+		}
+		envelope.Source = "outbox"
+		payload, err := json.Marshal(envelope)
+		if err != nil {
+			w.markFailed(ctx, event.ID.String(), err)
 			continue
 		}
 		channel := channelForEnvelope(envelope)
 		if channel == "" {
-			_ = w.repo.MarkCompleted(ctx, event.ID.String())
+			if err := w.repo.MarkCompleted(ctx, event.ID.String()); err != nil {
+				w.logf("outbox.mark_completed", err)
+			}
 			continue
 		}
-		if err := w.redis.Publish(ctx, channel, event.Payload); err != nil {
-			_ = w.repo.ScheduleRetry(ctx, event.ID.String(), time.Now().Add(2*time.Second), err.Error())
+		if err := w.redis.Publish(ctx, channel, payload); err != nil {
+			if retryErr := w.repo.ScheduleRetry(ctx, event.ID.String(), time.Now().Add(2*time.Second), err.Error()); retryErr != nil {
+				w.logf("outbox.schedule_retry", retryErr)
+			}
 			continue
 		}
-		_ = w.repo.MarkCompleted(ctx, event.ID.String())
+		if err := w.repo.MarkCompleted(ctx, event.ID.String()); err != nil {
+			w.logf("outbox.mark_completed", err)
+		}
 	}
 }
 
@@ -85,5 +101,24 @@ func channelForEnvelope(envelope EventEnvelope) string {
 	if strings.TrimSpace(envelope.ConversationID) != "" {
 		return events.ConversationChannel(envelope.ConversationID)
 	}
+	if strings.TrimSpace(envelope.UserID) != "" {
+		return events.UserChannel(envelope.UserID)
+	}
 	return ""
+}
+
+func (w *OutboxWorker) markFailed(ctx context.Context, id string, err error) {
+	if err == nil {
+		return
+	}
+	if markErr := w.repo.MarkFailed(ctx, id, err.Error()); markErr != nil {
+		w.logf("outbox.mark_failed", fmt.Errorf("%v: %w", err, markErr))
+	}
+}
+
+func (w *OutboxWorker) logf(operation string, err error) {
+	if w == nil || w.logger == nil || err == nil {
+		return
+	}
+	w.logger.Errorf("%s: %v", operation, err)
 }

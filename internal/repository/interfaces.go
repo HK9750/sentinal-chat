@@ -106,6 +106,7 @@ type ConversationRepository interface {
 	UpdateLastReadSequence(ctx context.Context, conversationID, userID uuid.UUID, seqID int64) error
 
 	ClearConversation(ctx context.Context, conversationID, userID uuid.UUID) error
+	SetConversationClear(ctx context.Context, conversationID, userID uuid.UUID, clearedAt *time.Time) error
 	GetConversationClear(ctx context.Context, conversationID, userID uuid.UUID) (conversation.ConversationClear, error)
 
 	GetConversationSequence(ctx context.Context, conversationID uuid.UUID) (conversation.ConversationSequence, error)
@@ -117,6 +118,7 @@ type MessageRepository interface {
 	Create(ctx context.Context, m *message.Message) error
 	GetByID(ctx context.Context, id uuid.UUID) (message.Message, error)
 	Update(ctx context.Context, m message.Message) error
+	Restore(ctx context.Context, id uuid.UUID) error
 	SoftDelete(ctx context.Context, id uuid.UUID) error
 	HardDelete(ctx context.Context, id uuid.UUID) error
 
@@ -223,4 +225,5 @@ type CommandRepository interface {
 	GetPendingCommands(ctx context.Context, limit int) ([]command.CommandLog, error)
 	GetCommandsByUser(ctx context.Context, userID uuid.UUID, limit int) ([]command.CommandLog, error)
 	CanUndo(ctx context.Context, commandID uuid.UUID, userID uuid.UUID) (bool, error)
+	GetLatestUndoableByUser(ctx context.Context, userID uuid.UUID, conversationID *uuid.UUID) (command.CommandLog, error)
 }

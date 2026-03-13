@@ -56,7 +56,11 @@ func (h *WSHandler) Connect(c *gin.Context) {
 	if err != nil {
 		return
 	}
-	userID, _ := uuid.Parse(claims.UserID)
+	userID, err := uuid.Parse(claims.UserID)
+	if err != nil {
+		_ = conn.Close()
+		return
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	client := &chatws.Client{
 		ID:         uuid.NewString(),
@@ -70,8 +74,7 @@ func (h *WSHandler) Connect(c *gin.Context) {
 	}
 	h.hub.Register(client)
 	go client.WritePump()
-	ready, _ := json.Marshal(chatws.ConnectionReadyEnvelope(claims.UserID, claims.SessionID, claims.DeviceID))
-	client.Send <- ready
+	h.sendEnvelope(client, chatws.ConnectionReadyEnvelope(claims.UserID, claims.SessionID, claims.DeviceID))
 	go h.readPump(ctx, client)
 }
 
@@ -116,6 +119,8 @@ func (h *WSHandler) handleFrame(ctx context.Context, client *chatws.Client, fram
 		h.handleReceipt(ctx, client, frame)
 	case events.InboundPollVote, events.InboundPollClose:
 		h.handlePoll(ctx, client, frame)
+	case events.InboundCommandUndo, events.InboundCommandRedo:
+		h.handleCommand(ctx, client, frame)
 	case events.InboundCallStart, events.InboundCallOffer, events.InboundCallAnswer, events.InboundCallICE, events.InboundCallEnd:
 		h.handleCall(ctx, client, frame)
 	default:
@@ -384,6 +389,49 @@ func (h *WSHandler) handleCall(ctx context.Context, client *chatws.Client, frame
 	}
 }
 
+func (h *WSHandler) handleCommand(ctx context.Context, client *chatws.Client, frame httpdto.WebSocketInboundFrame) {
+	var conversationID *uuid.UUID
+	if strings.TrimSpace(frame.ConversationID) != "" {
+		parsedConversationID, err := parseFrameConversationID(frame)
+		if err != nil {
+			h.sendErrorWithRequestID(client, frame.RequestID, "INVALID_CONVERSATION", "invalid conversation")
+			return
+		}
+		conversationID = &parsedConversationID
+	}
+
+	if frame.Type == events.InboundCommandUndo {
+		result, err := h.realtimeService.UndoLatest(ctx, client.UserID, conversationID)
+		if err != nil {
+			h.sendErrorWithRequestID(client, frame.RequestID, "COMMAND_UNDO_FAILED", err.Error())
+			return
+		}
+		envelope := chatws.NewUserEvent(events.CommandUndone, client.UserID.String(), map[string]any{"command": result})
+		envelope.RequestID = strings.TrimSpace(frame.RequestID)
+		h.sendEnvelope(client, envelope)
+		return
+	}
+
+	data, ok := frame.Data.(map[string]any)
+	if !ok {
+		h.sendErrorWithRequestID(client, frame.RequestID, "INVALID_DATA", "invalid payload")
+		return
+	}
+	commandID, err := uuid.Parse(stringValue(data["command_id"]))
+	if err != nil {
+		h.sendErrorWithRequestID(client, frame.RequestID, "INVALID_COMMAND", "invalid command")
+		return
+	}
+	result, err := h.realtimeService.Redo(ctx, client.UserID, commandID)
+	if err != nil {
+		h.sendErrorWithRequestID(client, frame.RequestID, "COMMAND_REDO_FAILED", err.Error())
+		return
+	}
+	envelope := chatws.NewUserEvent(events.CommandRedone, client.UserID.String(), map[string]any{"command": result})
+	envelope.RequestID = strings.TrimSpace(frame.RequestID)
+	h.sendEnvelope(client, envelope)
+}
+
 func (h *WSHandler) authenticate(c *gin.Context) (*middleware.TokenClaims, error) {
 	token := strings.TrimSpace(c.Query("token"))
 	if token == "" {
@@ -405,16 +453,26 @@ func (h *WSHandler) authenticate(c *gin.Context) (*middleware.TokenClaims, error
 func (h *WSHandler) sendEnvelope(client *chatws.Client, envelope chatws.EventEnvelope) {
 	body, err := json.Marshal(envelope)
 	if err != nil {
+		if h.logger != nil {
+			h.logger.Errorf("ws.send_envelope.marshal: %v", err)
+		}
 		return
 	}
 	select {
 	case client.Send <- body:
 	default:
+		if h.logger != nil {
+			h.logger.Errorf("ws.send_envelope.queue_full: client_id=%s", client.ID)
+		}
 	}
 }
 
 func (h *WSHandler) sendError(client *chatws.Client, code, message string) {
-	h.sendEnvelope(client, chatws.EventEnvelope{Type: events.ErrorEvent, SentAt: time.Now().UTC(), Data: map[string]any{"code": code, "message": message}})
+	h.sendErrorWithRequestID(client, "", code, message)
+}
+
+func (h *WSHandler) sendErrorWithRequestID(client *chatws.Client, requestID, code, message string) {
+	h.sendEnvelope(client, chatws.EventEnvelope{Type: events.ErrorEvent, RequestID: strings.TrimSpace(requestID), SentAt: time.Now().UTC(), Data: map[string]any{"code": code, "message": message}})
 }
 
 type frameDataError struct {

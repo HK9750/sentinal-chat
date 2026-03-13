@@ -2,8 +2,10 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 
 	"sentinal-chat/internal/domain/command"
+	sentinal_errors "sentinal-chat/pkg/errors"
 
 	"github.com/google/uuid"
 )
@@ -18,9 +20,10 @@ func NewCommandRepository(db DBTX) CommandRepository {
 
 func (r *commandRepository) CreateLog(ctx context.Context, log *command.CommandLog) error {
 	_, err := r.db.ExecContext(ctx, `
-        INSERT INTO command_logs ( command_type, user_id, conversation_id, status, payload, undo_payload, error_message, execution_time_ms, created_at, executed_at, undone_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+        INSERT INTO command_logs (id, command_type, user_id, conversation_id, status, payload, undo_payload, error_message, execution_time_ms, created_at, executed_at, undone_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
     `,
+		log.ID,
 		log.CommandType,
 		log.UserID,
 		log.ConversationID,
@@ -187,4 +190,45 @@ func (r *commandRepository) CanUndo(ctx context.Context, commandID uuid.UUID, us
 		return false, err
 	}
 	return log.Status == command.StatusExecuted && log.UndoneAt == nil && log.ExecutedAt != nil, nil
+}
+
+func (r *commandRepository) GetLatestUndoableByUser(ctx context.Context, userID uuid.UUID, conversationID *uuid.UUID) (command.CommandLog, error) {
+	query := `
+        SELECT id, command_type, user_id, conversation_id, status, payload, undo_payload, error_message, execution_time_ms,
+               created_at, executed_at, undone_at
+        FROM command_logs
+        WHERE user_id = $1
+          AND status = $2
+          AND executed_at IS NOT NULL
+          AND undone_at IS NULL
+    `
+	args := []any{userID, command.StatusExecuted}
+	if conversationID != nil {
+		query += " AND conversation_id = $3"
+		args = append(args, *conversationID)
+	}
+	query += " ORDER BY executed_at DESC, created_at DESC LIMIT 1"
+
+	var log command.CommandLog
+	err := r.db.QueryRowContext(ctx, query, args...).Scan(
+		&log.ID,
+		&log.CommandType,
+		&log.UserID,
+		&log.ConversationID,
+		&log.Status,
+		&log.Payload,
+		&log.UndoPayload,
+		&log.ErrorMessage,
+		&log.ExecutionTimeMs,
+		&log.CreatedAt,
+		&log.ExecutedAt,
+		&log.UndoneAt,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return command.CommandLog{}, sentinal_errors.ErrNotFound
+		}
+		return command.CommandLog{}, err
+	}
+	return log, nil
 }
