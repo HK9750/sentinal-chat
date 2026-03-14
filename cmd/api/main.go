@@ -74,7 +74,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to initialize auth service: %v", err)
 	}
+	userService := services.NewUserService(userRepo)
 	authHandler := handler.NewAuthHandler(authService, cfg, logInstance)
+	userHandler := handler.NewUserHandler(userService, logInstance)
 
 	s3Client, err := storage.NewClient(context.Background(), storage.S3Config{
 		Region:     cfg.S3Region,
@@ -116,6 +118,7 @@ func main() {
 	srv.InitRoutes(server.RouteDependencies{
 		Handlers: server.RouteHandlers{
 			Auth:         authHandler,
+			User:         userHandler,
 			Upload:       uploadHandler,
 			Conversation: conversationHandler,
 			Message:      messageHandler,

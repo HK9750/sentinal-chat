@@ -37,6 +37,7 @@ type Server struct {
 
 type RouteHandlers struct {
 	Auth         *handler.AuthHandler
+	User         *handler.UserHandler
 	Upload       *handler.UploadHandler
 	Conversation *handler.ConversationHandler
 	Message      *handler.MessageHandler
@@ -117,6 +118,9 @@ func (s *Server) InitRoutes(deps RouteDependencies) {
 
 	if deps.Handlers.Auth != nil {
 		deps.Handlers.Auth.RegisterProtectedRoutes(protected)
+	}
+	if deps.Handlers.User != nil {
+		deps.Handlers.User.RegisterRoutes(protected)
 	}
 	if deps.Handlers.Upload != nil {
 		deps.Handlers.Upload.RegisterRoutes(protected)
