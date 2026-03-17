@@ -37,7 +37,7 @@ type UploadService struct {
 type CreateAttachmentInput struct {
 	UploaderID      uuid.UUID
 	MessageID       *uuid.UUID
-	EncryptedURL    string
+	FileURL         string
 	Filename        string
 	MimeType        string
 	SizeBytes       int64
@@ -161,7 +161,7 @@ func (s *UploadService) CreateAttachment(ctx context.Context, in CreateAttachmen
 	now := time.Now().UTC()
 	attachment := &message.Attachment{
 		UploaderID:      uuid.NullUUID{UUID: in.UploaderID, Valid: true},
-		EncryptedURL:    strings.TrimSpace(in.EncryptedURL),
+		FileURL:         strings.TrimSpace(in.FileURL),
 		Filename:        nullableString(filename),
 		MimeType:        mimeType,
 		SizeBytes:       sizeBytes,
@@ -300,7 +300,7 @@ func validateCreateAttachmentInput(in CreateAttachmentInput, storage UploadStora
 	if in.DurationSeconds != nil && *in.DurationSeconds < 0 {
 		return sentinal_errors.ErrInvalidInput
 	}
-	if strings.TrimSpace(in.EncryptedURL) == "" {
+	if strings.TrimSpace(in.FileURL) == "" {
 		return sentinal_errors.ErrInvalidInput
 	}
 

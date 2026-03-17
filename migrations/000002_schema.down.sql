@@ -20,6 +20,7 @@ DROP TABLE IF EXISTS conversation_sequences;
 DROP TABLE IF EXISTS participants;
 DROP TABLE IF EXISTS conversations;
 DROP TABLE IF EXISTS user_contacts;
+DROP TABLE IF EXISTS oauth_identities;
 DROP TABLE IF EXISTS user_sessions;
 DROP TABLE IF EXISTS fcm_tokens;
 DROP TABLE IF EXISTS devices;

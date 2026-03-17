@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 
 	"sentinal-chat/internal/domain/user"
@@ -435,6 +436,22 @@ func (r *PostgresUserRepository) GetDeviceByID(ctx context.Context, deviceID uui
         SELECT id, user_id, device_id, device_name, device_type, is_active, registered_at, last_seen_at
         FROM devices WHERE id = $1
     `, deviceID).Scan(&d.ID, &d.UserID, &d.DeviceID, &d.DeviceName, &d.DeviceType, &d.IsActive, &d.RegisteredAt, &d.LastSeenAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return user.Device{}, sentinal_errors.ErrNotFound
+		}
+		return user.Device{}, err
+	}
+	return d, nil
+}
+
+func (r *PostgresUserRepository) GetDeviceByExternalID(ctx context.Context, userID uuid.UUID, externalDeviceID string) (user.Device, error) {
+	var d user.Device
+	err := r.db.QueryRowContext(ctx, `
+        SELECT id, user_id, device_id, device_name, device_type, is_active, registered_at, last_seen_at
+        FROM devices
+        WHERE user_id = $1 AND device_id = $2
+    `, userID, strings.TrimSpace(externalDeviceID)).Scan(&d.ID, &d.UserID, &d.DeviceID, &d.DeviceName, &d.DeviceType, &d.IsActive, &d.RegisteredAt, &d.LastSeenAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return user.Device{}, sentinal_errors.ErrNotFound

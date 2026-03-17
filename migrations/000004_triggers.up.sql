@@ -20,6 +20,11 @@ CREATE TRIGGER tr_conversations_updated
     BEFORE UPDATE ON conversations FOR EACH ROW
     EXECUTE FUNCTION fn_update_timestamp();
 
+DROP TRIGGER IF EXISTS tr_oauth_identities_updated ON oauth_identities;
+CREATE TRIGGER tr_oauth_identities_updated
+    BEFORE UPDATE ON oauth_identities FOR EACH ROW
+    EXECUTE FUNCTION fn_update_timestamp();
+
 -- ============================================================
 -- DM pair normalization (always store sorted: a < b)
 -- ============================================================

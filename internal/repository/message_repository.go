@@ -21,7 +21,7 @@ func NewMessageRepository(db DBTX) MessageRepository {
 	return &PostgresMessageRepository{db: db}
 }
 
-const msgColumns = `id, conversation_id, sender_id, client_message_id, seq_id, type, encrypted_content,
+const msgColumns = `id, conversation_id, sender_id, client_message_id, seq_id, type, content,
        is_forwarded, reply_to_msg_id, poll_id, mention_count,
        created_at, edited_at, deleted_at, expires_at`
 
@@ -36,7 +36,7 @@ func scanMessage(scanner interface {
 		&m.ClientMessageID,
 		&m.SeqID,
 		&m.Type,
-		&m.EncryptedContent,
+		&m.Content,
 		&m.IsForwarded,
 		&m.ReplyToMsgID,
 		&m.PollID,
@@ -55,7 +55,7 @@ func (r *PostgresMessageRepository) Create(ctx context.Context, m *message.Messa
 	}
 	_, err := r.db.ExecContext(ctx, `
         INSERT INTO messages (
-            id, conversation_id, sender_id, client_message_id, type, encrypted_content,
+            id, conversation_id, sender_id, client_message_id, type, content,
             is_forwarded, reply_to_msg_id, poll_id, mention_count,
             created_at, edited_at, deleted_at, expires_at
         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
@@ -65,7 +65,7 @@ func (r *PostgresMessageRepository) Create(ctx context.Context, m *message.Messa
 		m.SenderID,
 		m.ClientMessageID,
 		m.Type,
-		m.EncryptedContent,
+		m.Content,
 		m.IsForwarded,
 		m.ReplyToMsgID,
 		m.PollID,
@@ -101,7 +101,7 @@ func (r *PostgresMessageRepository) Update(ctx context.Context, m message.Messag
 	res, err := r.db.ExecContext(ctx, `
         UPDATE messages
         SET conversation_id = $1, sender_id = $2, client_message_id = $3, seq_id = $4,
-            type = $5, encrypted_content = $6, is_forwarded = $7, reply_to_msg_id = $8,
+            type = $5, content = $6, is_forwarded = $7, reply_to_msg_id = $8,
             poll_id = $9, mention_count = $10, edited_at = $11, deleted_at = $12, expires_at = $13
         WHERE id = $14
     `,
@@ -110,7 +110,7 @@ func (r *PostgresMessageRepository) Update(ctx context.Context, m message.Messag
 		m.ClientMessageID,
 		m.SeqID,
 		m.Type,
-		m.EncryptedContent,
+		m.Content,
 		m.IsForwarded,
 		m.ReplyToMsgID,
 		m.PollID,
@@ -252,8 +252,41 @@ func (r *PostgresMessageRepository) GetUnreadMessages(ctx context.Context, conve
 }
 
 func (r *PostgresMessageRepository) SearchMessages(ctx context.Context, conversationID uuid.UUID, query string, page, limit int) ([]message.Message, int64, error) {
-	// E2E encrypted content cannot be searched server-side
-	return nil, 0, sentinal_errors.ErrForbidden
+	var messages []message.Message
+	var total int64
+	pattern := "%" + query + "%"
+
+	if err := r.db.QueryRowContext(ctx, `
+	        SELECT COUNT(*) FROM messages
+	        WHERE conversation_id = $1 AND deleted_at IS NULL AND content ILIKE $2
+	    `, conversationID, pattern).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	offset := (page - 1) * limit
+	rows, err := r.db.QueryContext(ctx, `
+	        SELECT `+msgColumns+`
+	        FROM messages
+	        WHERE conversation_id = $1 AND deleted_at IS NULL AND content ILIKE $2
+	        ORDER BY seq_id DESC
+	        OFFSET $3 LIMIT $4
+	    `, conversationID, pattern, offset, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		m, err := scanMessage(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		messages = append(messages, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	return messages, total, nil
 }
 
 func (r *PostgresMessageRepository) GetMessagesByType(ctx context.Context, conversationID uuid.UUID, msgType string, limit int) ([]message.Message, error) {
@@ -415,15 +448,6 @@ func (r *PostgresMessageRepository) CreateReceipt(ctx context.Context, receipt *
 	return nil
 }
 
-func (r *PostgresMessageRepository) UpdateReceipt(ctx context.Context, receipt message.MessageReceipt) error {
-	_, err := r.db.ExecContext(ctx, `
-        UPDATE message_receipts
-        SET status = $1, delivered_at = $2, read_at = $3, played_at = $4, updated_at = $5
-        WHERE message_id = $6 AND user_id = $7
-    `, receipt.Status, receipt.DeliveredAt, receipt.ReadAt, receipt.PlayedAt, receipt.UpdatedAt, receipt.MessageID, receipt.UserID)
-	return err
-}
-
 func (r *PostgresMessageRepository) GetMessageReceipts(ctx context.Context, messageID uuid.UUID) ([]message.MessageReceipt, error) {
 	var receipts []message.MessageReceipt
 	rows, err := r.db.QueryContext(ctx, `
@@ -451,7 +475,9 @@ func (r *PostgresMessageRepository) MarkAsDelivered(ctx context.Context, message
 	now := time.Now()
 	res, err := r.db.ExecContext(ctx, `
         UPDATE message_receipts
-        SET status = 'DELIVERED', delivered_at = $1, updated_at = $1
+        SET status = CASE WHEN status IN ('READ', 'PLAYED') THEN status ELSE 'DELIVERED' END,
+            delivered_at = COALESCE(delivered_at, $1),
+            updated_at = $1
         WHERE message_id = $2 AND user_id = $3
     `, now, messageID, userID)
 	if err != nil {
@@ -475,7 +501,10 @@ func (r *PostgresMessageRepository) MarkAsRead(ctx context.Context, messageID, u
 	now := time.Now()
 	res, err := r.db.ExecContext(ctx, `
         UPDATE message_receipts
-        SET status = 'READ', read_at = $1, updated_at = $1
+        SET status = CASE WHEN status = 'PLAYED' THEN 'PLAYED' ELSE 'READ' END,
+            delivered_at = COALESCE(delivered_at, $1),
+            read_at = COALESCE(read_at, $1),
+            updated_at = $1
         WHERE message_id = $2 AND user_id = $3
     `, now, messageID, userID)
 	if err != nil {
@@ -484,11 +513,12 @@ func (r *PostgresMessageRepository) MarkAsRead(ctx context.Context, messageID, u
 	rows, err := res.RowsAffected()
 	if err == nil && rows == 0 {
 		receipt := &message.MessageReceipt{
-			MessageID: messageID,
-			UserID:    userID,
-			Status:    "READ",
-			ReadAt:    toNullTime(now),
-			UpdatedAt: now,
+			MessageID:   messageID,
+			UserID:      userID,
+			Status:      "READ",
+			DeliveredAt: toNullTime(now),
+			ReadAt:      toNullTime(now),
+			UpdatedAt:   now,
 		}
 		return r.CreateReceipt(ctx, receipt)
 	}
@@ -499,7 +529,11 @@ func (r *PostgresMessageRepository) MarkAsPlayed(ctx context.Context, messageID,
 	now := time.Now()
 	res, err := r.db.ExecContext(ctx, `
         UPDATE message_receipts
-        SET status = 'PLAYED', played_at = $1, updated_at = $1
+        SET status = 'PLAYED',
+            delivered_at = COALESCE(delivered_at, $1),
+            read_at = COALESCE(read_at, $1),
+            played_at = COALESCE(played_at, $1),
+            updated_at = $1
         WHERE message_id = $2 AND user_id = $3
     `, now, messageID, userID)
 	if err != nil {
@@ -508,11 +542,13 @@ func (r *PostgresMessageRepository) MarkAsPlayed(ctx context.Context, messageID,
 	rows, err := res.RowsAffected()
 	if err == nil && rows == 0 {
 		receipt := &message.MessageReceipt{
-			MessageID: messageID,
-			UserID:    userID,
-			Status:    "PLAYED",
-			PlayedAt:  toNullTime(now),
-			UpdatedAt: now,
+			MessageID:   messageID,
+			UserID:      userID,
+			Status:      "PLAYED",
+			DeliveredAt: toNullTime(now),
+			ReadAt:      toNullTime(now),
+			PlayedAt:    toNullTime(now),
+			UpdatedAt:   now,
 		}
 		return r.CreateReceipt(ctx, receipt)
 	}
@@ -525,7 +561,9 @@ func (r *PostgresMessageRepository) BulkMarkAsDelivered(ctx context.Context, mes
 		for _, msgID := range messageIDs {
 			res, err := tx.ExecContext(ctx, `
                 UPDATE message_receipts
-                SET status = 'DELIVERED', delivered_at = $1, updated_at = $1
+                SET status = CASE WHEN status IN ('READ', 'PLAYED') THEN status ELSE 'DELIVERED' END,
+                    delivered_at = COALESCE(delivered_at, $1),
+                    updated_at = $1
                 WHERE message_id = $2 AND user_id = $3
             `, now, msgID, userID)
 			if err != nil {
@@ -551,7 +589,10 @@ func (r *PostgresMessageRepository) BulkMarkAsRead(ctx context.Context, messageI
 		for _, msgID := range messageIDs {
 			res, err := tx.ExecContext(ctx, `
                 UPDATE message_receipts
-                SET status = 'READ', read_at = $1, updated_at = $1
+                SET status = CASE WHEN status = 'PLAYED' THEN 'PLAYED' ELSE 'READ' END,
+                    delivered_at = COALESCE(delivered_at, $1),
+                    read_at = COALESCE(read_at, $1),
+                    updated_at = $1
                 WHERE message_id = $2 AND user_id = $3
             `, now, msgID, userID)
 			if err != nil {
@@ -560,9 +601,9 @@ func (r *PostgresMessageRepository) BulkMarkAsRead(ctx context.Context, messageI
 			rows, err := res.RowsAffected()
 			if err == nil && rows == 0 {
 				if _, err := tx.ExecContext(ctx, `
-                    INSERT INTO message_receipts (message_id, user_id, status, read_at, updated_at)
-                    VALUES ($1,$2,$3,$4,$5)
-                `, msgID, userID, "READ", now, now); err != nil {
+                    INSERT INTO message_receipts (message_id, user_id, status, delivered_at, read_at, updated_at)
+                    VALUES ($1,$2,$3,$4,$5,$6)
+                `, msgID, userID, "READ", now, now, now); err != nil {
 					return err
 				}
 			}
@@ -766,26 +807,26 @@ func (r *PostgresMessageRepository) CreateMessageEdit(ctx context.Context, e *me
 		e.ID = uuid.New()
 	}
 	_, err := r.db.ExecContext(ctx, `
-        INSERT INTO message_edits (id, message_id, encrypted_content, edited_by, edited_at, version_number)
-        VALUES ($1,$2,$3,$4,$5,$6)
-    `, e.ID, e.MessageID, e.EncryptedContent, e.EditedBy, e.EditedAt, e.VersionNumber)
+	        INSERT INTO message_edits (id, message_id, content, edited_by, edited_at, version_number)
+	        VALUES ($1,$2,$3,$4,$5,$6)
+	    `, e.ID, e.MessageID, e.Content, e.EditedBy, e.EditedAt, e.VersionNumber)
 	return err
 }
 
 func (r *PostgresMessageRepository) GetMessageEdits(ctx context.Context, messageID uuid.UUID) ([]message.MessageEdit, error) {
 	var edits []message.MessageEdit
 	rows, err := r.db.QueryContext(ctx, `
-        SELECT id, message_id, encrypted_content, edited_by, edited_at, version_number
-        FROM message_edits WHERE message_id = $1
-        ORDER BY version_number ASC
-    `, messageID)
+	        SELECT id, message_id, content, edited_by, edited_at, version_number
+	        FROM message_edits WHERE message_id = $1
+	        ORDER BY version_number ASC
+	    `, messageID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var e message.MessageEdit
-		if err := rows.Scan(&e.ID, &e.MessageID, &e.EncryptedContent, &e.EditedBy, &e.EditedAt, &e.VersionNumber); err != nil {
+		if err := rows.Scan(&e.ID, &e.MessageID, &e.Content, &e.EditedBy, &e.EditedAt, &e.VersionNumber); err != nil {
 			return nil, err
 		}
 		edits = append(edits, e)
@@ -802,13 +843,13 @@ func (r *PostgresMessageRepository) CreateAttachment(ctx context.Context, a *mes
 	}
 	_, err := r.db.ExecContext(ctx, `
         INSERT INTO attachments (
-            id, uploader_id, encrypted_url, filename, mime_type, size_bytes, view_once, viewed_at,
-            thumbnail_url, width, height, duration_seconds, created_at
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-    `,
+            id, uploader_id, file_url, filename, mime_type, size_bytes, view_once, viewed_at,
+		thumbnail_url, width, height, duration_seconds, created_at
+	) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+	`,
 		a.ID,
 		a.UploaderID,
-		a.EncryptedURL,
+		a.FileURL,
 		a.Filename,
 		a.MimeType,
 		a.SizeBytes,
@@ -835,13 +876,13 @@ func (r *PostgresMessageRepository) CreateAttachmentWithLink(ctx context.Context
 	return WithTx(ctx, r.db, func(tx DBTX) error {
 		if _, err := tx.ExecContext(ctx, `
         INSERT INTO attachments (
-            id, uploader_id, encrypted_url, filename, mime_type, size_bytes, view_once, viewed_at,
-            thumbnail_url, width, height, duration_seconds, created_at
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-    `,
+            id, uploader_id, file_url, filename, mime_type, size_bytes, view_once, viewed_at,
+		thumbnail_url, width, height, duration_seconds, created_at
+	) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+	`,
 			a.ID,
 			a.UploaderID,
-			a.EncryptedURL,
+			a.FileURL,
 			a.Filename,
 			a.MimeType,
 			a.SizeBytes,
@@ -873,13 +914,13 @@ func (r *PostgresMessageRepository) CreateAttachmentWithLink(ctx context.Context
 func (r *PostgresMessageRepository) GetAttachmentByID(ctx context.Context, id uuid.UUID) (message.Attachment, error) {
 	var a message.Attachment
 	err := r.db.QueryRowContext(ctx, `
-        SELECT id, uploader_id, encrypted_url, filename, mime_type, size_bytes, view_once, viewed_at,
+	        SELECT id, uploader_id, file_url, filename, mime_type, size_bytes, view_once, viewed_at,
                thumbnail_url, width, height, duration_seconds, created_at
         FROM attachments WHERE id = $1
-    `, id).Scan(
+	`, id).Scan(
 		&a.ID,
 		&a.UploaderID,
-		&a.EncryptedURL,
+		&a.FileURL,
 		&a.Filename,
 		&a.MimeType,
 		&a.SizeBytes,
@@ -935,7 +976,7 @@ func (r *PostgresMessageRepository) LinkAttachmentToMessage(ctx context.Context,
 func (r *PostgresMessageRepository) GetMessageAttachments(ctx context.Context, messageID uuid.UUID) ([]message.Attachment, error) {
 	var attachments []message.Attachment
 	rows, err := r.db.QueryContext(ctx, `
-        SELECT a.id, a.uploader_id, a.encrypted_url, a.filename, a.mime_type, a.size_bytes, a.view_once, a.viewed_at,
+	        SELECT a.id, a.uploader_id, a.file_url, a.filename, a.mime_type, a.size_bytes, a.view_once, a.viewed_at,
                a.thumbnail_url, a.width, a.height, a.duration_seconds, a.created_at
         FROM attachments a
         WHERE a.id IN (SELECT attachment_id FROM message_attachments WHERE message_id = $1)
@@ -949,7 +990,7 @@ func (r *PostgresMessageRepository) GetMessageAttachments(ctx context.Context, m
 		if err := rows.Scan(
 			&a.ID,
 			&a.UploaderID,
-			&a.EncryptedURL,
+			&a.FileURL,
 			&a.Filename,
 			&a.MimeType,
 			&a.SizeBytes,

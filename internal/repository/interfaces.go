@@ -52,6 +52,7 @@ type UserRepository interface {
 	AddDevice(ctx context.Context, d *user.Device) error
 	GetUserDevices(ctx context.Context, userID uuid.UUID) ([]user.Device, error)
 	GetDeviceByID(ctx context.Context, deviceID uuid.UUID) (user.Device, error)
+	GetDeviceByExternalID(ctx context.Context, userID uuid.UUID, externalDeviceID string) (user.Device, error)
 	DeactivateDevice(ctx context.Context, deviceID uuid.UUID) error
 	UpdateDeviceLastSeen(ctx context.Context, deviceID uuid.UUID) error
 
@@ -140,7 +141,6 @@ type MessageRepository interface {
 	GetUserReaction(ctx context.Context, messageID, userID uuid.UUID) (message.MessageReaction, error)
 
 	CreateReceipt(ctx context.Context, r *message.MessageReceipt) error
-	UpdateReceipt(ctx context.Context, r message.MessageReceipt) error
 	GetMessageReceipts(ctx context.Context, messageID uuid.UUID) ([]message.MessageReceipt, error)
 	MarkAsDelivered(ctx context.Context, messageID, userID uuid.UUID) error
 	MarkAsRead(ctx context.Context, messageID, userID uuid.UUID) error
@@ -214,7 +214,6 @@ type OutboxRepository interface {
 	MarkProcessing(ctx context.Context, id string) (bool, error)
 	MarkCompleted(ctx context.Context, id string) error
 	MarkFailed(ctx context.Context, id string, errorMsg string) error
-	IncrementRetry(ctx context.Context, id string) error
 	ScheduleRetry(ctx context.Context, id string, nextRetryAt time.Time, errorMsg string) error
 }
 

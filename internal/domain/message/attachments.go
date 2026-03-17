@@ -11,7 +11,7 @@ import (
 type Attachment struct {
 	ID              uuid.UUID
 	UploaderID      uuid.NullUUID
-	EncryptedURL    string
+	FileURL         string
 	Filename        sql.NullString
 	MimeType        string
 	SizeBytes       int64

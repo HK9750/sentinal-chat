@@ -54,10 +54,6 @@ func (s *RealtimeService) SendMessage(ctx context.Context, userID uuid.UUID, in 
 	if err != nil {
 		return MessageView{}, err
 	}
-	if s.broadcaster != nil {
-		envelope := chatws.NewMessageEvent(events.MessageNew, in.ConversationID, map[string]any{"message": message})
-		_ = s.broadcaster.BroadcastConversation(ctx, in.ConversationID, envelope, &userID)
-	}
 	return message, nil
 }
 
@@ -66,10 +62,6 @@ func (s *RealtimeService) EditMessage(ctx context.Context, userID uuid.UUID, in 
 	if err != nil {
 		return MessageView{}, err
 	}
-	if s.broadcaster != nil {
-		envelope := chatws.NewMessageEvent(events.MessageEdited, in.ConversationID, map[string]any{"message": message})
-		_ = s.broadcaster.BroadcastConversation(ctx, in.ConversationID, envelope, &userID)
-	}
 	return message, nil
 }
 
@@ -77,10 +69,6 @@ func (s *RealtimeService) DeleteMessage(ctx context.Context, userID uuid.UUID, i
 	message, err := s.messageService.Delete(ctx, in)
 	if err != nil {
 		return MessageView{}, err
-	}
-	if s.broadcaster != nil {
-		envelope := chatws.NewMessageEvent(events.MessageDeleted, in.ConversationID, map[string]any{"message": message})
-		_ = s.broadcaster.BroadcastConversation(ctx, in.ConversationID, envelope, &userID)
 	}
 	return message, nil
 }
@@ -98,10 +86,6 @@ func (s *RealtimeService) UpdateReaction(ctx context.Context, in ReactionInput, 
 	if err != nil {
 		return nil, err
 	}
-	if s.broadcaster != nil {
-		envelope := chatws.NewMessageEvent(events.MessageReaction, in.ConversationID, map[string]any{"message_id": in.MessageID.String(), "reactions": reactions})
-		_ = s.broadcaster.BroadcastConversation(ctx, in.ConversationID, envelope, nil)
-	}
 	return reactions, nil
 }
 
@@ -110,39 +94,30 @@ func (s *RealtimeService) PinMessage(ctx context.Context, in PinMessageInput) er
 	if err != nil {
 		return err
 	}
-	if s.broadcaster != nil {
-		eventType := events.MessagePinned
-		if !in.Pinned {
-			eventType = events.MessageUnpinned
-		}
-		envelope := chatws.NewMessageEvent(eventType, in.ConversationID, map[string]any{"message_id": in.MessageID.String(), "pinned": in.Pinned})
-		_ = s.broadcaster.BroadcastConversation(ctx, in.ConversationID, envelope, nil)
-	}
 	return nil
 }
 
-func (s *RealtimeService) UpdateReceipt(ctx context.Context, userID uuid.UUID, in ReceiptInput) error {
-	if err := s.messageService.UpdateReceipt(ctx, in); err != nil {
-		return err
+func (s *RealtimeService) UpdateReceipt(ctx context.Context, userID uuid.UUID, in ReceiptInput) (ReceiptUpdateResult, error) {
+	result, err := s.messageService.UpdateReceipt(ctx, in)
+	if err != nil {
+		return ReceiptUpdateResult{}, err
 	}
 	if s.broadcaster != nil {
-		envelope := chatws.NewMessageEvent(events.ReceiptUpdate, in.ConversationID, map[string]any{"message_ids": uuidSliceToStrings(in.MessageIDs), "user_id": userID.String(), "status": in.Status, "up_to_seq_id": in.UpToSeqID})
-		if err := s.broadcaster.BroadcastConversation(ctx, in.ConversationID, envelope, &userID); err != nil {
-			return err
+		envelope := chatws.NewMessageEvent(events.ReceiptUpdate, in.ConversationID, map[string]any{"message_ids": uuidSliceToStrings(result.MessageIDs), "user_id": userID.String(), "status": result.Status, "up_to_seq_id": result.UpToSeqID})
+		if err := s.broadcaster.BroadcastConversation(ctx, in.ConversationID, envelope, nil); err != nil {
+			return ReceiptUpdateResult{}, err
 		}
-		return s.broadcaster.PublishConversation(ctx, in.ConversationID, envelope)
+		if err := s.broadcaster.PublishConversation(ctx, in.ConversationID, envelope); err != nil {
+			return ReceiptUpdateResult{}, err
+		}
 	}
-	return nil
+	return result, nil
 }
 
 func (s *RealtimeService) VotePoll(ctx context.Context, in VotePollInput) (PollView, error) {
 	poll, err := s.messageService.VotePoll(ctx, in)
 	if err != nil {
 		return PollView{}, err
-	}
-	if s.broadcaster != nil {
-		envelope := chatws.NewConversationEvent(events.PollUpdate, in.ConversationID, map[string]any{"poll": poll})
-		_ = s.broadcaster.BroadcastConversation(ctx, in.ConversationID, envelope, nil)
 	}
 	return poll, nil
 }
@@ -151,10 +126,6 @@ func (s *RealtimeService) ClosePoll(ctx context.Context, userID, conversationID,
 	poll, err := s.messageService.ClosePoll(ctx, conversationID, pollID, userID)
 	if err != nil {
 		return PollView{}, err
-	}
-	if s.broadcaster != nil {
-		envelope := chatws.NewConversationEvent(events.PollUpdate, conversationID, map[string]any{"poll": poll})
-		_ = s.broadcaster.BroadcastConversation(ctx, conversationID, envelope, nil)
 	}
 	return poll, nil
 }

@@ -109,7 +109,7 @@ func main() {
 	realtimeHub := chatws.NewHub(redisClient, conversationRepo, logInstance)
 	realtimeService := services.NewRealtimeService(realtimeHub, conversationService, messageService, callService, commandService)
 	outboxWorker := chatws.NewOutboxWorker(outboxRepo, redisClient, logInstance)
-	wsHandler := handler.NewWSHandler(authService, realtimeHub, realtimeService, logInstance)
+	wsHandler := handler.NewWSHandler(authService, realtimeHub, realtimeService, cfg.FrontendURL, logInstance)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	realtimeHub.StartRedisListener(ctx)

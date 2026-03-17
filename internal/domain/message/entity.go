@@ -9,21 +9,21 @@ import (
 
 // Message represents the messages table
 type Message struct {
-	ID               uuid.UUID
-	ConversationID   uuid.UUID
-	SenderID         uuid.UUID
-	ClientMessageID  sql.NullString
-	SeqID            sql.NullInt64
-	Type             string
-	EncryptedContent sql.NullString
-	IsForwarded      bool
-	ReplyToMsgID     uuid.NullUUID
-	PollID           uuid.NullUUID
-	MentionCount     int
-	CreatedAt        time.Time
-	EditedAt         sql.NullTime
-	DeletedAt        sql.NullTime
-	ExpiresAt        sql.NullTime
+	ID              uuid.UUID
+	ConversationID  uuid.UUID
+	SenderID        uuid.UUID
+	ClientMessageID sql.NullString
+	SeqID           sql.NullInt64
+	Type            string
+	Content         sql.NullString
+	IsForwarded     bool
+	ReplyToMsgID    uuid.NullUUID
+	PollID          uuid.NullUUID
+	MentionCount    int
+	CreatedAt       time.Time
+	EditedAt        sql.NullTime
+	DeletedAt       sql.NullTime
+	ExpiresAt       sql.NullTime
 }
 
 // MessageReaction represents message_reactions
@@ -71,12 +71,12 @@ type PinnedMessage struct {
 
 // MessageEdit represents message_edits
 type MessageEdit struct {
-	ID               uuid.UUID
-	MessageID        uuid.UUID
-	EncryptedContent string
-	EditedBy         uuid.UUID
-	EditedAt         time.Time
-	VersionNumber    int
+	ID            uuid.UUID
+	MessageID     uuid.UUID
+	Content       string
+	EditedBy      uuid.UUID
+	EditedAt      time.Time
+	VersionNumber int
 }
 
 func (Message) TableName() string {

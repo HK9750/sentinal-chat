@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -28,7 +29,8 @@ type WSHandler struct {
 	upgrader        gorillawebsocket.Upgrader
 }
 
-func NewWSHandler(authService *services.AuthService, hub *chatws.Hub, realtimeService *services.RealtimeService, l *logger.Logger) *WSHandler {
+func NewWSHandler(authService *services.AuthService, hub *chatws.Hub, realtimeService *services.RealtimeService, frontendURL string, l *logger.Logger) *WSHandler {
+	allowedOrigins := buildAllowedOrigins(frontendURL)
 	return &WSHandler{
 		authService:     authService,
 		hub:             hub,
@@ -37,7 +39,7 @@ func NewWSHandler(authService *services.AuthService, hub *chatws.Hub, realtimeSe
 		upgrader: gorillawebsocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
-			CheckOrigin:     func(_ *http.Request) bool { return true },
+			CheckOrigin:     websocketOriginChecker(allowedOrigins),
 		},
 	}
 }
@@ -180,22 +182,22 @@ func (h *WSHandler) handleMessageSend(ctx context.Context, client *chatws.Client
 		}
 	}
 	message, err := h.realtimeService.SendMessage(ctx, client.UserID, services.SendMessageInput{
-		ConversationID:   conversationID,
-		SenderID:         client.UserID,
-		ClientMessageID:  stringValue(data["client_message_id"]),
-		Type:             stringValue(data["type"]),
-		EncryptedContent: stringValue(data["encrypted_content"]),
-		ReplyToMsgID:     replyTo,
-		ExpiresAt:        expiresAt,
-		AttachmentIDs:    attachmentIDs,
-		MentionUserIDs:   mentionIDs,
-		Poll:             pollInput,
+		ConversationID:  conversationID,
+		SenderID:        client.UserID,
+		ClientMessageID: stringValue(data["client_message_id"]),
+		Type:            stringValue(data["type"]),
+		Content:         stringValue(data["content"]),
+		ReplyToMsgID:    replyTo,
+		ExpiresAt:       expiresAt,
+		AttachmentIDs:   attachmentIDs,
+		MentionUserIDs:  mentionIDs,
+		Poll:            pollInput,
 	})
 	if err != nil {
-		h.sendError(client, "MESSAGE_SEND_FAILED", err.Error())
+		h.sendErrorWithRequestID(client, frame.RequestID, "MESSAGE_SEND_FAILED", err.Error())
 		return
 	}
-	h.sendEnvelope(client, chatws.NewMessageEvent(events.MessageNew, conversationID, map[string]any{"message": message}))
+	_ = message
 }
 
 func (h *WSHandler) handleMessageEdit(ctx context.Context, client *chatws.Client, frame httpdto.WebSocketInboundFrame) {
@@ -214,12 +216,12 @@ func (h *WSHandler) handleMessageEdit(ctx context.Context, client *chatws.Client
 		h.sendError(client, "INVALID_EXPIRY", "invalid expires_at")
 		return
 	}
-	message, err := h.realtimeService.EditMessage(ctx, client.UserID, services.EditMessageInput{ConversationID: conversationID, MessageID: messageID, EditorID: client.UserID, EncryptedContent: stringValue(data["encrypted_content"]), ExpiresAt: expiresAt})
+	message, err := h.realtimeService.EditMessage(ctx, client.UserID, services.EditMessageInput{ConversationID: conversationID, MessageID: messageID, EditorID: client.UserID, Content: stringValue(data["content"]), ExpiresAt: expiresAt})
 	if err != nil {
 		h.sendError(client, "MESSAGE_EDIT_FAILED", err.Error())
 		return
 	}
-	h.sendEnvelope(client, chatws.NewMessageEvent(events.MessageEdited, conversationID, map[string]any{"message": message}))
+	_ = message
 }
 
 func (h *WSHandler) handleMessageDelete(ctx context.Context, client *chatws.Client, frame httpdto.WebSocketInboundFrame) {
@@ -238,7 +240,7 @@ func (h *WSHandler) handleMessageDelete(ctx context.Context, client *chatws.Clie
 		h.sendError(client, "MESSAGE_DELETE_FAILED", err.Error())
 		return
 	}
-	h.sendEnvelope(client, chatws.NewMessageEvent(events.MessageDeleted, conversationID, map[string]any{"message": message}))
+	_ = message
 }
 
 func (h *WSHandler) handleReaction(ctx context.Context, client *chatws.Client, frame httpdto.WebSocketInboundFrame) {
@@ -257,7 +259,7 @@ func (h *WSHandler) handleReaction(ctx context.Context, client *chatws.Client, f
 		h.sendError(client, "REACTION_FAILED", err.Error())
 		return
 	}
-	h.sendEnvelope(client, chatws.NewMessageEvent(events.MessageReaction, conversationID, map[string]any{"message_id": messageID.String(), "reactions": reactions}))
+	_ = reactions
 }
 
 func (h *WSHandler) handlePin(ctx context.Context, client *chatws.Client, frame httpdto.WebSocketInboundFrame) {
@@ -276,11 +278,6 @@ func (h *WSHandler) handlePin(ctx context.Context, client *chatws.Client, frame 
 		h.sendError(client, "PIN_FAILED", err.Error())
 		return
 	}
-	eventType := events.MessagePinned
-	if !pinned {
-		eventType = events.MessageUnpinned
-	}
-	h.sendEnvelope(client, chatws.NewMessageEvent(eventType, conversationID, map[string]any{"message_id": messageID.String(), "pinned": pinned}))
 }
 
 func (h *WSHandler) handleReceipt(ctx context.Context, client *chatws.Client, frame httpdto.WebSocketInboundFrame) {
@@ -300,11 +297,12 @@ func (h *WSHandler) handleReceipt(ctx context.Context, client *chatws.Client, fr
 		return
 	}
 	status := receiptStatus(frame.Type)
-	if err := h.realtimeService.UpdateReceipt(ctx, client.UserID, services.ReceiptInput{ConversationID: conversationID, MessageIDs: messageIDs, ActorID: client.UserID, Status: status, UpToSeqID: upToSeq}); err != nil {
-		h.sendError(client, "RECEIPT_FAILED", err.Error())
+	result, err := h.realtimeService.UpdateReceipt(ctx, client.UserID, services.ReceiptInput{ConversationID: conversationID, MessageIDs: messageIDs, ActorID: client.UserID, Status: status, UpToSeqID: upToSeq})
+	if err != nil {
+		h.sendErrorWithRequestID(client, frame.RequestID, "RECEIPT_FAILED", err.Error())
 		return
 	}
-	h.sendEnvelope(client, chatws.NewMessageEvent(events.ReceiptUpdate, conversationID, map[string]any{"message_ids": uuidStrings(messageIDs), "user_id": client.UserID.String(), "status": status, "up_to_seq_id": upToSeq}))
+	_ = result
 }
 
 func (h *WSHandler) handlePoll(ctx context.Context, client *chatws.Client, frame httpdto.WebSocketInboundFrame) {
@@ -324,7 +322,7 @@ func (h *WSHandler) handlePoll(ctx context.Context, client *chatws.Client, frame
 			h.sendError(client, "POLL_CLOSE_FAILED", err.Error())
 			return
 		}
-		h.sendEnvelope(client, chatws.NewConversationEvent(events.PollUpdate, conversationID, map[string]any{"poll": poll}))
+		_ = poll
 		return
 	}
 	optionIDs, err := services.AnyToUUIDSlice(data["option_ids"])
@@ -337,7 +335,7 @@ func (h *WSHandler) handlePoll(ctx context.Context, client *chatws.Client, frame
 		h.sendError(client, "POLL_VOTE_FAILED", err.Error())
 		return
 	}
-	h.sendEnvelope(client, chatws.NewConversationEvent(events.PollUpdate, conversationID, map[string]any{"poll": poll}))
+	_ = poll
 }
 
 func (h *WSHandler) handleCall(ctx context.Context, client *chatws.Client, frame httpdto.WebSocketInboundFrame) {
@@ -539,4 +537,32 @@ func extractBearer(c *gin.Context) string {
 		return ""
 	}
 	return strings.TrimSpace(parts[1])
+}
+
+func websocketOriginChecker(allowedOrigins map[string]struct{}) func(*http.Request) bool {
+	return func(r *http.Request) bool {
+		origin := strings.TrimSpace(r.Header.Get("Origin"))
+		if origin == "" {
+			return true
+		}
+		parsed, err := url.Parse(origin)
+		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+			return false
+		}
+		_, ok := allowedOrigins[parsed.Scheme+"://"+parsed.Host]
+		return ok
+	}
+}
+
+func buildAllowedOrigins(frontendURL string) map[string]struct{} {
+	origins := map[string]struct{}{
+		"http://localhost:3000":  {},
+		"http://127.0.0.1:3000":  {},
+		"https://localhost:3000": {},
+		"https://127.0.0.1:3000": {},
+	}
+	if parsed, err := url.Parse(strings.TrimSpace(frontendURL)); err == nil && parsed.Scheme != "" && parsed.Host != "" {
+		origins[parsed.Scheme+"://"+parsed.Host] = struct{}{}
+	}
+	return origins
 }

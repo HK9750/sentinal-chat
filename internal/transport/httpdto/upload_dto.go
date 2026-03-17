@@ -30,7 +30,7 @@ type UploadFilesPayload struct {
 type AttachmentPayload struct {
 	ID              string     `json:"id"`
 	UploaderID      *string    `json:"uploader_id,omitempty"`
-	EncryptedURL    string     `json:"encrypted_url"`
+	FileURL         string     `json:"file_url"`
 	Filename        *string    `json:"filename,omitempty"`
 	MimeType        string     `json:"mime_type"`
 	SizeBytes       int64      `json:"size_bytes"`

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -45,7 +46,13 @@ func (s *MessageService) Send(ctx context.Context, in SendMessageInput) (Message
 	if err := s.proxy.RequireParticipant(ctx, in.ConversationID, in.SenderID); err != nil {
 		return MessageView{}, err
 	}
-	if strings.TrimSpace(in.Type) == "" || strings.TrimSpace(in.EncryptedContent) == "" {
+	messageType := strings.ToUpper(strings.TrimSpace(in.Type))
+	hasAttachments := len(chatDedupeUUIDs(in.AttachmentIDs)) > 0
+	hasContent := strings.TrimSpace(in.Content) != ""
+	if messageType == "" {
+		return MessageView{}, sentinal_errors.ErrInvalidInput
+	}
+	if !hasContent && !hasAttachments && in.Poll == nil {
 		return MessageView{}, sentinal_errors.ErrInvalidInput
 	}
 	if in.ClientMessageID != "" {
@@ -60,14 +67,14 @@ func (s *MessageService) Send(ctx context.Context, in SendMessageInput) (Message
 
 	now := time.Now().UTC()
 	msg := msgdomain.Message{
-		ID:               uuid.New(),
-		ConversationID:   in.ConversationID,
-		SenderID:         in.SenderID,
-		ClientMessageID:  chatNullableString(in.ClientMessageID),
-		Type:             strings.ToUpper(strings.TrimSpace(in.Type)),
-		EncryptedContent: chatNullableString(strings.TrimSpace(in.EncryptedContent)),
-		CreatedAt:        now,
-		ExpiresAt:        chatNullableTimePtr(in.ExpiresAt),
+		ID:              uuid.New(),
+		ConversationID:  in.ConversationID,
+		SenderID:        in.SenderID,
+		ClientMessageID: chatNullableString(in.ClientMessageID),
+		Type:            messageType,
+		Content:         chatNullableString(strings.TrimSpace(in.Content)),
+		CreatedAt:       now,
+		ExpiresAt:       chatNullableTimePtr(in.ExpiresAt),
 	}
 	if in.ReplyToMsgID != nil {
 		msg.ReplyToMsgID = chatNullableUUID(*in.ReplyToMsgID)
@@ -102,6 +109,11 @@ func (s *MessageService) Send(ctx context.Context, in SendMessageInput) (Message
 	if err != nil {
 		return MessageView{}, err
 	}
+	view.Receipts = append(view.Receipts, ReceiptView{
+		UserID:    in.SenderID.String(),
+		Status:    "SENT",
+		UpdatedAt: now,
+	})
 	if pollView != nil {
 		view.Poll = pollView
 	}
@@ -131,11 +143,11 @@ func (s *MessageService) Edit(ctx context.Context, in EditMessageInput) (Message
 	if msg.ConversationID != in.ConversationID || msg.SenderID != in.EditorID {
 		return MessageView{}, sentinal_errors.ErrForbidden
 	}
-	newContent := strings.TrimSpace(in.EncryptedContent)
+	newContent := strings.TrimSpace(in.Content)
 	if newContent == "" {
 		return MessageView{}, sentinal_errors.ErrInvalidInput
 	}
-	oldContent := msg.EncryptedContent.String
+	oldContent := msg.Content.String
 	oldExpiresAt := chatNullTime(msg.ExpiresAt)
 	if oldContent == newContent && sameTimePtr(msg.ExpiresAt, in.ExpiresAt) {
 		return s.GetByID(ctx, in.MessageID, in.EditorID)
@@ -146,15 +158,15 @@ func (s *MessageService) Edit(ctx context.Context, in EditMessageInput) (Message
 	}
 	if oldContent != "" {
 		_ = s.messages.CreateMessageEdit(ctx, &msgdomain.MessageEdit{
-			ID:               uuid.New(),
-			MessageID:        msg.ID,
-			EncryptedContent: oldContent,
-			EditedBy:         in.EditorID,
-			EditedAt:         time.Now().UTC(),
-			VersionNumber:    version,
+			ID:            uuid.New(),
+			MessageID:     msg.ID,
+			Content:       oldContent,
+			EditedBy:      in.EditorID,
+			EditedAt:      time.Now().UTC(),
+			VersionNumber: version,
 		})
 	}
-	msg.EncryptedContent = chatNullableString(newContent)
+	msg.Content = chatNullableString(newContent)
 	msg.EditedAt = sql.NullTime{Time: time.Now().UTC(), Valid: true}
 	msg.ExpiresAt = chatNullableTimePtr(in.ExpiresAt)
 	if err := s.messages.Update(ctx, msg); err != nil {
@@ -162,12 +174,12 @@ func (s *MessageService) Edit(ctx context.Context, in EditMessageInput) (Message
 	}
 	if s.command != nil {
 		_, err = s.command.Record(ctx, command.CommandEditMessage, in.EditorID, &in.ConversationID, map[string]any{
-			"message_id":        in.MessageID.String(),
-			"encrypted_content": newContent,
-			"expires_at":        chatTimeToRFC3339(in.ExpiresAt),
+			"message_id": in.MessageID.String(),
+			"content":    newContent,
+			"expires_at": chatTimeToRFC3339(in.ExpiresAt),
 		}, map[string]any{
 			"message_id":         in.MessageID.String(),
-			"encrypted_content":  oldContent,
+			"content":            oldContent,
 			"expires_at":         oldExpiresAt,
 			"restore_deleted_at": false,
 		})
@@ -349,39 +361,63 @@ func (s *MessageService) Pin(ctx context.Context, in PinMessageInput) (bool, err
 	return in.Pinned, nil
 }
 
-func (s *MessageService) UpdateReceipt(ctx context.Context, in ReceiptInput) error {
+func (s *MessageService) UpdateReceipt(ctx context.Context, in ReceiptInput) (ReceiptUpdateResult, error) {
 	if err := s.proxy.RequireParticipant(ctx, in.ConversationID, in.ActorID); err != nil {
-		return err
+		return ReceiptUpdateResult{}, err
 	}
 	ids := chatDedupeUUIDs(in.MessageIDs)
 	if len(ids) == 0 {
-		return sentinal_errors.ErrInvalidInput
+		return ReceiptUpdateResult{}, sentinal_errors.ErrInvalidInput
 	}
+	filteredIDs, maxSeq, err := s.filterReceiptMessageIDs(ctx, in.ConversationID, in.ActorID, ids)
+	if err != nil {
+		return ReceiptUpdateResult{}, err
+	}
+	if len(filteredIDs) == 0 {
+		return ReceiptUpdateResult{}, sentinal_errors.ErrInvalidInput
+	}
+	result := ReceiptUpdateResult{MessageIDs: filteredIDs, Status: strings.ToUpper(strings.TrimSpace(in.Status))}
 	switch strings.ToUpper(strings.TrimSpace(in.Status)) {
 	case "DELIVERED":
-		if len(ids) == 1 {
-			return s.messages.MarkAsDelivered(ctx, ids[0], in.ActorID)
-		}
-		return s.messages.BulkMarkAsDelivered(ctx, ids, in.ActorID)
-	case "READ":
-		if len(ids) == 1 {
-			if err := s.messages.MarkAsRead(ctx, ids[0], in.ActorID); err != nil {
-				return err
+		if len(filteredIDs) == 1 {
+			if err := s.messages.MarkAsDelivered(ctx, filteredIDs[0], in.ActorID); err != nil {
+				return ReceiptUpdateResult{}, err
 			}
-		} else if err := s.messages.BulkMarkAsRead(ctx, ids, in.ActorID); err != nil {
-			return err
+			return result, nil
 		}
-		if in.UpToSeqID != nil {
-			return s.conversations.UpdateLastReadSequence(ctx, in.ConversationID, in.ActorID, *in.UpToSeqID)
+		if err := s.messages.BulkMarkAsDelivered(ctx, filteredIDs, in.ActorID); err != nil {
+			return ReceiptUpdateResult{}, err
 		}
-		return nil
+		return result, nil
+	case "READ":
+		if len(filteredIDs) == 1 {
+			if err := s.messages.MarkAsRead(ctx, filteredIDs[0], in.ActorID); err != nil {
+				return ReceiptUpdateResult{}, err
+			}
+		} else if err := s.messages.BulkMarkAsRead(ctx, filteredIDs, in.ActorID); err != nil {
+			return ReceiptUpdateResult{}, err
+		}
+		seqID := maxSeq
+		if in.UpToSeqID != nil && *in.UpToSeqID > seqID {
+			seqID = *in.UpToSeqID
+		}
+		if seqID > 0 {
+			if err := s.conversations.UpdateLastReadSequence(ctx, in.ConversationID, in.ActorID, seqID); err != nil {
+				return ReceiptUpdateResult{}, err
+			}
+			result.UpToSeqID = &seqID
+		}
+		return result, nil
 	case "PLAYED":
-		if len(ids) != 1 {
-			return sentinal_errors.ErrInvalidInput
+		if len(filteredIDs) != 1 {
+			return ReceiptUpdateResult{}, sentinal_errors.ErrInvalidInput
 		}
-		return s.messages.MarkAsPlayed(ctx, ids[0], in.ActorID)
+		if err := s.messages.MarkAsPlayed(ctx, filteredIDs[0], in.ActorID); err != nil {
+			return ReceiptUpdateResult{}, err
+		}
+		return result, nil
 	default:
-		return sentinal_errors.ErrInvalidInput
+		return ReceiptUpdateResult{}, sentinal_errors.ErrInvalidInput
 	}
 }
 
@@ -422,6 +458,31 @@ func fallbackMessageViewUser(msg msgdomain.Message, userID uuid.UUID) uuid.UUID 
 		return userID
 	}
 	return msg.SenderID
+}
+
+func (s *MessageService) filterReceiptMessageIDs(ctx context.Context, conversationID, actorID uuid.UUID, ids []uuid.UUID) ([]uuid.UUID, int64, error) {
+	filtered := make([]uuid.UUID, 0, len(ids))
+	var maxSeq int64
+	for _, id := range ids {
+		msg, err := s.messages.GetByID(ctx, id)
+		if err != nil {
+			if errors.Is(err, sentinal_errors.ErrNotFound) {
+				continue
+			}
+			return nil, 0, err
+		}
+		if msg.ConversationID != conversationID {
+			return nil, 0, fmt.Errorf("message %s does not belong to conversation %s: %w", id, conversationID, sentinal_errors.ErrInvalidInput)
+		}
+		if msg.SenderID == actorID || msg.DeletedAt.Valid {
+			continue
+		}
+		filtered = append(filtered, id)
+		if msg.SeqID.Valid && msg.SeqID.Int64 > maxSeq {
+			maxSeq = msg.SeqID.Int64
+		}
+	}
+	return filtered, maxSeq, nil
 }
 
 func (s *MessageService) getLatestView(ctx context.Context, conversationID, userID uuid.UUID) (MessageView, error) {
@@ -666,7 +727,7 @@ func (s *MessageService) applyCommandUndo(ctx context.Context, log command.Comma
 		if err != nil {
 			return CommandResult{}, err
 		}
-		msg.EncryptedContent = chatNullableString(payload.EncryptedContent)
+		msg.Content = chatNullableString(payload.Content)
 		msg.ExpiresAt = chatNullableTimePtr(payload.ExpiresAt)
 		if payload.RestoreDeletedAt {
 			if payload.DeletedAt == nil {
@@ -753,7 +814,7 @@ func (s *MessageService) applyCommandRedo(ctx context.Context, log *command.Comm
 		if err != nil {
 			return CommandResult{}, err
 		}
-		msg.EncryptedContent = chatNullableString(payload.EncryptedContent)
+		msg.Content = chatNullableString(payload.Content)
 		msg.ExpiresAt = chatNullableTimePtr(payload.ExpiresAt)
 		msg.EditedAt = sql.NullTime{Time: time.Now().UTC(), Valid: true}
 		if err := s.messages.Update(ctx, msg); err != nil {
@@ -881,7 +942,7 @@ func (s *MessageService) enqueueOutboxEvent(ctx context.Context, eventType strin
 
 type commandActionPayload struct {
 	MessageID        uuid.UUID  `json:"message_id"`
-	EncryptedContent string     `json:"encrypted_content"`
+	Content          string     `json:"content"`
 	ExpiresAt        *time.Time `json:"expires_at"`
 	DeletedAt        *time.Time `json:"deleted_at"`
 	RestoreDeletedAt bool       `json:"restore_deleted_at"`

@@ -69,7 +69,6 @@ func (w *OutboxWorker) processBatch(ctx context.Context) {
 			w.markFailed(ctx, event.ID.String(), err)
 			continue
 		}
-		envelope.Source = "outbox"
 		payload, err := json.Marshal(envelope)
 		if err != nil {
 			w.markFailed(ctx, event.ID.String(), err)

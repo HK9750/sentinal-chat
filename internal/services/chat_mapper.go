@@ -48,12 +48,13 @@ func conversationToView(conv convdomain.Conversation, lastMessage *MessageView, 
 	}
 	if lastMessage != nil {
 		view.LastMessage = &MessageSummaryView{
-			ID:        lastMessage.ID,
-			SenderID:  lastMessage.SenderID,
-			Kind:      lastMessage.Type,
-			CreatedAt: lastMessage.CreatedAt,
-			SeqID:     lastMessage.SeqID,
-			DeletedAt: lastMessage.DeletedAt,
+			ID:            lastMessage.ID,
+			SenderID:      lastMessage.SenderID,
+			Kind:          lastMessage.Type,
+			CreatedAt:     lastMessage.CreatedAt,
+			SeqID:         lastMessage.SeqID,
+			ReceiptStatus: latestReceiptStatus(lastMessage.Receipts, lastMessage.SenderID),
+			DeletedAt:     lastMessage.DeletedAt,
 		}
 	}
 	return view
@@ -102,9 +103,9 @@ func messageToView(msg msgdomain.Message, attachments []msgdomain.Attachment, re
 	if msg.ClientMessageID.Valid {
 		clientMessageID = chatStringPtr(msg.ClientMessageID.String)
 	}
-	var encryptedContent *string
-	if msg.EncryptedContent.Valid {
-		encryptedContent = chatStringPtr(msg.EncryptedContent.String)
+	var content *string
+	if msg.Content.Valid {
+		content = chatStringPtr(msg.Content.String)
 	}
 	var replyTo *string
 	if msg.ReplyToMsgID.Valid {
@@ -112,26 +113,26 @@ func messageToView(msg msgdomain.Message, attachments []msgdomain.Attachment, re
 	}
 
 	return MessageView{
-		ID:               msg.ID.String(),
-		ConversationID:   msg.ConversationID.String(),
-		SenderID:         msg.SenderID.String(),
-		ClientMessageID:  clientMessageID,
-		SeqID:            chatNullInt64(msg.SeqID),
-		Type:             msg.Type,
-		EncryptedContent: encryptedContent,
-		IsForwarded:      msg.IsForwarded,
-		ReplyToMsgID:     replyTo,
-		MentionCount:     msg.MentionCount,
-		CreatedAt:        msg.CreatedAt,
-		EditedAt:         chatNullTime(msg.EditedAt),
-		DeletedAt:        chatNullTime(msg.DeletedAt),
-		ExpiresAt:        chatNullTime(msg.ExpiresAt),
-		Attachments:      attachmentViews,
-		Receipts:         receiptViews,
-		Reactions:        reactionViews,
-		Poll:             poll,
-		Pinned:           pinned,
-		IsStarred:        starred,
+		ID:              msg.ID.String(),
+		ConversationID:  msg.ConversationID.String(),
+		SenderID:        msg.SenderID.String(),
+		ClientMessageID: clientMessageID,
+		SeqID:           chatNullInt64(msg.SeqID),
+		Type:            msg.Type,
+		Content:         content,
+		IsForwarded:     msg.IsForwarded,
+		ReplyToMsgID:    replyTo,
+		MentionCount:    msg.MentionCount,
+		CreatedAt:       msg.CreatedAt,
+		EditedAt:        chatNullTime(msg.EditedAt),
+		DeletedAt:       chatNullTime(msg.DeletedAt),
+		ExpiresAt:       chatNullTime(msg.ExpiresAt),
+		Attachments:     attachmentViews,
+		Receipts:        receiptViews,
+		Reactions:       reactionViews,
+		Poll:            poll,
+		Pinned:          pinned,
+		IsStarred:       starred,
 	}
 }
 
@@ -162,7 +163,7 @@ func attachmentToView(attachment msgdomain.Attachment) AttachmentView {
 
 	return AttachmentView{
 		ID:              attachment.ID.String(),
-		FileURL:         attachment.EncryptedURL,
+		FileURL:         attachment.FileURL,
 		Filename:        filename,
 		MimeType:        attachment.MimeType,
 		SizeBytes:       attachment.SizeBytes,
@@ -184,6 +185,28 @@ func receiptToView(receipt msgdomain.MessageReceipt) ReceiptView {
 		PlayedAt:    chatNullTime(receipt.PlayedAt),
 		UpdatedAt:   receipt.UpdatedAt,
 	}
+}
+
+func latestReceiptStatus(receipts []ReceiptView, senderID string) *string {
+	status := "SENT"
+	for _, receipt := range receipts {
+		if receipt.UserID == senderID {
+			continue
+		}
+		switch receipt.Status {
+		case "PLAYED":
+			status = "PLAYED"
+		case "READ":
+			if status != "PLAYED" {
+				status = "READ"
+			}
+		case "DELIVERED":
+			if status == "SENT" {
+				status = "DELIVERED"
+			}
+		}
+	}
+	return chatStringPtr(status)
 }
 
 func chatNullTime(value sql.NullTime) *time.Time {

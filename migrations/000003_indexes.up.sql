@@ -17,6 +17,15 @@ CREATE INDEX IF NOT EXISTS idx_sessions_active
     ON user_sessions (expires_at) WHERE is_revoked = FALSE;
 
 -- ============================================================
+-- OAUTH IDENTITIES
+-- ============================================================
+CREATE INDEX IF NOT EXISTS idx_oauth_identities_user
+    ON oauth_identities (user_id);
+CREATE INDEX IF NOT EXISTS idx_oauth_identities_provider_email
+    ON oauth_identities (provider, provider_email)
+    WHERE provider_email IS NOT NULL;
+
+-- ============================================================
 -- DEVICES & FCM
 -- ============================================================
 CREATE INDEX IF NOT EXISTS idx_devices_user
@@ -119,7 +128,7 @@ CREATE INDEX IF NOT EXISTS idx_message_edits_message
 CREATE INDEX IF NOT EXISTS idx_outbox_status
     ON outbox_events (status);
 CREATE INDEX IF NOT EXISTS idx_outbox_pending
-    ON outbox_events (status, retry_count) WHERE status = 'PENDING';
+    ON outbox_events (status, next_retry_at, created_at) WHERE status = 'PENDING';
 CREATE INDEX IF NOT EXISTS idx_outbox_aggregate
     ON outbox_events (aggregate_type, aggregate_id);
 

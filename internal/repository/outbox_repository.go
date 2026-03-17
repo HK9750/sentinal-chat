@@ -122,15 +122,6 @@ func (r *outboxRepository) MarkFailed(ctx context.Context, id string, errorMsg s
 	return err
 }
 
-func (r *outboxRepository) IncrementRetry(ctx context.Context, id string) error {
-	_, err := r.db.ExecContext(ctx, `
-        UPDATE outbox_events
-        SET retry_count = retry_count + 1, updated_at = $2
-        WHERE id = $1
-    `, id, time.Now())
-	return err
-}
-
 func (r *outboxRepository) ScheduleRetry(ctx context.Context, id string, nextRetryAt time.Time, errorMsg string) error {
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE outbox_events

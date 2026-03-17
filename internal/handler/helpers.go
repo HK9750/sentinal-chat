@@ -21,6 +21,22 @@ func mustUserID(c *gin.Context) (uuid.UUID, bool) {
 	return userID, true
 }
 
+func mustServerDeviceID(c *gin.Context) (uuid.UUID, bool) {
+	value, ok := c.Get("device_id")
+	if !ok {
+		return uuid.Nil, false
+	}
+	deviceIDValue, ok := value.(string)
+	if !ok {
+		return uuid.Nil, false
+	}
+	deviceID, err := uuid.Parse(strings.TrimSpace(deviceIDValue))
+	if err != nil || deviceID == uuid.Nil {
+		return uuid.Nil, false
+	}
+	return deviceID, true
+}
+
 func parseUUIDParam(c *gin.Context, paramName string) (uuid.UUID, error) {
 	value := strings.TrimSpace(c.Param(paramName))
 	if value == "" {

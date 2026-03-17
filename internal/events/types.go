@@ -58,6 +58,10 @@ func UserChannel(userID string) string {
 	return "user:" + userID
 }
 
+func DeviceChannel(deviceID string) string {
+	return "device:" + deviceID
+}
+
 func CallChannel(callID string) string {
 	return "call:" + callID
 }

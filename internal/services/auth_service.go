@@ -96,7 +96,7 @@ func (s *AuthService) ValidateAccessSession(ctx context.Context, claims *middlew
 		return err
 	}
 
-	if !device.IsActive || device.UserID != userID || device.DeviceID != claims.DeviceID {
+	if !device.IsActive || device.UserID != userID || device.ID.String() != claims.DeviceID {
 		return sentinal_errors.ErrUnauthorized
 	}
 
@@ -244,12 +244,12 @@ func (s *AuthService) Refresh(ctx context.Context, input RefreshInput) (AuthResu
 		return AuthResult{}, sentinal_errors.ErrUnauthorized
 	}
 
-	device, deviceExternalID, err := s.resolveSessionDevice(ctx, session)
+	device, deviceTokenID, err := s.resolveSessionDevice(ctx, session)
 	if err != nil {
 		return AuthResult{}, err
 	}
 
-	pair, err := s.tokens.GenerateTokenPair(u.ID, session.ID, deviceExternalID)
+	pair, err := s.tokens.GenerateTokenPair(u.ID, session.ID, deviceTokenID)
 	if err != nil {
 		return AuthResult{}, err
 	}
@@ -347,7 +347,7 @@ func (s *AuthService) ListSessions(ctx context.Context, userID, currentSessionID
 func (s *AuthService) issueAuthForUser(ctx context.Context, u user.User, deviceInput DeviceInput, provider AuthProvider, isNewUser bool) (AuthResult, error) {
 	now := time.Now().UTC()
 
-	device, deviceExternalID, err := s.upsertDevice(ctx, u.ID, deviceInput, now)
+	device, deviceTokenID, err := s.upsertDevice(ctx, u.ID, deviceInput, now)
 	if err != nil {
 		return AuthResult{}, err
 	}
@@ -364,7 +364,7 @@ func (s *AuthService) issueAuthForUser(ctx context.Context, u user.User, deviceI
 		session.DeviceID = &device.ID
 	}
 
-	pair, err := s.tokens.GenerateTokenPair(u.ID, session.ID, deviceExternalID)
+	pair, err := s.tokens.GenerateTokenPair(u.ID, session.ID, deviceTokenID)
 	if err != nil {
 		return AuthResult{}, err
 	}
@@ -518,7 +518,7 @@ func (s *AuthService) upsertDevice(ctx context.Context, userID uuid.UUID, input 
 		return nil, "", err
 	}
 
-	return device, device.DeviceID, nil
+	return device, device.ID.String(), nil
 }
 
 func (s *AuthService) resolveSessionDevice(ctx context.Context, session user.UserSession) (*user.Device, string, error) {
@@ -531,7 +531,7 @@ func (s *AuthService) resolveSessionDevice(ctx context.Context, session user.Use
 		return nil, "", err
 	}
 
-	return &device, device.DeviceID, nil
+	return &device, device.ID.String(), nil
 }
 
 func buildAuthResult(u user.User, session user.UserSession, device *user.Device, pair TokenPair, provider AuthProvider, isNewUser bool) AuthResult {

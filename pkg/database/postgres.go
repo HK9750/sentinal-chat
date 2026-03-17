@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -35,6 +36,11 @@ type DatabaseConfig struct {
 	MaxIdleConns    int
 	MaxOpenConns    int
 	ConnMaxLifetime time.Duration
+}
+
+type appliedMigration struct {
+	version  string
+	checksum string
 }
 
 // DefaultDatabaseConfig returns sensible default database configuration
@@ -158,6 +164,9 @@ func RunFullMigration(migrationsDir string) error {
 
 // ApplyRawMigrations reads and executes all .up.sql files in sorted order
 func ApplyRawMigrations(migrationsDir string) error {
+	if err := ensureMigrationTable(); err != nil {
+		return err
+	}
 	return applyMigrationsFiltered(migrationsDir, ".up.sql")
 }
 
@@ -165,6 +174,9 @@ func ApplyRawMigrations(migrationsDir string) error {
 func RollbackMigrations(migrationsDir string) error {
 	if DB == nil {
 		return errors.New("database not initialized")
+	}
+	if err := ensureMigrationTable(); err != nil {
+		return err
 	}
 
 	files, err := os.ReadDir(migrationsDir)
@@ -180,7 +192,16 @@ func RollbackMigrations(migrationsDir string) error {
 	}
 	sort.Sort(sort.Reverse(sort.StringSlice(migrationFiles)))
 
+	applied, err := loadAppliedMigrations()
+	if err != nil {
+		return err
+	}
+
 	for _, fileName := range migrationFiles {
+		version := strings.TrimSuffix(fileName, ".down.sql")
+		if _, ok := applied[version]; !ok {
+			continue
+		}
 		path := filepath.Join(migrationsDir, fileName)
 		content, err := os.ReadFile(path)
 		if err != nil {
@@ -191,6 +212,9 @@ func RollbackMigrations(migrationsDir string) error {
 		if _, err := DB.Exec(string(content)); err != nil {
 			return fmt.Errorf("failed to rollback migration %s: %w", fileName, err)
 		}
+		if _, err := DB.Exec(`DELETE FROM schema_migrations WHERE version = $1`, version); err != nil {
+			return fmt.Errorf("failed to unregister migration %s: %w", fileName, err)
+		}
 		log.Printf("Successfully rolled back migration: %s", fileName)
 	}
 	return nil
@@ -200,6 +224,9 @@ func RollbackMigrations(migrationsDir string) error {
 func applyMigrationsFiltered(migrationsDir, suffix string) error {
 	if DB == nil {
 		return errors.New("database not initialized")
+	}
+	if err := ensureMigrationTable(); err != nil {
+		return err
 	}
 
 	files, err := os.ReadDir(migrationsDir)
@@ -215,20 +242,79 @@ func applyMigrationsFiltered(migrationsDir, suffix string) error {
 	}
 	sort.Strings(migrationFiles)
 
+	applied, err := loadAppliedMigrations()
+	if err != nil {
+		return err
+	}
+
 	for _, fileName := range migrationFiles {
 		path := filepath.Join(migrationsDir, fileName)
 		content, err := os.ReadFile(path)
 		if err != nil {
 			return fmt.Errorf("failed to read migration file %s: %w", fileName, err)
 		}
+		version := strings.TrimSuffix(fileName, suffix)
+		checksum := migrationChecksum(content)
+		if existing, ok := applied[version]; ok {
+			if existing.checksum != checksum {
+				return fmt.Errorf("migration %s changed after being applied; reset the dev database or roll it back before re-running", fileName)
+			}
+			continue
+		}
 
 		log.Printf("Applying migration: %s", fileName)
 		if _, err := DB.Exec(string(content)); err != nil {
 			return fmt.Errorf("failed to execute migration %s: %w", fileName, err)
 		}
+		if _, err := DB.Exec(`INSERT INTO schema_migrations (version, checksum, applied_at) VALUES ($1, $2, NOW())`, version, checksum); err != nil {
+			return fmt.Errorf("failed to register migration %s: %w", fileName, err)
+		}
 		log.Printf("Successfully applied migration: %s", fileName)
 	}
 	return nil
+}
+
+func ensureMigrationTable() error {
+	if DB == nil {
+		return errors.New("database not initialized")
+	}
+	_, err := DB.Exec(`
+		CREATE TABLE IF NOT EXISTS schema_migrations (
+			version TEXT PRIMARY KEY,
+			checksum TEXT NOT NULL,
+			applied_at TIMESTAMP NOT NULL DEFAULT NOW()
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to ensure schema_migrations table: %w", err)
+	}
+	return nil
+}
+
+func loadAppliedMigrations() (map[string]appliedMigration, error) {
+	rows, err := DB.Query(`SELECT version, checksum FROM schema_migrations`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load applied migrations: %w", err)
+	}
+	defer rows.Close()
+
+	applied := make(map[string]appliedMigration)
+	for rows.Next() {
+		var item appliedMigration
+		if err := rows.Scan(&item.version, &item.checksum); err != nil {
+			return nil, fmt.Errorf("failed to scan applied migration: %w", err)
+		}
+		applied[item.version] = item
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate applied migrations: %w", err)
+	}
+	return applied, nil
+}
+
+func migrationChecksum(content []byte) string {
+	sum := sha256.Sum256(content)
+	return fmt.Sprintf("%x", sum)
 }
 
 // ========================================
@@ -290,6 +376,7 @@ func TruncateAllTables() error {
 		"user_sessions",
 		"fcm_tokens",
 		"devices",
+		"oauth_identities",
 		"users",
 		"outbox_events",
 		"command_logs",

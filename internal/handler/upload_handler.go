@@ -177,7 +177,7 @@ func (h *UploadHandler) CreateAttachment(c *gin.Context) {
 	attachment, err := h.service.CreateAttachment(c.Request.Context(), services.CreateAttachmentInput{
 		UploaderID:      userID,
 		MessageID:       messageID,
-		EncryptedURL:    req.FileURL,
+		FileURL:         req.FileURL,
 		Filename:        req.Filename,
 		MimeType:        req.MimeType,
 		SizeBytes:       req.SizeBytes,
@@ -348,7 +348,7 @@ func toAttachmentPayload(attachment message.Attachment) httpdto.AttachmentPayloa
 	return httpdto.AttachmentPayload{
 		ID:              attachment.ID.String(),
 		UploaderID:      nullUUIDPtr(attachment.UploaderID),
-		EncryptedURL:    attachment.EncryptedURL,
+		FileURL:         attachment.FileURL,
 		Filename:        nullStringPtr(attachment.Filename),
 		MimeType:        attachment.MimeType,
 		SizeBytes:       attachment.SizeBytes,

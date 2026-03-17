@@ -19,22 +19,19 @@ CREATE TABLE IF NOT EXISTS users (
     updated_at      TIMESTAMP DEFAULT NOW()
 );
 
--- Devices: required for multi-device E2E message routing.
--- Server knows WHICH devices exist so it can deliver encrypted blobs.
--- NO keys are stored here — keys live only on client devices.
+-- Devices tracked for session and delivery fan-out.
 CREATE TABLE IF NOT EXISTS devices (
     id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    device_id       TEXT NOT NULL,          -- client-generated stable identifier
-    device_name     TEXT,                   -- "Hasnain's iPhone"
-    device_type     TEXT,                   -- ios, android, web, desktop
+    device_id       TEXT NOT NULL,
+    device_name     TEXT,
+    device_type     TEXT,
     is_active       BOOLEAN DEFAULT TRUE,
     registered_at   TIMESTAMP DEFAULT NOW(),
     last_seen_at    TIMESTAMP,
     UNIQUE (user_id, device_id)
 );
 
--- FCM / Push notification tokens
 CREATE TABLE IF NOT EXISTS fcm_tokens (
     id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -47,15 +44,41 @@ CREATE TABLE IF NOT EXISTS fcm_tokens (
     UNIQUE (device_id, token)
 );
 
--- Auth sessions (refresh token rotation)
 CREATE TABLE IF NOT EXISTS user_sessions (
     id                  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id             UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     device_id           UUID REFERENCES devices(id) ON DELETE SET NULL,
     refresh_token_hash  TEXT NOT NULL,
+    auth_provider       TEXT NOT NULL DEFAULT 'password',
     expires_at          TIMESTAMP NOT NULL,
     is_revoked          BOOLEAN DEFAULT FALSE,
     created_at          TIMESTAMP DEFAULT NOW()
+);
+
+ALTER TABLE IF EXISTS user_sessions
+    ADD COLUMN IF NOT EXISTS auth_provider TEXT;
+
+ALTER TABLE user_sessions
+    ALTER COLUMN auth_provider SET DEFAULT 'password';
+
+UPDATE user_sessions
+SET auth_provider = 'password'
+WHERE COALESCE(BTRIM(auth_provider), '') = '';
+
+ALTER TABLE user_sessions
+    ALTER COLUMN auth_provider SET NOT NULL;
+
+CREATE TABLE IF NOT EXISTS oauth_identities (
+    id                UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id           UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    provider          TEXT NOT NULL,
+    provider_user_id  TEXT NOT NULL,
+    provider_email    CITEXT,
+    email_verified    BOOLEAN DEFAULT FALSE,
+    created_at        TIMESTAMP DEFAULT NOW(),
+    updated_at        TIMESTAMP DEFAULT NOW(),
+    UNIQUE (provider, provider_user_id),
+    UNIQUE (user_id, provider)
 );
 
 -- Contacts: user adds another user as a contact
@@ -111,20 +134,17 @@ CREATE TABLE IF NOT EXISTS conversation_sequences (
 );
 
 -- ============================================================
--- MESSAGES (E2E encrypted — content is an opaque ciphertext blob)
+-- MESSAGES
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS messages (
     id                  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     conversation_id     UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     sender_id           UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    client_message_id   TEXT,               -- client idempotency key
-    seq_id              BIGINT,             -- auto-assigned by trigger
+    client_message_id   TEXT,
+    seq_id              BIGINT,
     type                message_type DEFAULT 'TEXT',
-    -- The actual message content, E2E encrypted (base64-encoded ciphertext).
-    -- Server cannot read this. Only recipients with the session key can decrypt.
-    encrypted_content   TEXT,
-    -- Metadata the server needs (unencrypted)
+    content             TEXT,
     is_forwarded        BOOLEAN DEFAULT FALSE,
     reply_to_msg_id     UUID REFERENCES messages(id),
     poll_id             UUID,               -- FK added after polls table
@@ -136,6 +156,24 @@ CREATE TABLE IF NOT EXISTS messages (
     expires_at          TIMESTAMP,          -- disappearing messages
     UNIQUE (conversation_id, client_message_id)
 );
+
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'messages' AND column_name = 'encrypted_content'
+    ) AND NOT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'messages' AND column_name = 'content'
+    ) THEN
+        ALTER TABLE messages RENAME COLUMN encrypted_content TO content;
+    END IF;
+END $$;
+
+ALTER TABLE messages
+    DROP COLUMN IF EXISTS key_fingerprint;
 
 -- ============================================================
 -- MESSAGE FEATURES
@@ -180,15 +218,32 @@ CREATE TABLE IF NOT EXISTS pinned_messages (
     PRIMARY KEY (conversation_id, message_id)
 );
 
--- Message edit history (encrypted — each version is a ciphertext blob)
 CREATE TABLE IF NOT EXISTS message_edits (
     id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     message_id      UUID NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
-    encrypted_content TEXT NOT NULL,         -- old content before the edit
+    content         TEXT NOT NULL,
     edited_by       UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     edited_at       TIMESTAMP DEFAULT NOW(),
     version_number  INT NOT NULL
 );
+
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'message_edits' AND column_name = 'encrypted_content'
+    ) AND NOT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'message_edits' AND column_name = 'content'
+    ) THEN
+        ALTER TABLE message_edits RENAME COLUMN encrypted_content TO content;
+    END IF;
+END $$;
+
+ALTER TABLE message_edits
+    DROP COLUMN IF EXISTS key_fingerprint;
 
 -- Mentions within a message
 CREATE TABLE IF NOT EXISTS message_mentions (
@@ -200,27 +255,39 @@ CREATE TABLE IF NOT EXISTS message_mentions (
 );
 
 -- ============================================================
--- ATTACHMENTS (files up to 15 MB: images, video, audio, files)
+-- ATTACHMENTS (files up to 15 MB)
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS attachments (
     id                  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     uploader_id         UUID REFERENCES users(id) ON DELETE SET NULL,
-    -- URL is encrypted — only the recipient can derive the decryption key
-    encrypted_url       TEXT NOT NULL,
+    file_url            TEXT NOT NULL,
     filename            TEXT,
     mime_type           TEXT NOT NULL,
     size_bytes          BIGINT NOT NULL CHECK (size_bytes <= 15728640), -- 15 MB max
-    -- View-once (one-time view image/video)
     view_once           BOOLEAN DEFAULT FALSE,
     viewed_at           TIMESTAMP,
-    -- Media metadata (unencrypted, optional — for UI layout before download)
     thumbnail_url       TEXT,
     width               INTEGER,
     height              INTEGER,
     duration_seconds    INTEGER,
     created_at          TIMESTAMP DEFAULT NOW()
 );
+
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'attachments' AND column_name = 'encrypted_url'
+    ) AND NOT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'attachments' AND column_name = 'file_url'
+    ) THEN
+        ALTER TABLE attachments RENAME COLUMN encrypted_url TO file_url;
+    END IF;
+END $$;
 
 -- Many-to-many: a message can have multiple attachments
 CREATE TABLE IF NOT EXISTS message_attachments (
@@ -331,8 +398,15 @@ CREATE TABLE IF NOT EXISTS outbox_events (
     error           TEXT,
     created_at      TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMP NOT NULL DEFAULT NOW(),
-    processed_at    TIMESTAMP
+    processed_at    TIMESTAMP,
+    next_retry_at   TIMESTAMP
 );
+
+ALTER TABLE IF EXISTS outbox_events
+    ADD COLUMN IF NOT EXISTS next_retry_at TIMESTAMP;
+
+DROP TABLE IF EXISTS conversation_key_shares;
+DROP TABLE IF EXISTS device_key_bundles;
 
 -- ============================================================
 -- CONVERSATION HOUSEKEEPING

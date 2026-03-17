@@ -16,6 +16,7 @@ type EventEnvelope struct {
 	Type           string         `json:"type"`
 	RequestID      string         `json:"request_id,omitempty"`
 	UserID         string         `json:"user_id,omitempty"`
+	DeviceID       string         `json:"device_id,omitempty"`
 	ConversationID string         `json:"conversation_id,omitempty"`
 	CallID         string         `json:"call_id,omitempty"`
 	Source         string         `json:"source,omitempty"`

@@ -20,8 +20,10 @@ import (
 type Broadcaster interface {
 	BroadcastConversation(ctx context.Context, conversationID uuid.UUID, envelope EventEnvelope, excludeUser *uuid.UUID) error
 	SendToUser(userID uuid.UUID, envelope EventEnvelope)
+	SendToDevice(deviceID uuid.UUID, envelope EventEnvelope)
 	PublishConversation(ctx context.Context, conversationID uuid.UUID, envelope EventEnvelope) error
 	PublishToUser(ctx context.Context, userID uuid.UUID, envelope EventEnvelope) error
+	PublishToDevice(ctx context.Context, deviceID uuid.UUID, envelope EventEnvelope) error
 }
 
 type Hub struct {
@@ -31,6 +33,7 @@ type Hub struct {
 	mu            sync.RWMutex
 	clients       map[string]*Client
 	byUser        map[string]map[string]*Client
+	byDevice      map[string]map[string]*Client
 	listenOnce    sync.Once
 }
 
@@ -52,6 +55,7 @@ func NewHub(redis *redisclient.Client, conversations repository.ConversationRepo
 		conversations: conversations,
 		clients:       map[string]*Client{},
 		byUser:        map[string]map[string]*Client{},
+		byDevice:      map[string]map[string]*Client{},
 	}
 }
 
@@ -64,6 +68,12 @@ func (h *Hub) Register(client *Client) {
 		h.byUser[userKey] = map[string]*Client{}
 	}
 	h.byUser[userKey][client.ID] = client
+	if strings.TrimSpace(client.DeviceID) != "" {
+		if h.byDevice[client.DeviceID] == nil {
+			h.byDevice[client.DeviceID] = map[string]*Client{}
+		}
+		h.byDevice[client.DeviceID][client.ID] = client
+	}
 }
 
 func (h *Hub) Unregister(client *Client) {
@@ -78,6 +88,14 @@ func (h *Hub) Unregister(client *Client) {
 		delete(group, client.ID)
 		if len(group) == 0 {
 			delete(h.byUser, userKey)
+		}
+	}
+	if strings.TrimSpace(client.DeviceID) != "" {
+		if group := h.byDevice[client.DeviceID]; group != nil {
+			delete(group, client.ID)
+			if len(group) == 0 {
+				delete(h.byDevice, client.DeviceID)
+			}
 		}
 	}
 	close(client.Send)
@@ -99,6 +117,37 @@ func (h *Hub) SendToUser(userID uuid.UUID, envelope EventEnvelope) {
 			h.logf("hub.send_to_user.queue_full", errors.New("client send buffer full"))
 		}
 	}
+}
+
+func (h *Hub) SendToDevice(deviceID uuid.UUID, envelope EventEnvelope) {
+	envelope.DeviceID = deviceID.String()
+	body, err := json.Marshal(envelope)
+	if err != nil {
+		h.logf("hub.send_to_device.marshal", err)
+		return
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for _, client := range h.byDevice[deviceID.String()] {
+		select {
+		case client.Send <- body:
+		default:
+			h.logf("hub.send_to_device.queue_full", errors.New("client send buffer full"))
+		}
+	}
+}
+
+func (h *Hub) PublishToDevice(ctx context.Context, deviceID uuid.UUID, envelope EventEnvelope) error {
+	if h.redis == nil {
+		return nil
+	}
+	envelope.DeviceID = deviceID.String()
+	envelope.Source = localPublishSource
+	body, err := json.Marshal(envelope)
+	if err != nil {
+		return err
+	}
+	return h.redis.Publish(ctx, events.DeviceChannel(deviceID.String()), body)
 }
 
 func (h *Hub) BroadcastConversation(ctx context.Context, conversationID uuid.UUID, envelope EventEnvelope, excludeUser *uuid.UUID) error {
@@ -147,7 +196,7 @@ func (h *Hub) StartRedisListener(ctx context.Context) {
 		return
 	}
 	h.listenOnce.Do(func() {
-		pubsub := h.redis.PSubscribe(ctx, "conversation:*", "call:*", "user:*")
+		pubsub := h.redis.PSubscribe(ctx, "conversation:*", "call:*", "user:*", "device:*")
 		if pubsub == nil {
 			return
 		}
@@ -211,6 +260,7 @@ func (h *Hub) dispatchRedisEnvelope(ctx context.Context, payload []byte) {
 	conversationID := parseEnvelopeConversationID(envelope)
 	callID := strings.TrimSpace(envelope.CallID)
 	targetUserID := parseEnvelopeUserID(envelope)
+	targetDeviceID := parseEnvelopeDeviceID(envelope)
 	if strings.TrimSpace(envelope.Source) == localPublishSource {
 		return
 	}
@@ -223,7 +273,7 @@ func (h *Hub) dispatchRedisEnvelope(ctx context.Context, payload []byte) {
 	h.mu.RUnlock()
 
 	for _, client := range clients {
-		if !h.shouldDeliverRedisEnvelope(ctx, client, conversationID, callID, targetUserID) {
+		if !h.shouldDeliverRedisEnvelope(ctx, client, conversationID, callID, targetUserID, targetDeviceID) {
 			continue
 		}
 		select {
@@ -234,7 +284,10 @@ func (h *Hub) dispatchRedisEnvelope(ctx context.Context, payload []byte) {
 	}
 }
 
-func (h *Hub) shouldDeliverRedisEnvelope(ctx context.Context, client *Client, conversationID uuid.UUID, callID string, targetUserID uuid.UUID) bool {
+func (h *Hub) shouldDeliverRedisEnvelope(ctx context.Context, client *Client, conversationID uuid.UUID, callID string, targetUserID uuid.UUID, targetDeviceID uuid.UUID) bool {
+	if targetDeviceID != uuid.Nil {
+		return strings.TrimSpace(client.DeviceID) == targetDeviceID.String()
+	}
 	if targetUserID != uuid.Nil {
 		return client.UserID == targetUserID
 	}
@@ -274,6 +327,18 @@ func parseEnvelopeUserID(envelope EventEnvelope) uuid.UUID {
 		return uuid.Nil
 	}
 	return userID
+}
+
+func parseEnvelopeDeviceID(envelope EventEnvelope) uuid.UUID {
+	deviceIDStr := strings.TrimSpace(envelope.DeviceID)
+	if deviceIDStr == "" {
+		return uuid.Nil
+	}
+	deviceID, err := uuid.Parse(deviceIDStr)
+	if err != nil {
+		return uuid.Nil
+	}
+	return deviceID
 }
 
 func (h *Hub) logf(operation string, err error) {

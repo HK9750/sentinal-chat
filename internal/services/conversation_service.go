@@ -348,7 +348,7 @@ func (s *ConversationService) buildConversationView(ctx context.Context, conv co
 	participant, err := s.conversations.GetParticipant(ctx, conv.ID, userID)
 	if err == nil {
 		lastRead = participant.LastReadSequence
-		if s.messageSvc != nil {
+		if s.messageSvc != nil && lastMessage != nil && lastMessage.SenderID != userID.String() {
 			unreadCount, _ = s.messageSvc.unreadCountSince(ctx, conv.ID, lastRead)
 		}
 	}

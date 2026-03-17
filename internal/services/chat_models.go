@@ -58,12 +58,13 @@ type ParticipantView struct {
 }
 
 type MessageSummaryView struct {
-	ID        string     `json:"id"`
-	SenderID  string     `json:"sender_id"`
-	Kind      string     `json:"kind"`
-	CreatedAt time.Time  `json:"created_at"`
-	SeqID     int64      `json:"seq_id"`
-	DeletedAt *time.Time `json:"deleted_at,omitempty"`
+	ID            string     `json:"id"`
+	SenderID      string     `json:"sender_id"`
+	Kind          string     `json:"kind"`
+	CreatedAt     time.Time  `json:"created_at"`
+	SeqID         int64      `json:"seq_id"`
+	ReceiptStatus *string    `json:"receipt_status,omitempty"`
+	DeletedAt     *time.Time `json:"deleted_at,omitempty"`
 }
 
 type AttachmentView struct {
@@ -113,47 +114,47 @@ type ReactionView struct {
 }
 
 type MessageView struct {
-	ID               string           `json:"id"`
-	ConversationID   string           `json:"conversation_id"`
-	SenderID         string           `json:"sender_id"`
-	ClientMessageID  *string          `json:"client_message_id,omitempty"`
-	SeqID            int64            `json:"seq_id"`
-	Type             string           `json:"type"`
-	EncryptedContent *string          `json:"encrypted_content,omitempty"`
-	IsForwarded      bool             `json:"is_forwarded"`
-	ReplyToMsgID     *string          `json:"reply_to_msg_id,omitempty"`
-	MentionCount     int              `json:"mention_count"`
-	CreatedAt        time.Time        `json:"created_at"`
-	EditedAt         *time.Time       `json:"edited_at,omitempty"`
-	DeletedAt        *time.Time       `json:"deleted_at,omitempty"`
-	ExpiresAt        *time.Time       `json:"expires_at,omitempty"`
-	Attachments      []AttachmentView `json:"attachments,omitempty"`
-	Receipts         []ReceiptView    `json:"receipts,omitempty"`
-	Reactions        []ReactionView   `json:"reactions,omitempty"`
-	Poll             *PollView        `json:"poll,omitempty"`
-	Pinned           bool             `json:"pinned"`
-	IsStarred        bool             `json:"is_starred"`
+	ID              string           `json:"id"`
+	ConversationID  string           `json:"conversation_id"`
+	SenderID        string           `json:"sender_id"`
+	ClientMessageID *string          `json:"client_message_id,omitempty"`
+	SeqID           int64            `json:"seq_id"`
+	Type            string           `json:"type"`
+	Content         *string          `json:"content,omitempty"`
+	IsForwarded     bool             `json:"is_forwarded"`
+	ReplyToMsgID    *string          `json:"reply_to_msg_id,omitempty"`
+	MentionCount    int              `json:"mention_count"`
+	CreatedAt       time.Time        `json:"created_at"`
+	EditedAt        *time.Time       `json:"edited_at,omitempty"`
+	DeletedAt       *time.Time       `json:"deleted_at,omitempty"`
+	ExpiresAt       *time.Time       `json:"expires_at,omitempty"`
+	Attachments     []AttachmentView `json:"attachments,omitempty"`
+	Receipts        []ReceiptView    `json:"receipts,omitempty"`
+	Reactions       []ReactionView   `json:"reactions,omitempty"`
+	Poll            *PollView        `json:"poll,omitempty"`
+	Pinned          bool             `json:"pinned"`
+	IsStarred       bool             `json:"is_starred"`
 }
 
 type SendMessageInput struct {
-	ConversationID   uuid.UUID
-	SenderID         uuid.UUID
-	ClientMessageID  string
-	Type             string
-	EncryptedContent string
-	ReplyToMsgID     *uuid.UUID
-	ExpiresAt        *time.Time
-	AttachmentIDs    []uuid.UUID
-	MentionUserIDs   []uuid.UUID
-	Poll             *CreatePollInput
+	ConversationID  uuid.UUID
+	SenderID        uuid.UUID
+	ClientMessageID string
+	Type            string
+	Content         string
+	ReplyToMsgID    *uuid.UUID
+	ExpiresAt       *time.Time
+	AttachmentIDs   []uuid.UUID
+	MentionUserIDs  []uuid.UUID
+	Poll            *CreatePollInput
 }
 
 type EditMessageInput struct {
-	ConversationID   uuid.UUID
-	MessageID        uuid.UUID
-	EditorID         uuid.UUID
-	EncryptedContent string
-	ExpiresAt        *time.Time
+	ConversationID uuid.UUID
+	MessageID      uuid.UUID
+	EditorID       uuid.UUID
+	Content        string
+	ExpiresAt      *time.Time
 }
 
 type DeleteMessageInput struct {
@@ -182,6 +183,12 @@ type ReceiptInput struct {
 	ActorID        uuid.UUID
 	Status         string
 	UpToSeqID      *int64
+}
+
+type ReceiptUpdateResult struct {
+	MessageIDs []uuid.UUID
+	Status     string
+	UpToSeqID  *int64
 }
 
 type CreateConversationInput struct {
