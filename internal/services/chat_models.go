@@ -244,6 +244,7 @@ type CallSignalInput struct {
 	ConversationID uuid.UUID
 	FromUserID     uuid.UUID
 	ToUserID       uuid.UUID
+	SignalType     string
 	Payload        map[string]any
 }
 

@@ -347,43 +347,45 @@ func (h *WSHandler) handleCall(ctx context.Context, client *chatws.Client, frame
 	if frame.Type == events.InboundCallStart {
 		conversationID, err := parseFrameConversationID(frame)
 		if err != nil {
-			h.sendError(client, "INVALID_CONVERSATION", "invalid conversation")
+			h.sendErrorWithRequestID(client, frame.RequestID, "INVALID_CONVERSATION", "invalid conversation")
 			return
 		}
 		payload, err := h.realtimeService.StartCall(ctx, services.CallStartInput{ConversationID: conversationID, CallerID: client.UserID, Type: stringValue(data["type"])})
 		if err != nil {
-			h.sendError(client, "CALL_START_FAILED", err.Error())
+			h.sendErrorWithRequestID(client, frame.RequestID, "CALL_START_FAILED", err.Error())
 			return
 		}
 		callID, _ := uuid.Parse(stringValue(payload["call_id"]))
-		h.sendEnvelope(client, chatws.NewCallEvent(events.CallIncoming, conversationID, callID, payload))
+		envelope := chatws.NewCallEvent(events.CallIncoming, conversationID, callID, payload)
+		envelope.RequestID = strings.TrimSpace(frame.RequestID)
+		h.sendEnvelope(client, envelope)
 		return
 	}
 	callID, err := uuid.Parse(strings.TrimSpace(frame.CallID))
 	if err != nil {
-		h.sendError(client, "INVALID_CALL", "invalid call")
+		h.sendErrorWithRequestID(client, frame.RequestID, "INVALID_CALL", "invalid call")
 		return
 	}
 	if frame.Type == events.InboundCallEnd {
 		if err := h.realtimeService.EndCall(ctx, services.CallEndInput{CallID: callID, ActorID: client.UserID, Reason: stringValue(data["reason"])}); err != nil {
-			h.sendError(client, "CALL_END_FAILED", err.Error())
+			h.sendErrorWithRequestID(client, frame.RequestID, "CALL_END_FAILED", err.Error())
 			return
 		}
-		h.sendEnvelope(client, chatws.EventEnvelope{Type: events.CallEnded, CallID: callID.String(), SentAt: time.Now().UTC(), Data: map[string]any{"call_id": callID.String(), "actor_id": client.UserID.String()}})
 		return
+		
 	}
 	conversationID, err := parseFrameConversationID(frame)
 	if err != nil {
-		h.sendError(client, "INVALID_CONVERSATION", "invalid conversation")
+		h.sendErrorWithRequestID(client, frame.RequestID, "INVALID_CONVERSATION", "invalid conversation")
 		return
 	}
 	toUserID, err := uuid.Parse(stringValue(data["to_user_id"]))
 	if err != nil {
-		h.sendError(client, "INVALID_TARGET", "invalid target user")
+		h.sendErrorWithRequestID(client, frame.RequestID, "INVALID_TARGET", "invalid target user")
 		return
 	}
 	if err := h.realtimeService.ForwardCallSignal(ctx, frame.Type, services.CallSignalInput{CallID: callID, ConversationID: conversationID, FromUserID: client.UserID, ToUserID: toUserID, Payload: data}); err != nil {
-		h.sendError(client, "CALL_SIGNAL_FAILED", err.Error())
+		h.sendErrorWithRequestID(client, frame.RequestID, "CALL_SIGNAL_FAILED", err.Error())
 	}
 }
 

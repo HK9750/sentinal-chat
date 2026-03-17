@@ -54,6 +54,10 @@ func (s *RealtimeService) SendMessage(ctx context.Context, userID uuid.UUID, in 
 	if err != nil {
 		return MessageView{}, err
 	}
+	if s.broadcaster != nil {
+		envelope := chatws.NewMessageEvent(events.MessageNew, in.ConversationID, map[string]any{"message": message})
+		_ = s.broadcaster.BroadcastConversation(ctx, in.ConversationID, envelope, nil)
+	}
 	return message, nil
 }
 
@@ -62,6 +66,10 @@ func (s *RealtimeService) EditMessage(ctx context.Context, userID uuid.UUID, in 
 	if err != nil {
 		return MessageView{}, err
 	}
+	if s.broadcaster != nil {
+		envelope := chatws.NewMessageEvent(events.MessageEdited, in.ConversationID, map[string]any{"message": message})
+		_ = s.broadcaster.BroadcastConversation(ctx, in.ConversationID, envelope, nil)
+	}
 	return message, nil
 }
 
@@ -69,6 +77,10 @@ func (s *RealtimeService) DeleteMessage(ctx context.Context, userID uuid.UUID, i
 	message, err := s.messageService.Delete(ctx, in)
 	if err != nil {
 		return MessageView{}, err
+	}
+	if s.broadcaster != nil {
+		envelope := chatws.NewMessageEvent(events.MessageDeleted, in.ConversationID, map[string]any{"message": message})
+		_ = s.broadcaster.BroadcastConversation(ctx, in.ConversationID, envelope, nil)
 	}
 	return message, nil
 }
@@ -86,6 +98,10 @@ func (s *RealtimeService) UpdateReaction(ctx context.Context, in ReactionInput, 
 	if err != nil {
 		return nil, err
 	}
+	if s.broadcaster != nil {
+		envelope := chatws.NewMessageEvent(events.MessageReaction, in.ConversationID, map[string]any{"message_id": in.MessageID.String(), "reactions": reactions})
+		_ = s.broadcaster.BroadcastConversation(ctx, in.ConversationID, envelope, nil)
+	}
 	return reactions, nil
 }
 
@@ -93,6 +109,14 @@ func (s *RealtimeService) PinMessage(ctx context.Context, in PinMessageInput) er
 	_, err := s.messageService.Pin(ctx, in)
 	if err != nil {
 		return err
+	}
+	if s.broadcaster != nil {
+		eventType := events.MessagePinned
+		if !in.Pinned {
+			eventType = events.MessageUnpinned
+		}
+		envelope := chatws.NewMessageEvent(eventType, in.ConversationID, map[string]any{"message_id": in.MessageID.String(), "pinned": in.Pinned})
+		_ = s.broadcaster.BroadcastConversation(ctx, in.ConversationID, envelope, nil)
 	}
 	return nil
 }
@@ -119,6 +143,10 @@ func (s *RealtimeService) VotePoll(ctx context.Context, in VotePollInput) (PollV
 	if err != nil {
 		return PollView{}, err
 	}
+	if s.broadcaster != nil {
+		envelope := chatws.NewConversationEvent(events.PollUpdate, in.ConversationID, map[string]any{"poll": poll})
+		_ = s.broadcaster.BroadcastConversation(ctx, in.ConversationID, envelope, nil)
+	}
 	return poll, nil
 }
 
@@ -127,27 +155,32 @@ func (s *RealtimeService) ClosePoll(ctx context.Context, userID, conversationID,
 	if err != nil {
 		return PollView{}, err
 	}
+	if s.broadcaster != nil {
+		envelope := chatws.NewConversationEvent(events.PollUpdate, conversationID, map[string]any{"poll": poll})
+		_ = s.broadcaster.BroadcastConversation(ctx, conversationID, envelope, nil)
+	}
 	return poll, nil
 }
 
 func (s *RealtimeService) StartCall(ctx context.Context, in CallStartInput) (map[string]any, error) {
-	call, participants, err := s.callService.Start(ctx, in)
+	call, participantIDs, err := s.callService.Start(ctx, in)
 	if err != nil {
 		return nil, err
 	}
 	if s.broadcaster != nil {
-		envelope := chatws.NewCallEvent(events.CallIncoming, in.ConversationID, call.ID, map[string]any{"call_id": call.ID.String(), "type": call.Type, "initiated_by": in.CallerID.String()})
-		for _, participant := range participants {
-			if participant.UserID == in.CallerID {
+		envelope := chatws.NewCallEvent(events.CallIncoming, in.ConversationID, call.ID, map[string]any{"call_id": call.ID.String(), "type": call.Type, "initiated_by": in.CallerID.String(), "participant_ids": uuidSliceToStrings(participantIDs)})
+		for _, participantID := range participantIDs {
+			if participantID == in.CallerID {
 				continue
 			}
-			s.broadcaster.SendToUser(participant.UserID, envelope)
+			s.broadcaster.SendToUser(participantID, envelope)
 		}
 	}
-	return map[string]any{"call_id": call.ID.String(), "type": call.Type, "initiated_by": in.CallerID.String(), "started_at": call.StartedAt}, nil
+	return map[string]any{"call_id": call.ID.String(), "type": call.Type, "initiated_by": in.CallerID.String(), "started_at": call.StartedAt, "participant_ids": uuidSliceToStrings(participantIDs)}, nil
 }
 
 func (s *RealtimeService) ForwardCallSignal(ctx context.Context, frameType string, in CallSignalInput) error {
+	in.SignalType = frameType
 	if err := s.callService.ForwardSignal(ctx, in); err != nil {
 		return err
 	}
@@ -167,7 +200,8 @@ func (s *RealtimeService) ForwardCallSignal(ctx context.Context, frameType strin
 }
 
 func (s *RealtimeService) EndCall(ctx context.Context, in CallEndInput) error {
-	return s.callService.End(ctx, in)
+	_, err := s.callService.End(ctx, in)
+	return err
 }
 
 func (s *RealtimeService) UndoLatest(ctx context.Context, userID uuid.UUID, conversationID *uuid.UUID) (CommandResult, error) {

@@ -125,6 +125,7 @@ type MessageRepository interface {
 
 	GetConversationMessages(ctx context.Context, conversationID uuid.UUID, beforeSeq int64, limit int) ([]message.Message, error)
 	GetMessagesBySeqRange(ctx context.Context, conversationID uuid.UUID, startSeq, endSeq int64) ([]message.Message, error)
+	// CountUnreadSince(ctx context.Context, conversationID, userID uuid.UUID, lastReadSeq int64) (int64, error)
 	GetUnreadMessages(ctx context.Context, conversationID, userID uuid.UUID) ([]message.Message, error)
 	SearchMessages(ctx context.Context, conversationID uuid.UUID, query string, page, limit int) ([]message.Message, int64, error)
 	GetMessagesByType(ctx context.Context, conversationID uuid.UUID, msgType string, limit int) ([]message.Message, error)

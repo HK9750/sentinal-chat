@@ -33,7 +33,7 @@ func NewCallService(calls repository.CallRepository, conversations repository.Co
 	}
 }
 
-func (s *CallService) Start(ctx context.Context, in CallStartInput) (calldomain.Call, []conversationParticipant, error) {
+func (s *CallService) Start(ctx context.Context, in CallStartInput) (calldomain.Call, []uuid.UUID, error) {
 	if s == nil || s.calls == nil || s.conversations == nil {
 		return calldomain.Call{}, nil, sentinal_errors.ErrServiceUnavailable
 	}
@@ -67,8 +67,9 @@ func (s *CallService) Start(ctx context.Context, in CallStartInput) (calldomain.
 	if err != nil {
 		return calldomain.Call{}, nil, err
 	}
-	resultParticipants := make([]conversationParticipant, 0, len(participants))
+	participantIDs := make([]uuid.UUID, 0, len(participants))
 	for _, participant := range participants {
+		participantIDs = append(participantIDs, participant.UserID)
 		status := "INVITED"
 		joinedAt := sql.NullTime{}
 		if participant.UserID == in.CallerID {
@@ -78,10 +79,9 @@ func (s *CallService) Start(ctx context.Context, in CallStartInput) (calldomain.
 		if err := s.calls.AddParticipant(ctx, &calldomain.CallParticipant{CallID: call.ID, UserID: participant.UserID, Status: status, JoinedAt: joinedAt}); err != nil {
 			return calldomain.Call{}, nil, err
 		}
-		resultParticipants = append(resultParticipants, conversationParticipant{UserID: participant.UserID, DisplayName: participant.DisplayName})
 	}
 	if s.outbox != nil {
-		envelope := chatws.MarkLocal(chatws.NewCallEvent(events.CallIncoming, in.ConversationID, call.ID, map[string]any{"call_id": call.ID.String(), "initiated_by": in.CallerID.String(), "type": call.Type}))
+		envelope := chatws.MarkLocal(chatws.NewCallEvent(events.CallIncoming, in.ConversationID, call.ID, map[string]any{"call_id": call.ID.String(), "initiated_by": in.CallerID.String(), "type": call.Type, "participant_ids": uuidSliceToStrings(participantIDs)}))
 		if event, err := chatws.NewOutboxEvent(events.CallIncoming, outbox.AggregateCall, call.ID, envelope); err == nil {
 			if err := s.outbox.Create(ctx, nil, event); err != nil {
 				return calldomain.Call{}, nil, err
@@ -90,7 +90,7 @@ func (s *CallService) Start(ctx context.Context, in CallStartInput) (calldomain.
 			return calldomain.Call{}, nil, err
 		}
 	}
-	return call, resultParticipants, nil
+	return call, participantIDs, nil
 }
 
 func (s *CallService) ForwardSignal(ctx context.Context, in CallSignalInput) error {
@@ -100,37 +100,47 @@ func (s *CallService) ForwardSignal(ctx context.Context, in CallSignalInput) err
 	if err := s.proxy.RequireParticipant(ctx, in.ConversationID, in.ToUserID); err != nil {
 		return err
 	}
-	if _, err := s.calls.GetByID(ctx, in.CallID); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (s *CallService) End(ctx context.Context, in CallEndInput) error {
 	call, err := s.calls.GetByID(ctx, in.CallID)
 	if err != nil {
 		return err
 	}
-	if err := s.proxy.RequireParticipant(ctx, call.ConversationID, in.ActorID); err != nil {
-		return err
+	if call.ConversationID != in.ConversationID || call.EndedAt.Valid {
+		return sentinal_errors.ErrConflict
 	}
-	if err := s.calls.EndCall(ctx, in.CallID, strings.ToUpper(strings.TrimSpace(in.Reason))); err != nil {
-		return err
-	}
-	if s.outbox != nil {
-		envelope := chatws.NewCallEvent(events.CallEnded, call.ConversationID, in.CallID, map[string]any{"call_id": in.CallID.String(), "reason": in.Reason, "actor_id": in.ActorID.String()})
-		if event, err := chatws.NewOutboxEvent(events.CallEnded, outbox.AggregateCall, in.CallID, envelope); err == nil {
-			if err := s.outbox.Create(ctx, nil, event); err != nil {
-				return err
-			}
-		} else {
+	if strings.EqualFold(in.SignalType, events.InboundCallAnswer) {
+		if err := s.calls.UpdateParticipantStatus(ctx, in.CallID, in.FromUserID, "CONNECTED"); err != nil {
+			return err
+		}
+		if err := s.calls.MarkConnected(ctx, in.CallID); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-type conversationParticipant struct {
-	UserID      uuid.UUID
-	DisplayName string
+func (s *CallService) End(ctx context.Context, in CallEndInput) (calldomain.Call, error) {
+	call, err := s.calls.GetByID(ctx, in.CallID)
+	if err != nil {
+		return calldomain.Call{}, err
+	}
+	if err := s.proxy.RequireParticipant(ctx, call.ConversationID, in.ActorID); err != nil {
+		return calldomain.Call{}, err
+	}
+	if err := s.calls.UpdateParticipantStatus(ctx, in.CallID, in.ActorID, "LEFT"); err != nil {
+		return calldomain.Call{}, err
+	}
+	if err := s.calls.EndCall(ctx, in.CallID, strings.ToUpper(strings.TrimSpace(in.Reason))); err != nil {
+		return calldomain.Call{}, err
+	}
+	if s.outbox != nil {
+		envelope := chatws.NewCallEvent(events.CallEnded, call.ConversationID, in.CallID, map[string]any{"call_id": in.CallID.String(), "reason": in.Reason, "actor_id": in.ActorID.String()})
+		if event, err := chatws.NewOutboxEvent(events.CallEnded, outbox.AggregateCall, in.CallID, envelope); err == nil {
+			if err := s.outbox.Create(ctx, nil, event); err != nil {
+				return calldomain.Call{}, err
+			}
+		} else {
+			return calldomain.Call{}, err
+		}
+	}
+	return call, nil
 }
