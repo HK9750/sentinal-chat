@@ -63,7 +63,8 @@ func (h *WSHandler) Connect(c *gin.Context) {
 		_ = conn.Close()
 		return
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	baseCtx := context.WithValue(c.Request.Context(), logger.UserIdKey, claims.UserID)
+	ctx, cancel := context.WithCancel(baseCtx)
 	client := &chatws.Client{
 		ID:         uuid.NewString(),
 		UserID:     userID,
@@ -75,14 +76,29 @@ func (h *WSHandler) Connect(c *gin.Context) {
 		CancelFunc: cancel,
 	}
 	h.hub.Register(client)
+	if h.realtimeService != nil {
+		_ = h.realtimeService.UpdatePresence(ctx, client.UserID, true)
+	}
+	if h.logger != nil {
+		h.logger.InfofCtx(ctx, "ws.connect user_id=%s session_id=%s device_id=%s client_id=%s", claims.UserID, claims.SessionID, claims.DeviceID, client.ID)
+	}
 	go client.WritePump()
 	h.sendEnvelope(client, chatws.ConnectionReadyEnvelope(claims.UserID, claims.SessionID, claims.DeviceID))
 	go h.readPump(ctx, client)
 }
 
 func (h *WSHandler) readPump(ctx context.Context, client *chatws.Client) {
-	defer client.Close()
+	defer func() {
+		if h.realtimeService != nil {
+			_ = h.realtimeService.UpdatePresence(ctx, client.UserID, false)
+		}
+		if h.logger != nil {
+			h.logger.InfofCtx(ctx, "ws.disconnect user_id=%s device_id=%s client_id=%s", client.UserID.String(), strings.TrimSpace(client.DeviceID), client.ID)
+		}
+		client.Close()
+	}()
 	_ = client.Conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	client.Conn.SetReadLimit(1 << 20)
 	client.Conn.SetPongHandler(func(string) error {
 		_ = client.Conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 		return nil
@@ -90,10 +106,16 @@ func (h *WSHandler) readPump(ctx context.Context, client *chatws.Client) {
 	for {
 		_, payload, err := client.Conn.ReadMessage()
 		if err != nil {
+			if h.logger != nil {
+				h.logger.InfofCtx(ctx, "ws.read.closed client_id=%s err=%v", client.ID, err)
+			}
 			return
 		}
 		var frame httpdto.WebSocketInboundFrame
 		if err := json.Unmarshal(payload, &frame); err != nil {
+			if h.logger != nil {
+				h.logger.Warnw("ws.invalid_frame", "client_id", client.ID, "user_id", client.UserID.String(), "error", err.Error())
+			}
 			h.sendError(client, "INVALID_FRAME", "invalid frame")
 			continue
 		}
@@ -372,7 +394,7 @@ func (h *WSHandler) handleCall(ctx context.Context, client *chatws.Client, frame
 			return
 		}
 		return
-		
+
 	}
 	conversationID, err := parseFrameConversationID(frame)
 	if err != nil {
@@ -462,7 +484,7 @@ func (h *WSHandler) sendEnvelope(client *chatws.Client, envelope chatws.EventEnv
 	case client.Send <- body:
 	default:
 		if h.logger != nil {
-			h.logger.Errorf("ws.send_envelope.queue_full: client_id=%s", client.ID)
+			h.logger.Errorw("ws.send_envelope.queue_full", "client_id", client.ID, "user_id", client.UserID.String())
 		}
 	}
 }

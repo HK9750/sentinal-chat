@@ -74,6 +74,18 @@ func (h *Hub) Register(client *Client) {
 		}
 		h.byDevice[client.DeviceID][client.ID] = client
 	}
+	h.infof("hub.register user_id=%s device_id=%s total_clients=%d", client.UserID.String(), strings.TrimSpace(client.DeviceID), len(h.clients))
+}
+
+func (h *Hub) UserConnectionCount(userID uuid.UUID) int {
+	if h == nil {
+		return 0
+	}
+
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	return len(h.byUser[userID.String()])
 }
 
 func (h *Hub) Unregister(client *Client) {
@@ -98,6 +110,7 @@ func (h *Hub) Unregister(client *Client) {
 			}
 		}
 	}
+	h.infof("hub.unregister user_id=%s device_id=%s total_clients=%d", client.UserID.String(), strings.TrimSpace(client.DeviceID), len(h.clients))
 	close(client.Send)
 }
 
@@ -196,21 +209,48 @@ func (h *Hub) StartRedisListener(ctx context.Context) {
 		return
 	}
 	h.listenOnce.Do(func() {
-		pubsub := h.redis.PSubscribe(ctx, "conversation:*", "call:*", "user:*", "device:*")
-		if pubsub == nil {
-			return
-		}
 		go func() {
-			defer pubsub.Close()
+			backoff := time.Second
 			for {
-				msg, err := pubsub.ReceiveMessage(ctx)
-				if err != nil {
-					if ctx.Err() == nil {
-						h.logf("hub.redis_listener.receive", err)
-					}
+				if ctx.Err() != nil {
 					return
 				}
-				h.dispatchRedisEnvelope(ctx, []byte(msg.Payload))
+
+				pubsub := h.redis.PSubscribe(ctx, "conversation:*", "call:*", "user:*", "device:*")
+				if pubsub == nil {
+					h.logf("hub.redis_listener.subscribe", errors.New("redis pubsub unavailable"))
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(backoff):
+					}
+					if backoff < 15*time.Second {
+						backoff *= 2
+					}
+					continue
+				}
+
+				h.infof("hub.redis_listener.subscribed patterns=conversation:* call:* user:* device:*")
+				backoff = time.Second
+				for {
+					msg, err := pubsub.ReceiveMessage(ctx)
+					if err != nil {
+						_ = pubsub.Close()
+						if ctx.Err() == nil {
+							h.logf("hub.redis_listener.receive", err)
+							select {
+							case <-ctx.Done():
+								return
+							case <-time.After(backoff):
+							}
+							if backoff < 15*time.Second {
+								backoff *= 2
+							}
+						}
+						break
+					}
+					h.dispatchRedisEnvelope(ctx, []byte(msg.Payload))
+				}
 			}
 		}()
 	})
@@ -264,6 +304,17 @@ func (h *Hub) dispatchRedisEnvelope(ctx context.Context, payload []byte) {
 	if strings.TrimSpace(envelope.Source) == localPublishSource {
 		return
 	}
+	participantsByUserID := map[string]struct{}{}
+	if conversationID != uuid.Nil && targetUserID == uuid.Nil && targetDeviceID == uuid.Nil {
+		participants, err := h.conversations.GetParticipants(ctx, conversationID)
+		if err != nil {
+			h.logf("hub.redis_listener.participants", err)
+			return
+		}
+		for _, participant := range participants {
+			participantsByUserID[participant.UserID.String()] = struct{}{}
+		}
+	}
 
 	h.mu.RLock()
 	clients := make([]*Client, 0, len(h.clients))
@@ -273,7 +324,7 @@ func (h *Hub) dispatchRedisEnvelope(ctx context.Context, payload []byte) {
 	h.mu.RUnlock()
 
 	for _, client := range clients {
-		if !h.shouldDeliverRedisEnvelope(ctx, client, conversationID, callID, targetUserID, targetDeviceID) {
+		if !h.shouldDeliverRedisEnvelope(ctx, client, conversationID, callID, targetUserID, targetDeviceID, participantsByUserID) {
 			continue
 		}
 		select {
@@ -284,7 +335,7 @@ func (h *Hub) dispatchRedisEnvelope(ctx context.Context, payload []byte) {
 	}
 }
 
-func (h *Hub) shouldDeliverRedisEnvelope(ctx context.Context, client *Client, conversationID uuid.UUID, callID string, targetUserID uuid.UUID, targetDeviceID uuid.UUID) bool {
+func (h *Hub) shouldDeliverRedisEnvelope(ctx context.Context, client *Client, conversationID uuid.UUID, callID string, targetUserID uuid.UUID, targetDeviceID uuid.UUID, participantsByUserID map[string]struct{}) bool {
 	if targetDeviceID != uuid.Nil {
 		return strings.TrimSpace(client.DeviceID) == targetDeviceID.String()
 	}
@@ -292,6 +343,10 @@ func (h *Hub) shouldDeliverRedisEnvelope(ctx context.Context, client *Client, co
 		return client.UserID == targetUserID
 	}
 	if conversationID != uuid.Nil {
+		if len(participantsByUserID) > 0 {
+			_, ok := participantsByUserID[client.UserID.String()]
+			return ok
+		}
 		participant, err := h.conversations.IsParticipant(ctx, conversationID, client.UserID)
 		if err != nil {
 			h.logf("hub.redis_listener.participant_check", err)
@@ -300,7 +355,7 @@ func (h *Hub) shouldDeliverRedisEnvelope(ctx context.Context, client *Client, co
 		return participant
 	}
 	if callID != "" {
-		return true
+		return false
 	}
 	return false
 }
@@ -346,4 +401,11 @@ func (h *Hub) logf(operation string, err error) {
 		return
 	}
 	h.logger.Errorf("%s: %v", operation, err)
+}
+
+func (h *Hub) infof(template string, args ...interface{}) {
+	if h == nil || h.logger == nil {
+		return
+	}
+	h.logger.Infof(template, args...)
 }

@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"strings"
 	"time"
 
 	"sentinal-chat/pkg/logger"
@@ -24,7 +25,21 @@ func LoggingMiddleware(l *logger.Logger) gin.HandlerFunc {
 			log = logger.GetGlobalLogger()
 		}
 		if log != nil {
-			log.Infof("%s %s %d %s", method, path, status, latency.String())
+			requestID := strings.TrimSpace(c.Writer.Header().Get("X-Request-Id"))
+			userID := ""
+			if userValue, exists := c.Get("user_id"); exists {
+				if parsedUserID, ok := userValue.(interface{ String() string }); ok {
+					userID = parsedUserID.String()
+				}
+			}
+			log.Infow("http_request",
+				"method", method,
+				"path", path,
+				"status", status,
+				"latency_ms", latency.Milliseconds(),
+				"request_id", requestID,
+				"user_id", userID,
+			)
 		}
 	}
 }

@@ -2,6 +2,7 @@ package redis
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -37,7 +38,7 @@ func NewRedis(cfg *config.Config) (*Client, error) {
 
 func (r *Client) Publish(ctx context.Context, channel string, payload []byte) error {
 	if r == nil || r.client == nil {
-		return nil
+		return errors.New("redis client unavailable")
 	}
 	return r.client.Publish(ctx, channel, payload).Err()
 }

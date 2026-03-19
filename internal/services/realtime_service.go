@@ -19,16 +19,71 @@ type RealtimeService struct {
 	callService     *CallService
 	conversationSvc *ConversationService
 	commandService  *CommandService
+	userService     *UserService
 }
 
-func NewRealtimeService(broadcaster chatws.Broadcaster, conversationSvc *ConversationService, messageSvc *MessageService, callSvc *CallService, commandSvc *CommandService) *RealtimeService {
+type presenceCounter interface {
+	UserConnectionCount(userID uuid.UUID) int
+}
+
+func NewRealtimeService(broadcaster chatws.Broadcaster, conversationSvc *ConversationService, messageSvc *MessageService, callSvc *CallService, commandSvc *CommandService, userSvc *UserService) *RealtimeService {
 	return &RealtimeService{
 		broadcaster:     broadcaster,
 		messageService:  messageSvc,
 		callService:     callSvc,
 		conversationSvc: conversationSvc,
 		commandService:  commandSvc,
+		userService:     userSvc,
 	}
+}
+
+func (s *RealtimeService) UpdatePresence(ctx context.Context, userID uuid.UUID, online bool) error {
+	if s == nil || s.userService == nil || s.broadcaster == nil || userID == uuid.Nil {
+		return nil
+	}
+
+	if !online {
+		if counter, ok := s.broadcaster.(presenceCounter); ok && counter.UserConnectionCount(userID) > 0 {
+			return nil
+		}
+	}
+
+	if s.userService.users != nil {
+		if err := s.userService.users.UpdateOnlineStatus(ctx, userID, online); err != nil {
+			return err
+		}
+	}
+
+	presenceData := map[string]any{
+		"user_id":   userID.String(),
+		"is_online": online,
+	}
+	if !online {
+		presenceData["last_seen_at"] = time.Now().UTC()
+	}
+	envelope := chatws.NewUserEvent(events.PresenceUpdate, userID.String(), presenceData)
+
+	s.broadcaster.SendToUser(userID, envelope)
+	if err := s.broadcaster.PublishToUser(ctx, userID, envelope); err != nil {
+		return err
+	}
+
+	if s.userService.users == nil {
+		return nil
+	}
+
+	contacts, err := s.userService.users.GetUserContacts(ctx, userID)
+	if err != nil {
+		return err
+	}
+	for _, contact := range contacts {
+		s.broadcaster.SendToUser(contact.ContactUserID, envelope)
+		if err := s.broadcaster.PublishToUser(ctx, contact.ContactUserID, envelope); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (s *RealtimeService) HandleTyping(ctx context.Context, conversationID, userID uuid.UUID, started bool) error {
@@ -57,6 +112,7 @@ func (s *RealtimeService) SendMessage(ctx context.Context, userID uuid.UUID, in 
 	if s.broadcaster != nil {
 		envelope := chatws.NewMessageEvent(events.MessageNew, in.ConversationID, map[string]any{"message": message})
 		_ = s.broadcaster.BroadcastConversation(ctx, in.ConversationID, envelope, nil)
+		_ = s.broadcaster.PublishConversation(ctx, in.ConversationID, envelope)
 	}
 	return message, nil
 }
@@ -69,6 +125,7 @@ func (s *RealtimeService) EditMessage(ctx context.Context, userID uuid.UUID, in 
 	if s.broadcaster != nil {
 		envelope := chatws.NewMessageEvent(events.MessageEdited, in.ConversationID, map[string]any{"message": message})
 		_ = s.broadcaster.BroadcastConversation(ctx, in.ConversationID, envelope, nil)
+		_ = s.broadcaster.PublishConversation(ctx, in.ConversationID, envelope)
 	}
 	return message, nil
 }
@@ -81,6 +138,7 @@ func (s *RealtimeService) DeleteMessage(ctx context.Context, userID uuid.UUID, i
 	if s.broadcaster != nil {
 		envelope := chatws.NewMessageEvent(events.MessageDeleted, in.ConversationID, map[string]any{"message": message})
 		_ = s.broadcaster.BroadcastConversation(ctx, in.ConversationID, envelope, nil)
+		_ = s.broadcaster.PublishConversation(ctx, in.ConversationID, envelope)
 	}
 	return message, nil
 }
@@ -101,6 +159,7 @@ func (s *RealtimeService) UpdateReaction(ctx context.Context, in ReactionInput, 
 	if s.broadcaster != nil {
 		envelope := chatws.NewMessageEvent(events.MessageReaction, in.ConversationID, map[string]any{"message_id": in.MessageID.String(), "reactions": reactions})
 		_ = s.broadcaster.BroadcastConversation(ctx, in.ConversationID, envelope, nil)
+		_ = s.broadcaster.PublishConversation(ctx, in.ConversationID, envelope)
 	}
 	return reactions, nil
 }
@@ -117,6 +176,7 @@ func (s *RealtimeService) PinMessage(ctx context.Context, in PinMessageInput) er
 		}
 		envelope := chatws.NewMessageEvent(eventType, in.ConversationID, map[string]any{"message_id": in.MessageID.String(), "pinned": in.Pinned})
 		_ = s.broadcaster.BroadcastConversation(ctx, in.ConversationID, envelope, nil)
+		_ = s.broadcaster.PublishConversation(ctx, in.ConversationID, envelope)
 	}
 	return nil
 }
@@ -128,12 +188,8 @@ func (s *RealtimeService) UpdateReceipt(ctx context.Context, userID uuid.UUID, i
 	}
 	if s.broadcaster != nil {
 		envelope := chatws.NewMessageEvent(events.ReceiptUpdate, in.ConversationID, map[string]any{"message_ids": uuidSliceToStrings(result.MessageIDs), "user_id": userID.String(), "status": result.Status, "up_to_seq_id": result.UpToSeqID})
-		if err := s.broadcaster.BroadcastConversation(ctx, in.ConversationID, envelope, nil); err != nil {
-			return ReceiptUpdateResult{}, err
-		}
-		if err := s.broadcaster.PublishConversation(ctx, in.ConversationID, envelope); err != nil {
-			return ReceiptUpdateResult{}, err
-		}
+		_ = s.broadcaster.BroadcastConversation(ctx, in.ConversationID, envelope, nil)
+		_ = s.broadcaster.PublishConversation(ctx, in.ConversationID, envelope)
 	}
 	return result, nil
 }
@@ -146,6 +202,7 @@ func (s *RealtimeService) VotePoll(ctx context.Context, in VotePollInput) (PollV
 	if s.broadcaster != nil {
 		envelope := chatws.NewConversationEvent(events.PollUpdate, in.ConversationID, map[string]any{"poll": poll})
 		_ = s.broadcaster.BroadcastConversation(ctx, in.ConversationID, envelope, nil)
+		_ = s.broadcaster.PublishConversation(ctx, in.ConversationID, envelope)
 	}
 	return poll, nil
 }
@@ -158,6 +215,7 @@ func (s *RealtimeService) ClosePoll(ctx context.Context, userID, conversationID,
 	if s.broadcaster != nil {
 		envelope := chatws.NewConversationEvent(events.PollUpdate, conversationID, map[string]any{"poll": poll})
 		_ = s.broadcaster.BroadcastConversation(ctx, conversationID, envelope, nil)
+		_ = s.broadcaster.PublishConversation(ctx, conversationID, envelope)
 	}
 	return poll, nil
 }

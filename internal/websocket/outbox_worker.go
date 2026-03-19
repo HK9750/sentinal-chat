@@ -54,7 +54,11 @@ func (w *OutboxWorker) Stop() {
 func (w *OutboxWorker) processBatch(ctx context.Context) {
 	eventsBatch, err := w.repo.GetPending(ctx, 50)
 	if err != nil {
+		w.logf("outbox.get_pending", err)
 		return
+	}
+	if len(eventsBatch) > 0 {
+		w.infof("outbox.batch processing_events=%d", len(eventsBatch))
 	}
 	for _, event := range eventsBatch {
 		claimed, err := w.repo.MarkProcessing(ctx, event.ID.String())
@@ -103,6 +107,9 @@ func channelForEnvelope(envelope EventEnvelope) string {
 	if strings.TrimSpace(envelope.UserID) != "" {
 		return events.UserChannel(envelope.UserID)
 	}
+	if strings.TrimSpace(envelope.DeviceID) != "" {
+		return events.DeviceChannel(envelope.DeviceID)
+	}
 	return ""
 }
 
@@ -120,4 +127,11 @@ func (w *OutboxWorker) logf(operation string, err error) {
 		return
 	}
 	w.logger.Errorf("%s: %v", operation, err)
+}
+
+func (w *OutboxWorker) infof(template string, args ...interface{}) {
+	if w == nil || w.logger == nil {
+		return
+	}
+	w.logger.Infof(template, args...)
 }

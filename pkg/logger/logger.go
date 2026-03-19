@@ -77,10 +77,10 @@ var UserIdKey ctxKey = "user_id"
 func (l *Logger) withContext(ctx context.Context) *zap.Logger {
 	var fields []zap.Field
 	if ctx != nil {
-		if requestId, ok := ctx.Value(RequestIdKey).(string); ok {
+		if requestId, ok := ctx.Value(RequestIdKey).(string); ok && requestId != "" {
 			fields = append(fields, zap.String(string(RequestIdKey), requestId))
 		}
-		if userId, ok := ctx.Value(UserIdKey).(string); ok {
+		if userId, ok := ctx.Value(UserIdKey).(string); ok && userId != "" {
 			fields = append(fields, zap.String(string(UserIdKey), userId))
 		}
 	}
@@ -109,4 +109,28 @@ func (l *Logger) Infof(template string, args ...interface{}) {
 
 func (l *Logger) Errorf(template string, args ...interface{}) {
 	l.Logger.Sugar().Errorf(template, args...)
+}
+
+func (l *Logger) Warnf(template string, args ...interface{}) {
+	l.Logger.Sugar().Warnf(template, args...)
+}
+
+func (l *Logger) Infow(message string, keysAndValues ...interface{}) {
+	l.Logger.Sugar().Infow(message, keysAndValues...)
+}
+
+func (l *Logger) Errorw(message string, keysAndValues ...interface{}) {
+	l.Logger.Sugar().Errorw(message, keysAndValues...)
+}
+
+func (l *Logger) Warnw(message string, keysAndValues ...interface{}) {
+	l.Logger.Sugar().Warnw(message, keysAndValues...)
+}
+
+func (l *Logger) InfofCtx(ctx context.Context, template string, args ...interface{}) {
+	l.withContext(ctx).Sugar().Infof(template, args...)
+}
+
+func (l *Logger) ErrorfCtx(ctx context.Context, template string, args ...interface{}) {
+	l.withContext(ctx).Sugar().Errorf(template, args...)
 }

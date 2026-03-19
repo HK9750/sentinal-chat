@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"time"
 
 	"sentinal-chat/pkg/logger"
 
@@ -26,7 +27,7 @@ func RequestIDMiddleware() gin.HandlerFunc {
 func newRequestID() string {
 	buf := make([]byte, 16)
 	if _, err := rand.Read(buf); err != nil {
-		return ""
+		return hex.EncodeToString([]byte(time.Now().UTC().Format(time.RFC3339Nano)))
 	}
 	return hex.EncodeToString(buf)
 }

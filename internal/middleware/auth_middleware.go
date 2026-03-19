@@ -7,6 +7,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+
+	"sentinal-chat/pkg/logger"
 )
 
 // TokenClaims holds the parsed claims from a JWT access token
@@ -66,6 +68,9 @@ func AuthMiddleware(
 		c.Set("user_id", userID)
 		c.Set("session_id", claims.SessionID)
 		c.Set("device_id", claims.DeviceID)
+
+		ctx := context.WithValue(c.Request.Context(), logger.UserIdKey, userID.String())
+		c.Request = c.Request.WithContext(ctx)
 
 		c.Next()
 	}
