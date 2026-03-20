@@ -89,13 +89,13 @@ func (h *WSHandler) Connect(c *gin.Context) {
 
 func (h *WSHandler) readPump(ctx context.Context, client *chatws.Client) {
 	defer func() {
+		client.Close()
 		if h.realtimeService != nil {
 			_ = h.realtimeService.UpdatePresence(ctx, client.UserID, false)
 		}
 		if h.logger != nil {
 			h.logger.InfofCtx(ctx, "ws.disconnect user_id=%s device_id=%s client_id=%s", client.UserID.String(), strings.TrimSpace(client.DeviceID), client.ID)
 		}
-		client.Close()
 	}()
 	_ = client.Conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 	client.Conn.SetReadLimit(1 << 20)
@@ -473,6 +473,10 @@ func (h *WSHandler) authenticate(c *gin.Context) (*middleware.TokenClaims, error
 }
 
 func (h *WSHandler) sendEnvelope(client *chatws.Client, envelope chatws.EventEnvelope) {
+	if client == nil {
+		return
+	}
+
 	body, err := json.Marshal(envelope)
 	if err != nil {
 		if h.logger != nil {
@@ -480,9 +484,8 @@ func (h *WSHandler) sendEnvelope(client *chatws.Client, envelope chatws.EventEnv
 		}
 		return
 	}
-	select {
-	case client.Send <- body:
-	default:
+
+	if !client.Enqueue(body) {
 		if h.logger != nil {
 			h.logger.Errorw("ws.send_envelope.queue_full", "client_id", client.ID, "user_id", client.UserID.String())
 		}
@@ -541,14 +544,6 @@ func receiptStatus(frameType string) string {
 		status = "PLAYED"
 	}
 	return status
-}
-
-func uuidStrings(ids []uuid.UUID) []string {
-	items := make([]string, 0, len(ids))
-	for _, id := range ids {
-		items = append(items, id.String())
-	}
-	return items
 }
 
 func extractBearer(c *gin.Context) string {

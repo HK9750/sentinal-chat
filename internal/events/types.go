@@ -38,7 +38,6 @@ const (
 	InboundReceiptDelivered        = "receipt:delivered"
 	InboundReceiptRead             = "receipt:read"
 	InboundReceiptPlayed           = "receipt:played"
-	InboundPollCreate              = "poll:create"
 	InboundPollVote                = "poll:vote"
 	InboundPollClose               = "poll:close"
 	InboundCommandUndo             = "command:undo"

@@ -46,6 +46,9 @@ type Client struct {
 	Send       chan []byte
 	Hub        *Hub
 	CancelFunc context.CancelFunc
+	sendMu     sync.RWMutex
+	sendClosed bool
+	closeOnce  sync.Once
 }
 
 func NewHub(redis *redisclient.Client, conversations repository.ConversationRepository, log *logger.Logger) *Hub {
@@ -74,7 +77,13 @@ func (h *Hub) Register(client *Client) {
 		}
 		h.byDevice[client.DeviceID][client.ID] = client
 	}
-	h.infof("hub.register user_id=%s device_id=%s total_clients=%d", client.UserID.String(), strings.TrimSpace(client.DeviceID), len(h.clients))
+	h.logWebSocketEvent(context.Background(), "client.registered", map[string]interface{}{
+		"client_id":     client.ID,
+		"user_id":       client.UserID.String(),
+		"device_id":     strings.TrimSpace(client.DeviceID),
+		"session_id":    client.SessionID,
+		"total_clients": len(h.clients),
+	})
 }
 
 func (h *Hub) UserConnectionCount(userID uuid.UUID) int {
@@ -110,8 +119,13 @@ func (h *Hub) Unregister(client *Client) {
 			}
 		}
 	}
-	h.infof("hub.unregister user_id=%s device_id=%s total_clients=%d", client.UserID.String(), strings.TrimSpace(client.DeviceID), len(h.clients))
-	close(client.Send)
+	h.logWebSocketEvent(context.Background(), "client.unregistered", map[string]interface{}{
+		"client_id":     client.ID,
+		"user_id":       client.UserID.String(),
+		"device_id":     strings.TrimSpace(client.DeviceID),
+		"total_clients": len(h.clients),
+	})
+	client.closeSend()
 }
 
 func (h *Hub) SendToUser(userID uuid.UUID, envelope EventEnvelope) {
@@ -124,9 +138,7 @@ func (h *Hub) SendToUser(userID uuid.UUID, envelope EventEnvelope) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	for _, client := range h.byUser[userID.String()] {
-		select {
-		case client.Send <- body:
-		default:
+		if !client.Enqueue(body) {
 			h.logf("hub.send_to_user.queue_full", errors.New("client send buffer full"))
 		}
 	}
@@ -142,9 +154,7 @@ func (h *Hub) SendToDevice(deviceID uuid.UUID, envelope EventEnvelope) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	for _, client := range h.byDevice[deviceID.String()] {
-		select {
-		case client.Send <- body:
-		default:
+		if !client.Enqueue(body) {
 			h.logf("hub.send_to_device.queue_full", errors.New("client send buffer full"))
 		}
 	}
@@ -218,7 +228,7 @@ func (h *Hub) StartRedisListener(ctx context.Context) {
 
 				pubsub := h.redis.PSubscribe(ctx, "conversation:*", "call:*", "user:*", "device:*")
 				if pubsub == nil {
-					h.logf("hub.redis_listener.subscribe", errors.New("redis pubsub unavailable"))
+					h.logfCtx(ctx, "hub.redis_listener.subscribe", errors.New("redis pubsub unavailable"))
 					select {
 					case <-ctx.Done():
 						return
@@ -230,14 +240,16 @@ func (h *Hub) StartRedisListener(ctx context.Context) {
 					continue
 				}
 
-				h.infof("hub.redis_listener.subscribed patterns=conversation:* call:* user:* device:*")
+				h.logWebSocketEvent(ctx, "redis.subscribed", map[string]interface{}{
+					"patterns": []string{"conversation:*", "call:*", "user:*", "device:*"},
+				})
 				backoff = time.Second
 				for {
 					msg, err := pubsub.ReceiveMessage(ctx)
 					if err != nil {
 						_ = pubsub.Close()
 						if ctx.Err() == nil {
-							h.logf("hub.redis_listener.receive", err)
+							h.logfCtx(ctx, "hub.redis_listener.receive", err)
 							select {
 							case <-ctx.Done():
 								return
@@ -291,10 +303,50 @@ func (c *Client) Close() {
 	}
 }
 
+func (c *Client) Enqueue(payload []byte) bool {
+	if c == nil {
+		return false
+	}
+
+	c.sendMu.RLock()
+	defer c.sendMu.RUnlock()
+
+	if c.sendClosed || c.Send == nil {
+		return false
+	}
+
+	select {
+	case c.Send <- payload:
+		return true
+	default:
+		return false
+	}
+}
+
+func (c *Client) closeSend() {
+	if c == nil {
+		return
+	}
+
+	c.closeOnce.Do(func() {
+		c.sendMu.Lock()
+		defer c.sendMu.Unlock()
+
+		if c.sendClosed {
+			return
+		}
+
+		c.sendClosed = true
+		if c.Send != nil {
+			close(c.Send)
+		}
+	})
+}
+
 func (h *Hub) dispatchRedisEnvelope(ctx context.Context, payload []byte) {
 	var envelope EventEnvelope
 	if err := json.Unmarshal(payload, &envelope); err != nil {
-		h.logf("hub.redis_listener.unmarshal", err)
+		h.logfCtx(ctx, "hub.redis_listener.unmarshal", err)
 		return
 	}
 	conversationID := parseEnvelopeConversationID(envelope)
@@ -308,7 +360,7 @@ func (h *Hub) dispatchRedisEnvelope(ctx context.Context, payload []byte) {
 	if conversationID != uuid.Nil && targetUserID == uuid.Nil && targetDeviceID == uuid.Nil {
 		participants, err := h.conversations.GetParticipants(ctx, conversationID)
 		if err != nil {
-			h.logf("hub.redis_listener.participants", err)
+			h.logfCtx(ctx, "hub.redis_listener.participants", err)
 			return
 		}
 		for _, participant := range participants {
@@ -323,15 +375,24 @@ func (h *Hub) dispatchRedisEnvelope(ctx context.Context, payload []byte) {
 	}
 	h.mu.RUnlock()
 
+	deliveredCount := 0
 	for _, client := range clients {
 		if !h.shouldDeliverRedisEnvelope(ctx, client, conversationID, callID, targetUserID, targetDeviceID, participantsByUserID) {
 			continue
 		}
-		select {
-		case client.Send <- payload:
-		default:
-			h.logf("hub.redis_listener.queue_full", errors.New("client send buffer full"))
+		if client.Enqueue(payload) {
+			deliveredCount++
+		} else {
+			h.logfCtx(ctx, "hub.redis_listener.queue_full", errors.New("client send buffer full"))
 		}
+	}
+
+	if deliveredCount > 0 {
+		h.logWebSocketEvent(ctx, "redis.message.dispatched", map[string]interface{}{
+			"event_type":      envelope.Type,
+			"conversation_id": envelope.ConversationID,
+			"delivered_to":    deliveredCount,
+		})
 	}
 }
 
@@ -349,7 +410,7 @@ func (h *Hub) shouldDeliverRedisEnvelope(ctx context.Context, client *Client, co
 		}
 		participant, err := h.conversations.IsParticipant(ctx, conversationID, client.UserID)
 		if err != nil {
-			h.logf("hub.redis_listener.participant_check", err)
+			h.logfCtx(ctx, "hub.redis_listener.participant_check", err)
 			return false
 		}
 		return participant
@@ -400,12 +461,19 @@ func (h *Hub) logf(operation string, err error) {
 	if h == nil || h.logger == nil || err == nil {
 		return
 	}
-	h.logger.Errorf("%s: %v", operation, err)
+	h.logger.LogError(context.Background(), operation, err)
 }
 
-func (h *Hub) infof(template string, args ...interface{}) {
+func (h *Hub) logfCtx(ctx context.Context, operation string, err error) {
+	if h == nil || h.logger == nil || err == nil {
+		return
+	}
+	h.logger.LogError(ctx, operation, err)
+}
+
+func (h *Hub) logWebSocketEvent(ctx context.Context, event string, data map[string]interface{}) {
 	if h == nil || h.logger == nil {
 		return
 	}
-	h.logger.Infof(template, args...)
+	h.logger.LogWebSocketEvent(ctx, event, data)
 }

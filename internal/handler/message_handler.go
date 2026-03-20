@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 
 	"sentinal-chat/internal/services"
 	"sentinal-chat/internal/transport/httpdto"
@@ -18,7 +19,7 @@ type MessageHandler struct {
 }
 
 func NewMessageHandler(service *services.MessageService, l *logger.Logger) *MessageHandler {
-	return &MessageHandler{service: service, logger: l}
+	return &MessageHandler{service: service, logger: l.WithComponent("message_handler")}
 }
 
 func (h *MessageHandler) RegisterRoutes(router gin.IRouter) {
@@ -27,6 +28,7 @@ func (h *MessageHandler) RegisterRoutes(router gin.IRouter) {
 }
 
 func (h *MessageHandler) History(c *gin.Context) {
+	ctx := c.Request.Context()
 	userID, ok := mustUserID(c)
 	if !ok {
 		h.writeError(c, sentinal_errors.ErrUnauthorized)
@@ -39,15 +41,33 @@ func (h *MessageHandler) History(c *gin.Context) {
 	}
 	var query httpdto.MessageHistoryQuery
 	_ = c.ShouldBindQuery(&query)
-	items, err := h.service.History(c.Request.Context(), conversationID, userID, query.BeforeSeq, query.Limit)
+
+	h.logger.DebugCtx(ctx, "message.history.request",
+		zap.String("user_id", userID.String()),
+		zap.String("conversation_id", conversationID.String()),
+		zap.Int64("before_seq", query.BeforeSeq),
+		zap.Int("limit", query.Limit),
+	)
+
+	items, err := h.service.History(ctx, conversationID, userID, query.BeforeSeq, query.Limit)
 	if err != nil {
+		h.logger.ErrorCtx(ctx, "message.history.failed",
+			zap.String("conversation_id", conversationID.String()),
+			zap.Error(err),
+		)
 		h.writeError(c, err)
 		return
 	}
+
+	h.logger.DebugCtx(ctx, "message.history.success",
+		zap.String("conversation_id", conversationID.String()),
+		zap.Int("count", len(items)),
+	)
 	httpdto.WriteSuccess(c, http.StatusOK, httpdto.ItemsPayload[services.MessageView]{Items: items})
 }
 
 func (h *MessageHandler) Get(c *gin.Context) {
+	ctx := c.Request.Context()
 	userID, ok := mustUserID(c)
 	if !ok {
 		h.writeError(c, sentinal_errors.ErrUnauthorized)
@@ -58,8 +78,13 @@ func (h *MessageHandler) Get(c *gin.Context) {
 		h.writeError(c, err)
 		return
 	}
-	item, err := h.service.GetByID(c.Request.Context(), messageID, userID)
+
+	item, err := h.service.GetByID(ctx, messageID, userID)
 	if err != nil {
+		h.logger.ErrorCtx(ctx, "message.get.failed",
+			zap.String("message_id", messageID.String()),
+			zap.Error(err),
+		)
 		h.writeError(c, err)
 		return
 	}

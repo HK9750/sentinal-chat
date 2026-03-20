@@ -43,32 +43,11 @@ func (r *Client) Publish(ctx context.Context, channel string, payload []byte) er
 	return r.client.Publish(ctx, channel, payload).Err()
 }
 
-func (r *Client) Subscribe(ctx context.Context, channels ...string) *goredis.PubSub {
-	if r == nil || r.client == nil {
-		return nil
-	}
-	return r.client.Subscribe(ctx, channels...)
-}
-
 func (r *Client) PSubscribe(ctx context.Context, patterns ...string) *goredis.PubSub {
 	if r == nil || r.client == nil {
 		return nil
 	}
 	return r.client.PSubscribe(ctx, patterns...)
-}
-
-func (r *Client) SetPresence(ctx context.Context, userID string, ttl time.Duration) error {
-	if r == nil || r.client == nil {
-		return nil
-	}
-	return r.client.Set(ctx, "presence:"+userID, time.Now().UTC().Format(time.RFC3339Nano), ttl).Err()
-}
-
-func (r *Client) ClearPresence(ctx context.Context, userID string) error {
-	if r == nil || r.client == nil {
-		return nil
-	}
-	return r.client.Del(ctx, "presence:"+userID).Err()
 }
 
 func (r *Client) Close() error {

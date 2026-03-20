@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 
 	"sentinal-chat/internal/services"
 	"sentinal-chat/internal/transport/httpdto"
@@ -20,7 +21,7 @@ type ConversationHandler struct {
 }
 
 func NewConversationHandler(service *services.ConversationService, l *logger.Logger) *ConversationHandler {
-	return &ConversationHandler{service: service, logger: l}
+	return &ConversationHandler{service: service, logger: l.WithComponent("conversation_handler")}
 }
 
 func (h *ConversationHandler) RegisterRoutes(router gin.IRouter) {
@@ -34,6 +35,7 @@ func (h *ConversationHandler) RegisterRoutes(router gin.IRouter) {
 }
 
 func (h *ConversationHandler) Create(c *gin.Context) {
+	ctx := c.Request.Context()
 	userID, ok := mustUserID(c)
 	if !ok {
 		h.writeError(c, sentinal_errors.ErrUnauthorized)
@@ -49,7 +51,14 @@ func (h *ConversationHandler) Create(c *gin.Context) {
 		h.writeError(c, sentinal_errors.ErrInvalidInput)
 		return
 	}
-	conv, err := h.service.Create(c.Request.Context(), services.CreateConversationInput{
+
+	h.logger.DebugCtx(ctx, "conversation.create.request",
+		zap.String("creator_id", userID.String()),
+		zap.String("type", req.Type),
+		zap.Int("participant_count", len(participantIDs)),
+	)
+
+	conv, err := h.service.Create(ctx, services.CreateConversationInput{
 		CreatorID:        userID,
 		Type:             req.Type,
 		Subject:          req.Subject,
@@ -59,13 +68,23 @@ func (h *ConversationHandler) Create(c *gin.Context) {
 		DisappearingMode: req.DisappearingMode,
 	})
 	if err != nil {
+		h.logger.ErrorCtx(ctx, "conversation.create.failed",
+			zap.String("creator_id", userID.String()),
+			zap.Error(err),
+		)
 		h.writeError(c, err)
 		return
 	}
+
+	h.logger.InfoCtx(ctx, "conversation.created",
+		zap.String("conversation_id", conv.ID),
+		zap.String("type", conv.Type),
+	)
 	httpdto.WriteSuccess(c, http.StatusCreated, conv)
 }
 
 func (h *ConversationHandler) List(c *gin.Context) {
+	ctx := c.Request.Context()
 	userID, ok := mustUserID(c)
 	if !ok {
 		h.writeError(c, sentinal_errors.ErrUnauthorized)
@@ -73,15 +92,27 @@ func (h *ConversationHandler) List(c *gin.Context) {
 	}
 	var query httpdto.ConversationQuery
 	_ = c.ShouldBindQuery(&query)
-	items, total, err := h.service.List(c.Request.Context(), userID, query.Page, query.Limit)
+
+	items, total, err := h.service.List(ctx, userID, query.Page, query.Limit)
 	if err != nil {
+		h.logger.ErrorCtx(ctx, "conversation.list.failed",
+			zap.String("user_id", userID.String()),
+			zap.Error(err),
+		)
 		h.writeError(c, err)
 		return
 	}
+
+	h.logger.DebugCtx(ctx, "conversation.list.success",
+		zap.String("user_id", userID.String()),
+		zap.Int("count", len(items)),
+		zap.Int64("total", total),
+	)
 	httpdto.WriteSuccess(c, http.StatusOK, httpdto.ListPayload[services.ConversationView]{Items: items, Total: total})
 }
 
 func (h *ConversationHandler) Get(c *gin.Context) {
+	ctx := c.Request.Context()
 	userID, ok := mustUserID(c)
 	if !ok {
 		h.writeError(c, sentinal_errors.ErrUnauthorized)
@@ -92,8 +123,12 @@ func (h *ConversationHandler) Get(c *gin.Context) {
 		h.writeError(c, sentinal_errors.ErrInvalidInput)
 		return
 	}
-	conv, err := h.service.Get(c.Request.Context(), conversationID, userID)
+	conv, err := h.service.Get(ctx, conversationID, userID)
 	if err != nil {
+		h.logger.ErrorCtx(ctx, "conversation.get.failed",
+			zap.String("conversation_id", conversationID.String()),
+			zap.Error(err),
+		)
 		h.writeError(c, err)
 		return
 	}
@@ -101,6 +136,7 @@ func (h *ConversationHandler) Get(c *gin.Context) {
 }
 
 func (h *ConversationHandler) AddParticipant(c *gin.Context) {
+	ctx := c.Request.Context()
 	userID, ok := mustUserID(c)
 	if !ok {
 		h.writeError(c, sentinal_errors.ErrUnauthorized)
@@ -121,15 +157,27 @@ func (h *ConversationHandler) AddParticipant(c *gin.Context) {
 		h.writeError(c, sentinal_errors.ErrInvalidInput)
 		return
 	}
-	conv, err := h.service.AddParticipant(c.Request.Context(), services.AddParticipantInput{ConversationID: conversationID, ActorID: userID, UserID: targetID, Role: req.Role})
+
+	conv, err := h.service.AddParticipant(ctx, services.AddParticipantInput{ConversationID: conversationID, ActorID: userID, UserID: targetID, Role: req.Role})
 	if err != nil {
+		h.logger.ErrorCtx(ctx, "conversation.add_participant.failed",
+			zap.String("conversation_id", conversationID.String()),
+			zap.String("target_user_id", targetID.String()),
+			zap.Error(err),
+		)
 		h.writeError(c, err)
 		return
 	}
+
+	h.logger.InfoCtx(ctx, "conversation.participant_added",
+		zap.String("conversation_id", conversationID.String()),
+		zap.String("user_id", targetID.String()),
+	)
 	httpdto.WriteSuccess(c, http.StatusOK, conv)
 }
 
 func (h *ConversationHandler) RemoveParticipant(c *gin.Context) {
+	ctx := c.Request.Context()
 	userID, ok := mustUserID(c)
 	if !ok {
 		h.writeError(c, sentinal_errors.ErrUnauthorized)
@@ -145,15 +193,27 @@ func (h *ConversationHandler) RemoveParticipant(c *gin.Context) {
 		h.writeError(c, sentinal_errors.ErrInvalidInput)
 		return
 	}
-	conv, err := h.service.RemoveParticipant(c.Request.Context(), services.RemoveParticipantInput{ConversationID: conversationID, ActorID: userID, UserID: targetID})
+
+	conv, err := h.service.RemoveParticipant(ctx, services.RemoveParticipantInput{ConversationID: conversationID, ActorID: userID, UserID: targetID})
 	if err != nil {
+		h.logger.ErrorCtx(ctx, "conversation.remove_participant.failed",
+			zap.String("conversation_id", conversationID.String()),
+			zap.String("target_user_id", targetID.String()),
+			zap.Error(err),
+		)
 		h.writeError(c, err)
 		return
 	}
+
+	h.logger.InfoCtx(ctx, "conversation.participant_removed",
+		zap.String("conversation_id", conversationID.String()),
+		zap.String("user_id", targetID.String()),
+	)
 	httpdto.WriteSuccess(c, http.StatusOK, conv)
 }
 
 func (h *ConversationHandler) Participants(c *gin.Context) {
+	ctx := c.Request.Context()
 	userID, ok := mustUserID(c)
 	if !ok {
 		h.writeError(c, sentinal_errors.ErrUnauthorized)
@@ -164,7 +224,7 @@ func (h *ConversationHandler) Participants(c *gin.Context) {
 		h.writeError(c, sentinal_errors.ErrInvalidInput)
 		return
 	}
-	conv, err := h.service.Get(c.Request.Context(), conversationID, userID)
+	conv, err := h.service.Get(ctx, conversationID, userID)
 	if err != nil {
 		h.writeError(c, err)
 		return
@@ -173,6 +233,7 @@ func (h *ConversationHandler) Participants(c *gin.Context) {
 }
 
 func (h *ConversationHandler) Clear(c *gin.Context) {
+	ctx := c.Request.Context()
 	userID, ok := mustUserID(c)
 	if !ok {
 		h.writeError(c, sentinal_errors.ErrUnauthorized)
@@ -183,14 +244,25 @@ func (h *ConversationHandler) Clear(c *gin.Context) {
 		h.writeError(c, sentinal_errors.ErrInvalidInput)
 		return
 	}
-	if err := h.service.Clear(c.Request.Context(), services.ClearConversationInput{ConversationID: conversationID, ActorID: userID}); err != nil {
+
+	if err := h.service.Clear(ctx, services.ClearConversationInput{ConversationID: conversationID, ActorID: userID}); err != nil {
+		h.logger.ErrorCtx(ctx, "conversation.clear.failed",
+			zap.String("conversation_id", conversationID.String()),
+			zap.Error(err),
+		)
 		h.writeError(c, err)
 		return
 	}
+
+	h.logger.InfoCtx(ctx, "conversation.cleared",
+		zap.String("conversation_id", conversationID.String()),
+		zap.String("actor_id", userID.String()),
+	)
 	httpdto.WriteSuccess(c, http.StatusOK, httpdto.ClearConversationPayload{Cleared: true})
 }
 
 func (h *ConversationHandler) writeError(c *gin.Context, err error) {
+	ctx := c.Request.Context()
 	status := http.StatusInternalServerError
 	code := "INTERNAL_ERROR"
 	message := "internal server error"
@@ -220,8 +292,8 @@ func (h *ConversationHandler) writeError(c *gin.Context, err error) {
 		code = "SERVICE_UNAVAILABLE"
 		message = "service unavailable"
 	}
-	if status >= http.StatusInternalServerError && h.logger != nil {
-		h.logger.Errorf("conversation handler error: %v", err)
+	if status >= http.StatusInternalServerError {
+		h.logger.LogError(ctx, "conversation.handler.error", err)
 	}
 	httpdto.WriteError(c, status, message, code)
 }
