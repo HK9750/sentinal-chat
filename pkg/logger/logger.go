@@ -93,9 +93,28 @@ func New(mode string) *Logger {
 		config.OutputPaths = []string{"stdout"}
 		config.ErrorOutputPaths = []string{"stderr"}
 	} else {
-		config = zap.NewDevelopmentConfig()
-		config.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
-		config.EncoderConfig.EncodeTime = zapcore.TimeEncoderOfLayout("15:04:05.000")
+		config = zap.Config{
+			Level:             zap.NewAtomicLevelAt(zap.DebugLevel),
+			Development:       true,
+			DisableCaller:     true,
+			DisableStacktrace: true,
+			Encoding:          "console",
+			EncoderConfig: zapcore.EncoderConfig{
+				TimeKey:        "time",
+				LevelKey:       "level",
+				NameKey:        zapcore.OmitKey,
+				CallerKey:      zapcore.OmitKey,
+				FunctionKey:    zapcore.OmitKey,
+				MessageKey:     "message",
+				StacktraceKey:  zapcore.OmitKey,
+				LineEnding:     zapcore.DefaultLineEnding,
+				EncodeLevel:    zapcore.CapitalColorLevelEncoder,
+				EncodeTime:     zapcore.TimeEncoderOfLayout("15:04:05.000"),
+				EncodeDuration: zapcore.StringDurationEncoder,
+			},
+			OutputPaths:      []string{"stdout"},
+			ErrorOutputPaths: []string{"stderr"},
+		}
 	}
 
 	zapLogger, err := config.Build(zap.AddCallerSkip(1))

@@ -52,12 +52,13 @@ type RouteDependencies struct {
 // New creates a new Server instance and configures the gin engine mode
 func New(cfg *config.Config, l *logger.Logger) *Server {
 	switch cfg.AppMode {
-	case ReleaseMode:
-		gin.SetMode(gin.ReleaseMode)
+	case DebugMode:
+		gin.SetMode(gin.DebugMode)
 	case TestMode:
 		gin.SetMode(gin.TestMode)
 	default:
-		gin.SetMode(gin.DebugMode)
+		// Default to ReleaseMode to hide the [GIN-debug] route logs
+		gin.SetMode(gin.ReleaseMode)
 	}
 
 	engine := gin.New()
