@@ -58,13 +58,17 @@ type ParticipantView struct {
 }
 
 type MessageSummaryView struct {
-	ID            string     `json:"id"`
-	SenderID      string     `json:"sender_id"`
-	Kind          string     `json:"kind"`
-	CreatedAt     time.Time  `json:"created_at"`
-	SeqID         int64      `json:"seq_id"`
-	ReceiptStatus *string    `json:"receipt_status,omitempty"`
-	DeletedAt     *time.Time `json:"deleted_at,omitempty"`
+	ID                 string     `json:"id"`
+	SenderID           string     `json:"sender_id"`
+	Kind               string     `json:"kind"`
+	Content            *string    `json:"content,omitempty"`
+	CreatedAt          time.Time  `json:"created_at"`
+	SeqID              int64      `json:"seq_id"`
+	ReceiptStatus      *string    `json:"receipt_status,omitempty"`
+	DeletedAt          *time.Time `json:"deleted_at,omitempty"`
+	AttachmentMimeType *string    `json:"attachment_mime_type,omitempty"`
+	AttachmentFilename *string    `json:"attachment_filename,omitempty"`
+	DurationSeconds    *int32     `json:"duration_seconds,omitempty"`
 }
 
 type AttachmentView struct {

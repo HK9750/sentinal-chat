@@ -437,7 +437,7 @@ func (r *PostgresMessageRepository) GetUserReaction(ctx context.Context, message
 func (r *PostgresMessageRepository) CreateReceipt(ctx context.Context, receipt *message.MessageReceipt) error {
 	_, err := r.db.ExecContext(ctx, `
         INSERT INTO message_receipts (message_id, user_id, status, delivered_at, read_at, played_at, updated_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7)
+        VALUES ($1,$2,$3::delivery_status,$4,$5,$6,$7)
     `, receipt.MessageID, receipt.UserID, receipt.Status, receipt.DeliveredAt, receipt.ReadAt, receipt.PlayedAt, receipt.UpdatedAt)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -475,7 +475,7 @@ func (r *PostgresMessageRepository) MarkAsDelivered(ctx context.Context, message
 	now := time.Now()
 	res, err := r.db.ExecContext(ctx, `
         UPDATE message_receipts
-        SET status = CASE WHEN status IN ('READ', 'PLAYED') THEN status ELSE 'DELIVERED' END,
+        SET status = CASE WHEN status IN ('READ'::delivery_status, 'PLAYED'::delivery_status) THEN status ELSE 'DELIVERED'::delivery_status END,
             delivered_at = COALESCE(delivered_at, $1),
             updated_at = $1
         WHERE message_id = $2 AND user_id = $3
@@ -501,7 +501,7 @@ func (r *PostgresMessageRepository) MarkAsRead(ctx context.Context, messageID, u
 	now := time.Now()
 	res, err := r.db.ExecContext(ctx, `
         UPDATE message_receipts
-        SET status = CASE WHEN status = 'PLAYED' THEN 'PLAYED' ELSE 'READ' END,
+        SET status = CASE WHEN status = 'PLAYED'::delivery_status THEN 'PLAYED'::delivery_status ELSE 'READ'::delivery_status END,
             delivered_at = COALESCE(delivered_at, $1),
             read_at = COALESCE(read_at, $1),
             updated_at = $1
@@ -529,7 +529,7 @@ func (r *PostgresMessageRepository) MarkAsPlayed(ctx context.Context, messageID,
 	now := time.Now()
 	res, err := r.db.ExecContext(ctx, `
         UPDATE message_receipts
-        SET status = 'PLAYED',
+        SET status = 'PLAYED'::delivery_status,
             delivered_at = COALESCE(delivered_at, $1),
             read_at = COALESCE(read_at, $1),
             played_at = COALESCE(played_at, $1),
@@ -561,7 +561,7 @@ func (r *PostgresMessageRepository) BulkMarkAsDelivered(ctx context.Context, mes
 		for _, msgID := range messageIDs {
 			res, err := tx.ExecContext(ctx, `
                 UPDATE message_receipts
-                SET status = CASE WHEN status IN ('READ', 'PLAYED') THEN status ELSE 'DELIVERED' END,
+                SET status = CASE WHEN status IN ('READ'::delivery_status, 'PLAYED'::delivery_status) THEN status ELSE 'DELIVERED'::delivery_status END,
                     delivered_at = COALESCE(delivered_at, $1),
                     updated_at = $1
                 WHERE message_id = $2 AND user_id = $3
@@ -573,7 +573,7 @@ func (r *PostgresMessageRepository) BulkMarkAsDelivered(ctx context.Context, mes
 			if err == nil && rows == 0 {
 				if _, err := tx.ExecContext(ctx, `
                     INSERT INTO message_receipts (message_id, user_id, status, delivered_at, updated_at)
-                    VALUES ($1,$2,$3,$4,$5)
+                    VALUES ($1,$2,$3::delivery_status,$4,$5)
                 `, msgID, userID, "DELIVERED", now, now); err != nil {
 					return err
 				}
@@ -589,7 +589,7 @@ func (r *PostgresMessageRepository) BulkMarkAsRead(ctx context.Context, messageI
 		for _, msgID := range messageIDs {
 			res, err := tx.ExecContext(ctx, `
                 UPDATE message_receipts
-                SET status = CASE WHEN status = 'PLAYED' THEN 'PLAYED' ELSE 'READ' END,
+                SET status = CASE WHEN status = 'PLAYED'::delivery_status THEN 'PLAYED'::delivery_status ELSE 'READ'::delivery_status END,
                     delivered_at = COALESCE(delivered_at, $1),
                     read_at = COALESCE(read_at, $1),
                     updated_at = $1
@@ -602,7 +602,7 @@ func (r *PostgresMessageRepository) BulkMarkAsRead(ctx context.Context, messageI
 			if err == nil && rows == 0 {
 				if _, err := tx.ExecContext(ctx, `
                     INSERT INTO message_receipts (message_id, user_id, status, delivered_at, read_at, updated_at)
-                    VALUES ($1,$2,$3,$4,$5,$6)
+                    VALUES ($1,$2,$3::delivery_status,$4,$5,$6)
                 `, msgID, userID, "READ", now, now, now); err != nil {
 					return err
 				}

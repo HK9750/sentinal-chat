@@ -63,7 +63,7 @@ func (h *WSHandler) Connect(c *gin.Context) {
 		_ = conn.Close()
 		return
 	}
-	baseCtx := context.WithValue(c.Request.Context(), logger.UserIdKey, claims.UserID)
+	baseCtx := context.WithValue(context.Background(), logger.UserIdKey, claims.UserID)
 	ctx, cancel := context.WithCancel(baseCtx)
 	client := &chatws.Client{
 		ID:         uuid.NewString(),
@@ -89,12 +89,12 @@ func (h *WSHandler) Connect(c *gin.Context) {
 
 func (h *WSHandler) readPump(ctx context.Context, client *chatws.Client) {
 	defer func() {
-		client.Close()
 		if h.realtimeService != nil {
-			_ = h.realtimeService.UpdatePresence(ctx, client.UserID, false)
+			_ = h.realtimeService.UpdatePresence(context.Background(), client.UserID, false)
 		}
+		client.Close()
 		if h.logger != nil {
-			h.logger.InfofCtx(ctx, "ws.disconnect user_id=%s device_id=%s client_id=%s", client.UserID.String(), strings.TrimSpace(client.DeviceID), client.ID)
+			h.logger.InfofCtx(context.Background(), "ws.disconnect user_id=%s device_id=%s client_id=%s", client.UserID.String(), strings.TrimSpace(client.DeviceID), client.ID)
 		}
 	}()
 	_ = client.Conn.SetReadDeadline(time.Now().Add(60 * time.Second))
@@ -308,10 +308,14 @@ func (h *WSHandler) handleReceipt(ctx context.Context, client *chatws.Client, fr
 		h.sendError(client, frameErr.code, frameErr.message)
 		return
 	}
-	messageIDs, err := services.AnyToUUIDSlice(data["message_ids"])
-	if err != nil {
-		h.sendError(client, "INVALID_MESSAGE_IDS", "invalid message ids")
-		return
+	messageIDs := []uuid.UUID{}
+	if rawMessageIDs, exists := data["message_ids"]; exists && rawMessageIDs != nil {
+		var err error
+		messageIDs, err = services.AnyToUUIDSlice(rawMessageIDs)
+		if err != nil {
+			h.sendError(client, "INVALID_MESSAGE_IDS", "invalid message ids")
+			return
+		}
 	}
 	upToSeq, err := services.AnyToInt64Ptr(data["up_to_seq_id"])
 	if err != nil {

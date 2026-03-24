@@ -365,20 +365,35 @@ func (s *MessageService) UpdateReceipt(ctx context.Context, in ReceiptInput) (Re
 	if err := s.proxy.RequireParticipant(ctx, in.ConversationID, in.ActorID); err != nil {
 		return ReceiptUpdateResult{}, err
 	}
+
+	status := strings.ToUpper(strings.TrimSpace(in.Status))
 	ids := chatDedupeUUIDs(in.MessageIDs)
-	if len(ids) == 0 {
-		return ReceiptUpdateResult{}, sentinal_errors.ErrInvalidInput
+
+	var (
+		filteredIDs []uuid.UUID
+		maxSeq      int64
+		err         error
+	)
+
+	if len(ids) > 0 {
+		filteredIDs, maxSeq, err = s.filterReceiptMessageIDs(ctx, in.ConversationID, in.ActorID, ids)
+		if err != nil {
+			return ReceiptUpdateResult{}, err
+		}
+	} else if status == "READ" && in.UpToSeqID != nil && *in.UpToSeqID > 0 {
+		filteredIDs, maxSeq, err = s.filterReceiptMessageIDsBySeqRange(ctx, in.ConversationID, in.ActorID, *in.UpToSeqID)
+		if err != nil {
+			return ReceiptUpdateResult{}, err
+		}
 	}
-	filteredIDs, maxSeq, err := s.filterReceiptMessageIDs(ctx, in.ConversationID, in.ActorID, ids)
-	if err != nil {
-		return ReceiptUpdateResult{}, err
-	}
-	if len(filteredIDs) == 0 {
-		return ReceiptUpdateResult{}, sentinal_errors.ErrInvalidInput
-	}
-	result := ReceiptUpdateResult{MessageIDs: filteredIDs, Status: strings.ToUpper(strings.TrimSpace(in.Status))}
-	switch strings.ToUpper(strings.TrimSpace(in.Status)) {
+
+	result := ReceiptUpdateResult{MessageIDs: filteredIDs, Status: status}
+
+	switch status {
 	case "DELIVERED":
+		if len(filteredIDs) == 0 {
+			return ReceiptUpdateResult{}, sentinal_errors.ErrInvalidInput
+		}
 		if len(filteredIDs) == 1 {
 			if err := s.messages.MarkAsDelivered(ctx, filteredIDs[0], in.ActorID); err != nil {
 				return ReceiptUpdateResult{}, err
@@ -390,22 +405,27 @@ func (s *MessageService) UpdateReceipt(ctx context.Context, in ReceiptInput) (Re
 		}
 		return result, nil
 	case "READ":
+		seqID := maxSeq
+		if in.UpToSeqID != nil && *in.UpToSeqID > seqID {
+			seqID = *in.UpToSeqID
+		}
 		if len(filteredIDs) == 1 {
 			if err := s.messages.MarkAsRead(ctx, filteredIDs[0], in.ActorID); err != nil {
 				return ReceiptUpdateResult{}, err
 			}
-		} else if err := s.messages.BulkMarkAsRead(ctx, filteredIDs, in.ActorID); err != nil {
-			return ReceiptUpdateResult{}, err
-		}
-		seqID := maxSeq
-		if in.UpToSeqID != nil && *in.UpToSeqID > seqID {
-			seqID = *in.UpToSeqID
+		} else if len(filteredIDs) > 1 {
+			if err := s.messages.BulkMarkAsRead(ctx, filteredIDs, in.ActorID); err != nil {
+				return ReceiptUpdateResult{}, err
+			}
 		}
 		if seqID > 0 {
 			if err := s.conversations.UpdateLastReadSequence(ctx, in.ConversationID, in.ActorID, seqID); err != nil {
 				return ReceiptUpdateResult{}, err
 			}
 			result.UpToSeqID = &seqID
+		}
+		if len(filteredIDs) == 0 && result.UpToSeqID == nil {
+			return ReceiptUpdateResult{}, sentinal_errors.ErrInvalidInput
 		}
 		return result, nil
 	case "PLAYED":
@@ -485,6 +505,48 @@ func (s *MessageService) filterReceiptMessageIDs(ctx context.Context, conversati
 	return filtered, maxSeq, nil
 }
 
+func (s *MessageService) filterReceiptMessageIDsBySeqRange(ctx context.Context, conversationID, actorID uuid.UUID, upToSeq int64) ([]uuid.UUID, int64, error) {
+	if upToSeq <= 0 {
+		return nil, 0, sentinal_errors.ErrInvalidInput
+	}
+
+	participant, err := s.conversations.GetParticipant(ctx, conversationID, actorID)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	startSeq := participant.LastReadSequence + 1
+	if startSeq <= 0 {
+		startSeq = 1
+	}
+	if startSeq > upToSeq {
+		return nil, participant.LastReadSequence, nil
+	}
+
+	messages, err := s.messages.GetMessagesBySeqRange(ctx, conversationID, startSeq, upToSeq)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	filtered := make([]uuid.UUID, 0, len(messages))
+	var maxSeq int64
+	for _, msg := range messages {
+		if msg.SenderID == actorID || msg.DeletedAt.Valid {
+			continue
+		}
+		filtered = append(filtered, msg.ID)
+		if msg.SeqID.Valid && msg.SeqID.Int64 > maxSeq {
+			maxSeq = msg.SeqID.Int64
+		}
+	}
+
+	if maxSeq == 0 {
+		maxSeq = upToSeq
+	}
+
+	return filtered, maxSeq, nil
+}
+
 func (s *MessageService) getLatestView(ctx context.Context, conversationID, userID uuid.UUID) (MessageView, error) {
 	msg, err := s.messages.GetLatestMessage(ctx, conversationID)
 	if err != nil {
@@ -493,12 +555,21 @@ func (s *MessageService) getLatestView(ctx context.Context, conversationID, user
 	return s.buildMessageView(ctx, msg, userID)
 }
 
-func (s *MessageService) unreadCountSince(ctx context.Context, conversationID uuid.UUID, lastReadSeq int64) (int64, error) {
+func (s *MessageService) unreadCountSince(ctx context.Context, conversationID, userID uuid.UUID, lastReadSeq int64) (int64, error) {
 	messages, err := s.messages.GetMessagesBySeqRange(ctx, conversationID, lastReadSeq+1, 1<<62-1)
 	if err != nil {
 		return 0, err
 	}
-	return int64(len(messages)), nil
+
+	var unreadCount int64
+	for _, msg := range messages {
+		if msg.SenderID == userID || msg.DeletedAt.Valid {
+			continue
+		}
+		unreadCount++
+	}
+
+	return unreadCount, nil
 }
 
 func (s *MessageService) buildMessageView(ctx context.Context, msg msgdomain.Message, userID uuid.UUID) (MessageView, error) {

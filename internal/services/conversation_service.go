@@ -349,7 +349,7 @@ func (s *ConversationService) buildConversationView(ctx context.Context, conv co
 	if err == nil {
 		lastRead = participant.LastReadSequence
 		if s.messageSvc != nil && lastMessage != nil && lastMessage.SenderID != userID.String() {
-			unreadCount, _ = s.messageSvc.unreadCountSince(ctx, conv.ID, lastRead)
+			unreadCount, _ = s.messageSvc.unreadCountSince(ctx, conv.ID, userID, lastRead)
 		}
 	}
 	return conversationToView(conv, lastMessage, unreadCount, lastRead), nil

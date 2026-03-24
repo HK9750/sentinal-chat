@@ -47,14 +47,39 @@ func conversationToView(conv convdomain.Conversation, lastMessage *MessageView, 
 		LastReadSequence: lastReadSequence,
 	}
 	if lastMessage != nil {
+		var content *string
+		if lastMessage.Content != nil && *lastMessage.Content != "" {
+			content = lastMessage.Content
+		}
+
+		var mimeType *string
+		var filename *string
+		var durationSeconds *int32
+		if len(lastMessage.Attachments) > 0 {
+			firstAttachment := lastMessage.Attachments[0]
+			if firstAttachment.MimeType != "" {
+				mimeType = chatStringPtr(firstAttachment.MimeType)
+			}
+			if firstAttachment.Filename != nil && *firstAttachment.Filename != "" {
+				filename = firstAttachment.Filename
+			}
+			if firstAttachment.DurationSeconds != nil {
+				durationSeconds = firstAttachment.DurationSeconds
+			}
+		}
+
 		view.LastMessage = &MessageSummaryView{
-			ID:            lastMessage.ID,
-			SenderID:      lastMessage.SenderID,
-			Kind:          lastMessage.Type,
-			CreatedAt:     lastMessage.CreatedAt,
-			SeqID:         lastMessage.SeqID,
-			ReceiptStatus: latestReceiptStatus(lastMessage.Receipts, lastMessage.SenderID),
-			DeletedAt:     lastMessage.DeletedAt,
+			ID:                 lastMessage.ID,
+			SenderID:           lastMessage.SenderID,
+			Kind:               lastMessage.Type,
+			Content:            content,
+			AttachmentMimeType: mimeType,
+			AttachmentFilename: filename,
+			DurationSeconds:    durationSeconds,
+			CreatedAt:          lastMessage.CreatedAt,
+			SeqID:              lastMessage.SeqID,
+			ReceiptStatus:      latestReceiptStatus(lastMessage.Receipts, lastMessage.SenderID),
+			DeletedAt:          lastMessage.DeletedAt,
 		}
 	}
 	return view
