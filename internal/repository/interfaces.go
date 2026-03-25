@@ -26,6 +26,13 @@ type OAuthIdentity struct {
 	UpdatedAt      time.Time
 }
 
+// MessageDeliveryUpdate holds the result of a bulk delivery marking operation.
+type MessageDeliveryUpdate struct {
+	MessageID      uuid.UUID
+	ConversationID uuid.UUID
+	SenderID       uuid.UUID
+}
+
 // UserRepository manages user data and related entities.
 type UserRepository interface {
 	Create(ctx context.Context, u *user.User) error
@@ -148,6 +155,7 @@ type MessageRepository interface {
 	MarkAsPlayed(ctx context.Context, messageID, userID uuid.UUID) error
 	BulkMarkAsDelivered(ctx context.Context, messageIDs []uuid.UUID, userID uuid.UUID) error
 	BulkMarkAsRead(ctx context.Context, messageIDs []uuid.UUID, userID uuid.UUID) error
+	MarkAllPendingAsDelivered(ctx context.Context, userID uuid.UUID) ([]MessageDeliveryUpdate, error)
 
 	AddMention(ctx context.Context, m *message.MessageMention) error
 	GetMessageMentions(ctx context.Context, messageID uuid.UUID) ([]message.MessageMention, error)

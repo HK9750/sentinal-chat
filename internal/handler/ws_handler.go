@@ -78,6 +78,8 @@ func (h *WSHandler) Connect(c *gin.Context) {
 	h.hub.Register(client)
 	if h.realtimeService != nil {
 		_ = h.realtimeService.UpdatePresence(ctx, client.UserID, true)
+		// Background: bulk-mark all pending messages as DELIVERED for this user.
+		go h.realtimeService.DeliverPendingOnConnect(ctx, client.UserID)
 	}
 	if h.logger != nil {
 		h.logger.InfofCtx(ctx, "ws.connect user_id=%s session_id=%s device_id=%s client_id=%s", claims.UserID, claims.SessionID, claims.DeviceID, client.ID)

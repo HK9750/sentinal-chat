@@ -114,7 +114,47 @@ func (s *RealtimeService) SendMessage(ctx context.Context, userID uuid.UUID, in 
 		_ = s.broadcaster.BroadcastConversation(ctx, in.ConversationID, envelope, nil)
 		_ = s.broadcaster.PublishConversation(ctx, in.ConversationID, envelope)
 	}
+	s.deliverMessageToOnlineParticipants(ctx, in.ConversationID, in.SenderID, message.ID)
 	return message, nil
+}
+
+func (s *RealtimeService) deliverMessageToOnlineParticipants(ctx context.Context, conversationID, senderID uuid.UUID, messageID string) {
+	if s == nil || s.broadcaster == nil || s.messageService == nil || s.messageService.messages == nil || s.conversationSvc == nil || s.conversationSvc.conversations == nil {
+		return
+	}
+
+	counter, ok := s.broadcaster.(presenceCounter)
+	if !ok {
+		return
+	}
+
+	parsedMessageID, err := uuid.Parse(strings.TrimSpace(messageID))
+	if err != nil {
+		return
+	}
+
+	participants, err := s.conversationSvc.conversations.GetParticipants(ctx, conversationID)
+	if err != nil || len(participants) == 0 {
+		return
+	}
+
+	for _, participant := range participants {
+		if participant.UserID == senderID || counter.UserConnectionCount(participant.UserID) == 0 {
+			continue
+		}
+
+		if err := s.messageService.messages.MarkAsDelivered(ctx, parsedMessageID, participant.UserID); err != nil {
+			continue
+		}
+
+		envelope := chatws.NewMessageEvent(events.ReceiptUpdate, conversationID, map[string]any{
+			"message_ids": []string{parsedMessageID.String()},
+			"user_id":     participant.UserID.String(),
+			"status":      "DELIVERED",
+		})
+		_ = s.broadcaster.BroadcastConversation(ctx, conversationID, envelope, nil)
+		_ = s.broadcaster.PublishConversation(ctx, conversationID, envelope)
+	}
 }
 
 func (s *RealtimeService) EditMessage(ctx context.Context, userID uuid.UUID, in EditMessageInput) (MessageView, error) {
@@ -192,6 +232,37 @@ func (s *RealtimeService) UpdateReceipt(ctx context.Context, userID uuid.UUID, i
 		_ = s.broadcaster.PublishConversation(ctx, in.ConversationID, envelope)
 	}
 	return result, nil
+}
+
+// DeliverPendingOnConnect is called when a user's WebSocket connects.
+// It bulk-marks all undelivered messages (sent by others) as DELIVERED,
+// then fans out a receipt:update event per affected conversation so
+// that the original senders see real-time DELIVERED ticks.
+func (s *RealtimeService) DeliverPendingOnConnect(ctx context.Context, userID uuid.UUID) {
+	if s == nil || s.messageService == nil || s.broadcaster == nil {
+		return
+	}
+
+	updates, err := s.messageService.MarkAllAsDelivered(ctx, userID)
+	if err != nil || len(updates) == 0 {
+		return
+	}
+
+	// Group affected message IDs by conversation for efficient fanout.
+	grouped := make(map[uuid.UUID][]string)
+	for _, u := range updates {
+		grouped[u.ConversationID] = append(grouped[u.ConversationID], u.MessageID.String())
+	}
+
+	for convID, msgIDs := range grouped {
+		envelope := chatws.NewMessageEvent(events.ReceiptUpdate, convID, map[string]any{
+			"message_ids": msgIDs,
+			"user_id":     userID.String(),
+			"status":      "DELIVERED",
+		})
+		_ = s.broadcaster.BroadcastConversation(ctx, convID, envelope, nil)
+		_ = s.broadcaster.PublishConversation(ctx, convID, envelope)
+	}
 }
 
 func (s *RealtimeService) VotePoll(ctx context.Context, in VotePollInput) (PollView, error) {

@@ -612,6 +612,51 @@ func (r *PostgresMessageRepository) BulkMarkAsRead(ctx context.Context, messageI
 	})
 }
 
+// MarkAllPendingAsDelivered finds all messages across the user's conversations
+// that were sent by OTHER users and have no delivery receipt yet, then bulk-creates
+// DELIVERED receipts for them. Returns the list of affected messages so the caller
+// can fan out receipt:update events to the original senders.
+func (r *PostgresMessageRepository) MarkAllPendingAsDelivered(ctx context.Context, userID uuid.UUID) ([]MessageDeliveryUpdate, error) {
+	now := time.Now()
+
+	// Single query: find all messages in the user's conversations where:
+	// 1. The message was sent by someone else (sender_id != userID)
+	// 2. The message is not deleted
+	// 3. No delivery receipt exists for this user yet
+	// Then INSERT a DELIVERED receipt for each, returning the affected message metadata.
+	rows, err := r.db.QueryContext(ctx, `
+		INSERT INTO message_receipts (message_id, user_id, status, delivered_at, updated_at)
+		SELECT m.id, $1, 'DELIVERED'::delivery_status, $2, $2
+		FROM messages m
+		INNER JOIN participants p ON p.conversation_id = m.conversation_id AND p.user_id = $1
+		WHERE m.sender_id != $1
+		  AND m.deleted_at IS NULL
+		  AND NOT EXISTS (
+		      SELECT 1 FROM message_receipts mr
+		      WHERE mr.message_id = m.id AND mr.user_id = $1
+		  )
+		ON CONFLICT (message_id, user_id) DO NOTHING
+		RETURNING message_id, (SELECT conversation_id FROM messages WHERE id = message_id), (SELECT sender_id FROM messages WHERE id = message_id)
+	`, userID, now)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var updates []MessageDeliveryUpdate
+	for rows.Next() {
+		var u MessageDeliveryUpdate
+		if err := rows.Scan(&u.MessageID, &u.ConversationID, &u.SenderID); err != nil {
+			return nil, err
+		}
+		updates = append(updates, u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return updates, nil
+}
+
 func (r *PostgresMessageRepository) AddMention(ctx context.Context, m *message.MessageMention) error {
 	_, err := r.db.ExecContext(ctx, `
         INSERT INTO message_mentions (message_id, user_id, "offset", length)

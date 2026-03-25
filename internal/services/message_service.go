@@ -555,6 +555,16 @@ func (s *MessageService) getLatestView(ctx context.Context, conversationID, user
 	return s.buildMessageView(ctx, msg, userID)
 }
 
+// MarkAllAsDelivered bulk-marks every undelivered message across all the user's
+// conversations as DELIVERED. Returns the list of affected (messageID, conversationID, senderID)
+// tuples so the caller can fan out receipt:update events to the original senders.
+func (s *MessageService) MarkAllAsDelivered(ctx context.Context, userID uuid.UUID) ([]repository.MessageDeliveryUpdate, error) {
+	if s == nil || s.messages == nil {
+		return nil, nil
+	}
+	return s.messages.MarkAllPendingAsDelivered(ctx, userID)
+}
+
 func (s *MessageService) unreadCountSince(ctx context.Context, conversationID, userID uuid.UUID, lastReadSeq int64) (int64, error) {
 	messages, err := s.messages.GetMessagesBySeqRange(ctx, conversationID, lastReadSeq+1, 1<<62-1)
 	if err != nil {
