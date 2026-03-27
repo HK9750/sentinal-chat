@@ -50,7 +50,22 @@ jobs:
             set -a
             . ./.env
             set +a
+            export DB_HOST=postgres
+            export REDIS_HOST=redis
             docker info >/dev/null
             docker compose --env-file .env up -d --build api
-            curl -fsS "http://127.0.0.1:\${APP_PORT:-5000}/health"
+            ok=0
+            for i in \$(seq 1 30); do
+              if curl -fsS "http://127.0.0.1:\${APP_PORT:-5000}/health" >/dev/null; then
+                ok=1
+                break
+              fi
+              sleep 2
+            done
+            if [ "\$ok" -ne 1 ]; then
+              echo 'Health check failed. Recent logs:'
+              docker compose --env-file .env ps || true
+              docker compose --env-file .env logs --tail=200 api postgres redis || true
+              exit 1
+            fi
           "
