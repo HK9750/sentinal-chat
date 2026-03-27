@@ -50,8 +50,6 @@ jobs:
             set -a
             . ./.env
             set +a
-            export DB_HOST=postgres
-            export REDIS_HOST=redis
             docker info >/dev/null
             docker compose --env-file .env up -d --build api
             ok=0
