@@ -35,25 +35,14 @@ jobs:
           ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
 
-      - name: Prepare target directory
-        run: |
-          ssh -i ~/.ssh/ec2_key "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" "mkdir -p ~/${DEPLOY_DIR}"
-
-      - name: Sync code to EC2
-        run: |
-          echo "Deploying to ~/${DEPLOY_DIR}"
-          rsync -az --delete \
-            -e "ssh -i ~/.ssh/ec2_key -o StrictHostKeyChecking=yes" \
-            --exclude ".git" \
-            --exclude ".github" \
-            --exclude ".env" \
-            ./ "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:~/${DEPLOY_DIR}/"
-
       - name: Deploy on EC2
         run: |
           ssh -i ~/.ssh/ec2_key "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" "
             set -e
             cd ~/${DEPLOY_DIR}
+            git checkout main
+            git fetch origin main
+            git pull origin main
             test -f .env
             docker compose up -d --build api
             set -a
