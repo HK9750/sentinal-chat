@@ -23,31 +23,29 @@ jobs:
       - name: Build check
         run: go build ./...
 
-      - name: Start SSH agent
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-
-      - name: Add host key
+      - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/ec2_key
+          chmod 600 ~/.ssh/ec2_key
           ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
 
       - name: Sync code to EC2
         run: |
           rsync -az --delete \
+            -e "ssh -i ~/.ssh/ec2_key -o StrictHostKeyChecking=yes" \
             --exclude ".git" \
             --exclude ".github" \
             --exclude ".env" \
-            ./ "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/opt/sentinal-chat"
+            ./ "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:~/sentinal-chat"
 
       - name: Deploy on EC2
         run: |
-          ssh "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" '
+          ssh -i ~/.ssh/ec2_key "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" '
             set -e
-            cd /opt/sentinal-chat
+            cd ~/sentinal-chat
             test -f .env
             docker compose up -d --build api
             set -a
