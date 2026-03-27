@@ -1,0 +1,10 @@
+.git
+.github
+.vscode
+.env
+.env.*
+*.log
+bin/
+tmp/
+deploy/
+postman/

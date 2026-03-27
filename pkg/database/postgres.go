@@ -64,8 +64,8 @@ func ConnectWithOptions(cfg *config.Config, dbConfig *DatabaseConfig) {
 	dbOnce.Do(func() {
 		dbCfg = dbConfig
 		dsn := fmt.Sprintf(
-			"host=%s user=%s password=%s dbname=%s port=%s sslmode=disable TimeZone=UTC",
-			cfg.DBHost, cfg.DBUser, cfg.DBPassword, cfg.DBName, cfg.DBPort,
+			"host=%s user=%s password=%s dbname=%s port=%s sslmode=%s TimeZone=%s",
+			cfg.DBHost, cfg.DBUser, cfg.DBPassword, cfg.DBName, cfg.DBPort, cfg.DBSSLMode, cfg.DBTimeZone,
 		)
 
 		var err error

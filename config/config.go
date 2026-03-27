@@ -16,6 +16,8 @@ type Config struct {
 	DBPassword         string
 	DBName             string
 	DBPort             string
+	DBSSLMode          string
+	DBTimeZone         string
 	JWTSecret          string
 	JWTExpiryHours     int
 	RefreshExpiry      int
@@ -56,6 +58,8 @@ func LoadConfig() *Config {
 		DBPassword:         getEnv("DB_PASSWORD", "postgres"),
 		DBName:             getEnv("DB_NAME", "sentinal_chat"),
 		DBPort:             getEnv("DB_PORT", "5432"),
+		DBSSLMode:          getEnv("DB_SSLMODE", "disable"),
+		DBTimeZone:         getEnv("DB_TIMEZONE", "UTC"),
 		JWTSecret:          getEnv("JWT_SECRET", "change-me"),
 		JWTExpiryHours:     getEnvAsInt("JWT_EXPIRY_HOURS", 1),
 		RefreshExpiry:      getEnvAsInt("REFRESH_EXPIRY_DAYS", 14),
