@@ -38,15 +38,19 @@ jobs:
       - name: Deploy on EC2
         run: |
           ssh -i ~/.ssh/ec2_key "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" "
-            set -e
+            set -euo pipefail
             cd ~/${DEPLOY_DIR}
-            git checkout main
             git fetch origin main
-            git pull origin main
-            test -f .env
-            docker compose up -d --build api
+            git checkout main
+            git reset --hard origin/main
+            if [ ! -f .env ]; then
+              echo '.env not found in ~/sentinal-chat. Create it first.'
+              exit 1
+            fi
             set -a
             . ./.env
             set +a
-            curl -fsS http://127.0.0.1:\${APP_PORT:-5000}/health
+            docker info >/dev/null
+            docker compose --env-file .env up -d --build api
+            curl -fsS "http://127.0.0.1:\${APP_PORT:-5000}/health"
           "
