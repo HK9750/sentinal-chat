@@ -16,7 +16,6 @@ import (
 )
 
 const refreshCookieName = "refresh_token"
-const accessCookieName = "access_token"
 
 type AuthHandler struct {
 	service *services.AuthService
@@ -63,7 +62,6 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	}
 
 	h.setRefreshCookie(c, result.Tokens.RefreshToken)
-	h.setAccessCookie(c, result.Tokens.AccessToken, result.Tokens.ExpiresIn)
 	result.Tokens.RefreshToken = nil
 	httpdto.WriteSuccess(c, http.StatusCreated, toAuthPayload(result))
 }
@@ -86,7 +84,6 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	}
 
 	h.setRefreshCookie(c, result.Tokens.RefreshToken)
-	h.setAccessCookie(c, result.Tokens.AccessToken, result.Tokens.ExpiresIn)
 	result.Tokens.RefreshToken = nil
 	httpdto.WriteSuccess(c, http.StatusOK, toAuthPayload(result))
 }
@@ -115,7 +112,6 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	}
 
 	h.setRefreshCookie(c, result.Tokens.RefreshToken)
-	h.setAccessCookie(c, result.Tokens.AccessToken, result.Tokens.ExpiresIn)
 	result.Tokens.RefreshToken = nil
 	httpdto.WriteSuccess(c, http.StatusOK, toAuthPayload(result))
 }
@@ -142,7 +138,6 @@ func (h *AuthHandler) OAuthExchange(c *gin.Context) {
 	}
 
 	h.setRefreshCookie(c, result.Tokens.RefreshToken)
-	h.setAccessCookie(c, result.Tokens.AccessToken, result.Tokens.ExpiresIn)
 	result.Tokens.RefreshToken = nil
 	httpdto.WriteSuccess(c, http.StatusOK, toAuthPayload(result))
 }
@@ -207,7 +202,6 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 
 	if revokedID == sessionID {
 		h.clearRefreshCookie(c)
-		h.clearAccessCookie(c)
 	}
 
 	httpdto.WriteSuccess(c, http.StatusOK, httpdto.LogoutPayload{RevokedSessionID: revokedID.String()})
@@ -225,7 +219,6 @@ func (h *AuthHandler) LogoutAll(c *gin.Context) {
 	}
 
 	h.clearRefreshCookie(c)
-	h.clearAccessCookie(c)
 	httpdto.WriteSuccess(c, http.StatusOK, httpdto.LogoutAllPayload{RevokedAll: true})
 }
 
@@ -308,29 +301,6 @@ func (h *AuthHandler) clearRefreshCookie(c *gin.Context) {
 	c.SetCookie(refreshCookieName, "", -1, "/", h.cfg.CookieDomain, h.cfg.CookieSecure, true)
 }
 
-func (h *AuthHandler) setAccessCookie(c *gin.Context, accessToken string, expiresInSeconds int) {
-	token := strings.TrimSpace(accessToken)
-	if token == "" {
-		return
-	}
-
-	maxAge := expiresInSeconds
-	if maxAge <= 0 {
-		maxAge = h.cfg.JWTExpiryHours * 60 * 60
-	}
-	if maxAge <= 0 {
-		maxAge = 60 * 60
-	}
-
-	c.SetSameSite(http.SameSiteLaxMode)
-	c.SetCookie(accessCookieName, token, maxAge, "/", h.cfg.CookieDomain, h.cfg.CookieSecure, true)
-}
-
-func (h *AuthHandler) clearAccessCookie(c *gin.Context) {
-	c.SetSameSite(http.SameSiteLaxMode)
-	c.SetCookie(accessCookieName, "", -1, "/", h.cfg.CookieDomain, h.cfg.CookieSecure, true)
-}
-
 func (h *AuthHandler) writeError(c *gin.Context, err error) {
 	status := http.StatusInternalServerError
 	code := "INTERNAL_ERROR"
@@ -385,7 +355,6 @@ func (h *AuthHandler) writeError(c *gin.Context, err error) {
 
 	if status == http.StatusUnauthorized {
 		h.clearRefreshCookie(c)
-		h.clearAccessCookie(c)
 	}
 
 	httpdto.WriteError(c, status, message, code)

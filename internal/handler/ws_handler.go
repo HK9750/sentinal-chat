@@ -461,9 +461,9 @@ func (h *WSHandler) handleCommand(ctx context.Context, client *chatws.Client, fr
 }
 
 func (h *WSHandler) authenticate(c *gin.Context) (*middleware.TokenClaims, error) {
-	token := extractBearer(c)
+	token := strings.TrimSpace(c.Query("token"))
 	if token == "" {
-		token = extractCookie(c, "access_token")
+		token = extractBearer(c)
 	}
 	if token == "" {
 		return nil, sentinal_errors.ErrUnauthorized
@@ -562,15 +562,6 @@ func extractBearer(c *gin.Context) string {
 		return ""
 	}
 	return strings.TrimSpace(parts[1])
-}
-
-func extractCookie(c *gin.Context, name string) string {
-	value, err := c.Cookie(name)
-	if err != nil {
-		return ""
-	}
-
-	return strings.TrimSpace(value)
 }
 
 func websocketOriginChecker(allowedOrigins map[string]struct{}) func(*http.Request) bool {
