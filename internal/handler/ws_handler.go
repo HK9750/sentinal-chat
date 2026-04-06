@@ -302,24 +302,7 @@ func (h *WSHandler) handleMessageDeleteBulk(ctx context.Context, client *chatws.
 		return
 	}
 
-	if mode == "FOR_ME" {
-		h.sendEnvelope(client, chatws.NewConversationEvent(events.MessageDeleted, conversationID, map[string]any{
-			"mode":        "FOR_ME",
-			"user_id":     client.UserID.String(),
-			"message_ids": messageViewIDs(items),
-		}))
-	}
-}
-
-func messageViewIDs(items []services.MessageView) []string {
-	ids := make([]string, 0, len(items))
-	for _, item := range items {
-		if strings.TrimSpace(item.ID) == "" {
-			continue
-		}
-		ids = append(ids, item.ID)
-	}
-	return ids
+	_ = items
 }
 
 func (h *WSHandler) handleReaction(ctx context.Context, client *chatws.Client, frame httpdto.WebSocketInboundFrame) {
