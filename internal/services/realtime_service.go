@@ -329,8 +329,25 @@ func (s *RealtimeService) ForwardCallSignal(ctx context.Context, frameType strin
 }
 
 func (s *RealtimeService) EndCall(ctx context.Context, in CallEndInput) error {
-	_, err := s.callService.End(ctx, in)
-	return err
+	call, err := s.callService.End(ctx, in)
+	if err != nil {
+		return err
+	}
+	if s.broadcaster != nil {
+		reason := strings.TrimSpace(in.Reason)
+		if reason == "" {
+			reason = normalizeCallEndReason(in.Reason)
+		}
+		envelope := chatws.NewCallEvent(events.CallEnded, call.ConversationID, call.ID, map[string]any{
+			"call_id":           call.ID.String(),
+			"reason":            reason,
+			"normalized_reason": normalizeCallEndReason(in.Reason),
+			"actor_id":          in.ActorID.String(),
+		})
+		_ = s.broadcaster.BroadcastConversation(ctx, call.ConversationID, envelope, nil)
+		_ = s.broadcaster.PublishConversation(ctx, call.ConversationID, envelope)
+	}
+	return nil
 }
 
 func (s *RealtimeService) UndoLatest(ctx context.Context, userID uuid.UUID, conversationID *uuid.UUID) (CommandResult, error) {

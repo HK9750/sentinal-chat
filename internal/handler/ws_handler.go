@@ -395,9 +395,36 @@ func (h *WSHandler) handleCall(ctx context.Context, client *chatws.Client, frame
 		return
 	}
 	if frame.Type == events.InboundCallEnd {
-		if err := h.realtimeService.EndCall(ctx, services.CallEndInput{CallID: callID, ActorID: client.UserID, Reason: stringValue(data["reason"])}); err != nil {
+		reason := stringValue(data["reason"])
+		if h.logger != nil {
+			h.logger.InfowCtx(ctx, "[CALL_END] inbound call:end received",
+				"call_id", callID.String(),
+				"actor_id", client.UserID.String(),
+				"reason", reason,
+				"request_id", strings.TrimSpace(frame.RequestID),
+				"conversation_id", strings.TrimSpace(frame.ConversationID),
+			)
+		}
+
+		if err := h.realtimeService.EndCall(ctx, services.CallEndInput{CallID: callID, ActorID: client.UserID, Reason: reason}); err != nil {
+			if h.logger != nil {
+				h.logger.WarnwCtx(ctx, "[CALL_END] failed to emit call:end",
+					"call_id", callID.String(),
+					"actor_id", client.UserID.String(),
+					"reason", reason,
+					"error", err.Error(),
+				)
+			}
 			h.sendErrorWithRequestID(client, frame.RequestID, "CALL_END_FAILED", err.Error())
 			return
+		}
+
+		if h.logger != nil {
+			h.logger.InfowCtx(ctx, "[CALL_END] call:end emitted",
+				"call_id", callID.String(),
+				"actor_id", client.UserID.String(),
+				"reason", reason,
+			)
 		}
 		return
 

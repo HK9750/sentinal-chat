@@ -24,6 +24,25 @@ type CallService struct {
 	proxy         *chatproxy.MembershipProxy
 }
 
+func normalizeCallEndReason(reason string) string {
+	normalized := strings.ToUpper(strings.TrimSpace(reason))
+
+	switch normalized {
+	case "", "COMPLETED", "HANGUP", "HUNGUP", "CANCELLED", "CANCELED", "ENDED", "END", "LEFT", "BYE":
+		return "COMPLETED"
+	case "DECLINED", "REJECTED":
+		return "DECLINED"
+	case "MISSED", "NO_ANSWER", "UNANSWERED":
+		return "MISSED"
+	case "FAILED", "ERROR":
+		return "FAILED"
+	case "TIMEOUT", "TIMED_OUT":
+		return "TIMEOUT"
+	default:
+		return "COMPLETED"
+	}
+}
+
 func NewCallService(calls repository.CallRepository, conversations repository.ConversationRepository, outboxRepo repository.OutboxRepository) *CallService {
 	return &CallService{
 		calls:         calls,
@@ -129,11 +148,16 @@ func (s *CallService) End(ctx context.Context, in CallEndInput) (calldomain.Call
 	if err := s.calls.UpdateParticipantStatus(ctx, in.CallID, in.ActorID, "LEFT"); err != nil {
 		return calldomain.Call{}, err
 	}
-	if err := s.calls.EndCall(ctx, in.CallID, strings.ToUpper(strings.TrimSpace(in.Reason))); err != nil {
+	normalizedReason := normalizeCallEndReason(in.Reason)
+	if err := s.calls.EndCall(ctx, in.CallID, normalizedReason); err != nil {
 		return calldomain.Call{}, err
 	}
 	if s.outbox != nil {
-		envelope := chatws.NewCallEvent(events.CallEnded, call.ConversationID, in.CallID, map[string]any{"call_id": in.CallID.String(), "reason": in.Reason, "actor_id": in.ActorID.String()})
+		reason := strings.TrimSpace(in.Reason)
+		if reason == "" {
+			reason = normalizedReason
+		}
+		envelope := chatws.MarkLocal(chatws.NewCallEvent(events.CallEnded, call.ConversationID, in.CallID, map[string]any{"call_id": in.CallID.String(), "reason": reason, "normalized_reason": normalizedReason, "actor_id": in.ActorID.String()}))
 		if event, err := chatws.NewOutboxEvent(events.CallEnded, outbox.AggregateCall, in.CallID, envelope); err == nil {
 			if err := s.outbox.Create(ctx, nil, event); err != nil {
 				return calldomain.Call{}, err
