@@ -27,15 +27,17 @@ type ConversationService struct {
 	command       *CommandService
 	proxy         *chatproxy.MembershipProxy
 	messageSvc    *MessageService
+	calls         repository.CallRepository
 }
 
-func NewConversationService(conversations repository.ConversationRepository, users repository.UserRepository, outboxRepo repository.OutboxRepository, commandSvc *CommandService) *ConversationService {
+func NewConversationService(conversations repository.ConversationRepository, users repository.UserRepository, outboxRepo repository.OutboxRepository, commandSvc *CommandService, callRepo repository.CallRepository) *ConversationService {
 	return &ConversationService{
 		conversations: conversations,
 		users:         users,
 		outbox:        outboxRepo,
 		command:       commandSvc,
 		proxy:         chatproxy.NewMembershipProxy(conversations),
+		calls:         callRepo,
 	}
 }
 
@@ -278,6 +280,112 @@ func (s *ConversationService) Clear(ctx context.Context, in ClearConversationInp
 		}
 	}
 	return nil
+}
+
+func (s *ConversationService) UpdateDisappearingMode(ctx context.Context, in UpdateDisappearingModeInput) (ConversationView, error) {
+	if err := s.proxy.RequireParticipant(ctx, in.ConversationID, in.ActorID); err != nil {
+		return ConversationView{}, err
+	}
+
+	conv, err := s.conversations.GetByID(ctx, in.ConversationID)
+	if err != nil {
+		return ConversationView{}, err
+	}
+
+	nextMode := normalizeDisappearingMode(in.DisappearingMode)
+	if conv.DisappearingMode == nextMode {
+		return s.buildConversationView(ctx, conv, in.ActorID)
+	}
+
+	conv.DisappearingMode = nextMode
+	conv.UpdatedAt = time.Now().UTC()
+	if err := s.conversations.Update(ctx, conv); err != nil {
+		return ConversationView{}, err
+	}
+
+	if s.outbox != nil {
+		envelope := chatws.NewConversationEvent(events.ConversationUpdated, in.ConversationID, map[string]any{
+			"conversation_id":   in.ConversationID.String(),
+			"updated_by":        in.ActorID.String(),
+			"disappearing_mode": nextMode,
+		})
+		if err := s.enqueueOutboxEvent(ctx, events.ConversationUpdated, outbox.AggregateConversation, in.ConversationID, envelope, false); err != nil {
+			return ConversationView{}, err
+		}
+	}
+
+	updated, err := s.conversations.GetByID(ctx, in.ConversationID)
+	if err != nil {
+		return ConversationView{}, err
+	}
+
+	return s.buildConversationView(ctx, updated, in.ActorID)
+}
+
+func (s *ConversationService) DeleteForMe(ctx context.Context, in DeleteConversationInput) error {
+	if err := s.proxy.RequireParticipant(ctx, in.ConversationID, in.ActorID); err != nil {
+		return err
+	}
+	if err := s.conversations.RemoveParticipant(ctx, in.ConversationID, in.ActorID); err != nil {
+		return err
+	}
+	if s.outbox != nil {
+		envelope := chatws.NewUserEvent(events.ConversationParticipantRemoved, in.ActorID.String(), map[string]any{
+			"conversation_id": in.ConversationID.String(),
+			"user_id":         in.ActorID.String(),
+			"removed_by":      in.ActorID.String(),
+			"scope":           "SELF",
+		})
+		if err := s.enqueueOutboxEvent(ctx, events.ConversationParticipantRemoved, outbox.AggregateConversation, in.ConversationID, envelope, false); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *ConversationService) CallHistory(ctx context.Context, conversationID, userID uuid.UUID, page, limit int) ([]CallHistoryItemView, int64, error) {
+	if err := s.proxy.RequireParticipant(ctx, conversationID, userID); err != nil {
+		return nil, 0, err
+	}
+	if s.calls == nil {
+		return nil, 0, sentinal_errors.ErrServiceUnavailable
+	}
+	items, total, err := s.calls.GetConversationCalls(ctx, conversationID, chatNormalizePage(page), chatNormalizeLimit(limit, 50))
+	if err != nil {
+		return nil, 0, err
+	}
+	views := make([]CallHistoryItemView, 0, len(items))
+	for _, item := range items {
+		var connectedAt *time.Time
+		if item.ConnectedAt.Valid {
+			connectedAt = chatTimePtr(item.ConnectedAt.Time)
+		}
+		var endedAt *time.Time
+		if item.EndedAt.Valid {
+			endedAt = chatTimePtr(item.EndedAt.Time)
+		}
+		var reason *string
+		if item.EndReason.Valid {
+			reason = chatStringPtr(item.EndReason.String)
+		}
+		var duration *int32
+		if item.DurationSeconds.Valid {
+			value := item.DurationSeconds.Int32
+			duration = &value
+		}
+		views = append(views, CallHistoryItemView{
+			ID:              item.ID.String(),
+			ConversationID:  item.ConversationID.String(),
+			Type:            item.Type,
+			InitiatedBy:     item.InitiatedBy.String(),
+			StartedAt:       item.StartedAt,
+			ConnectedAt:     connectedAt,
+			EndedAt:         endedAt,
+			EndReason:       reason,
+			DurationSeconds: duration,
+		})
+	}
+	return views, total, nil
 }
 
 func (s *ConversationService) applyCommandUndo(ctx context.Context, log command.CommandLog) (CommandResult, error) {

@@ -197,6 +197,50 @@ func (r *PostgresMessageRepository) GetConversationMessages(ctx context.Context,
 	return messages, nil
 }
 
+func (r *PostgresMessageRepository) GetConversationMessagesVisible(ctx context.Context, conversationID, userID uuid.UUID, beforeSeq int64, limit int) ([]message.Message, error) {
+	var messages []message.Message
+
+	query := `
+		SELECT ` + msgColumns + `
+		FROM messages m
+		LEFT JOIN conversation_clears cc
+			ON cc.conversation_id = m.conversation_id AND cc.user_id = $2
+		WHERE m.conversation_id = $1
+		  AND m.deleted_at IS NULL
+		  AND (m.expires_at IS NULL OR m.expires_at > NOW())
+		  AND (cc.cleared_at IS NULL OR m.created_at > cc.cleared_at)
+		  AND NOT EXISTS (
+			  SELECT 1
+			  FROM message_deletions md
+			  WHERE md.message_id = m.id AND md.user_id = $2
+		  )`
+	args := []interface{}{conversationID, userID}
+	if beforeSeq > 0 {
+		query += " AND m.seq_id < $3"
+		args = append(args, beforeSeq)
+	}
+	query += fmt.Sprintf(" ORDER BY m.seq_id DESC LIMIT $%d", len(args)+1)
+	args = append(args, limit)
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		m, err := scanMessage(rows)
+		if err != nil {
+			return nil, err
+		}
+		messages = append(messages, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return messages, nil
+}
+
 func (r *PostgresMessageRepository) GetMessagesBySeqRange(ctx context.Context, conversationID uuid.UUID, startSeq, endSeq int64) ([]message.Message, error) {
 	var messages []message.Message
 	rows, err := r.db.QueryContext(ctx, `
@@ -331,6 +375,58 @@ func (r *PostgresMessageRepository) GetLatestMessage(ctx context.Context, conver
 		return message.Message{}, err
 	}
 	return m, nil
+}
+
+func (r *PostgresMessageRepository) GetLatestMessageVisible(ctx context.Context, conversationID, userID uuid.UUID) (message.Message, error) {
+	m, err := scanMessage(r.db.QueryRowContext(ctx, `
+		SELECT `+msgColumns+`
+		FROM messages m
+		LEFT JOIN conversation_clears cc
+			ON cc.conversation_id = m.conversation_id AND cc.user_id = $2
+		WHERE m.conversation_id = $1
+		  AND m.deleted_at IS NULL
+		  AND (m.expires_at IS NULL OR m.expires_at > NOW())
+		  AND (cc.cleared_at IS NULL OR m.created_at > cc.cleared_at)
+		  AND NOT EXISTS (
+			  SELECT 1
+			  FROM message_deletions md
+			  WHERE md.message_id = m.id AND md.user_id = $2
+		  )
+		ORDER BY m.seq_id DESC
+		LIMIT 1
+	`, conversationID, userID))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return message.Message{}, sentinal_errors.ErrNotFound
+		}
+		return message.Message{}, err
+	}
+	return m, nil
+}
+
+func (r *PostgresMessageRepository) CountUnreadVisibleSince(ctx context.Context, conversationID, userID uuid.UUID, lastReadSeq int64) (int64, error) {
+	var count int64
+	err := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM messages m
+		LEFT JOIN conversation_clears cc
+			ON cc.conversation_id = m.conversation_id AND cc.user_id = $2
+		WHERE m.conversation_id = $1
+		  AND m.seq_id > $3
+		  AND m.sender_id != $2
+		  AND m.deleted_at IS NULL
+		  AND (m.expires_at IS NULL OR m.expires_at > NOW())
+		  AND (cc.cleared_at IS NULL OR m.created_at > cc.cleared_at)
+		  AND NOT EXISTS (
+			  SELECT 1
+			  FROM message_deletions md
+			  WHERE md.message_id = m.id AND md.user_id = $2
+		  )
+	`, conversationID, userID, lastReadSeq).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 func (r *PostgresMessageRepository) MarkAsEdited(ctx context.Context, messageID uuid.UUID) error {
@@ -1226,6 +1322,33 @@ func (r *PostgresMessageRepository) DeleteExpiredMessages(ctx context.Context) (
 		return 0, err
 	}
 	return rows, nil
+}
+
+func (r *PostgresMessageRepository) DeleteMessagesForUser(ctx context.Context, conversationID, userID uuid.UUID, messageIDs []uuid.UUID) error {
+	if len(messageIDs) == 0 {
+		return nil
+	}
+
+	return WithTx(ctx, r.db, func(tx DBTX) error {
+		for _, messageID := range messageIDs {
+			if messageID == uuid.Nil {
+				continue
+			}
+
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO message_deletions (message_id, user_id, deleted_at)
+				SELECT m.id, $2, NOW()
+				FROM messages m
+				WHERE m.id = $1 AND m.conversation_id = $3
+				ON CONFLICT (message_id, user_id) DO UPDATE
+				SET deleted_at = EXCLUDED.deleted_at
+			`, messageID, userID, conversationID); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
 }
 
 func toNullTime(t time.Time) sql.NullTime {

@@ -131,12 +131,15 @@ type MessageRepository interface {
 	HardDelete(ctx context.Context, id uuid.UUID) error
 
 	GetConversationMessages(ctx context.Context, conversationID uuid.UUID, beforeSeq int64, limit int) ([]message.Message, error)
+	GetConversationMessagesVisible(ctx context.Context, conversationID, userID uuid.UUID, beforeSeq int64, limit int) ([]message.Message, error)
+	GetLatestMessageVisible(ctx context.Context, conversationID, userID uuid.UUID) (message.Message, error)
 	GetMessagesBySeqRange(ctx context.Context, conversationID uuid.UUID, startSeq, endSeq int64) ([]message.Message, error)
 	// CountUnreadSince(ctx context.Context, conversationID, userID uuid.UUID, lastReadSeq int64) (int64, error)
 	GetUnreadMessages(ctx context.Context, conversationID, userID uuid.UUID) ([]message.Message, error)
 	SearchMessages(ctx context.Context, conversationID uuid.UUID, query string, page, limit int) ([]message.Message, int64, error)
 	GetMessagesByType(ctx context.Context, conversationID uuid.UUID, msgType string, limit int) ([]message.Message, error)
 	GetLatestMessage(ctx context.Context, conversationID uuid.UUID) (message.Message, error)
+	CountUnreadVisibleSince(ctx context.Context, conversationID, userID uuid.UUID, lastReadSeq int64) (int64, error)
 
 	MarkAsEdited(ctx context.Context, messageID uuid.UUID) error
 	GetMessageCountSince(ctx context.Context, conversationID uuid.UUID, since time.Time) (int64, error)
@@ -192,6 +195,7 @@ type MessageRepository interface {
 	GetUserVotes(ctx context.Context, pollID, userID uuid.UUID) ([]message.PollVote, error)
 
 	DeleteExpiredMessages(ctx context.Context) (int64, error)
+	DeleteMessagesForUser(ctx context.Context, conversationID, userID uuid.UUID, messageIDs []uuid.UUID) error
 }
 
 type CallRepository interface {

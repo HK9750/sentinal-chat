@@ -137,6 +137,8 @@ func (h *WSHandler) handleFrame(ctx context.Context, client *chatws.Client, fram
 		h.handleMessageEdit(ctx, client, frame)
 	case events.InboundMessageDelete:
 		h.handleMessageDelete(ctx, client, frame)
+	case events.InboundMessageDeleteBulk:
+		h.handleMessageDeleteBulk(ctx, client, frame)
 	case events.InboundMessageReactionAdd, events.InboundMessageReactionRemove:
 		h.handleReaction(ctx, client, frame)
 	case events.InboundMessagePin, events.InboundMessageUnpin:
@@ -265,6 +267,59 @@ func (h *WSHandler) handleMessageDelete(ctx context.Context, client *chatws.Clie
 		return
 	}
 	_ = message
+}
+
+func (h *WSHandler) handleMessageDeleteBulk(ctx context.Context, client *chatws.Client, frame httpdto.WebSocketInboundFrame) {
+	conversationID, data, frameErr := h.parseConversationData(frame)
+	if frameErr != nil {
+		h.sendError(client, frameErr.code, frameErr.message)
+		return
+	}
+
+	messageIDs, err := services.AnyToUUIDSlice(data["message_ids"])
+	if err != nil || len(messageIDs) == 0 {
+		h.sendError(client, "INVALID_MESSAGE_IDS", "invalid message ids")
+		return
+	}
+
+	mode := strings.TrimSpace(strings.ToUpper(stringValue(data["delete_mode"])))
+	if mode == "" {
+		mode = "FOR_ME"
+	}
+	if mode != "FOR_ME" && mode != "FOR_EVERYONE" {
+		h.sendError(client, "INVALID_DELETE_MODE", "invalid delete mode")
+		return
+	}
+
+	items, err := h.realtimeService.DeleteMessages(ctx, services.BulkDeleteMessagesInput{
+		ConversationID: conversationID,
+		ActorID:        client.UserID,
+		MessageIDs:     messageIDs,
+		DeleteMode:     mode,
+	})
+	if err != nil {
+		h.sendErrorWithRequestID(client, frame.RequestID, "MESSAGE_DELETE_FAILED", err.Error())
+		return
+	}
+
+	if mode == "FOR_ME" {
+		h.sendEnvelope(client, chatws.NewConversationEvent(events.MessageDeleted, conversationID, map[string]any{
+			"mode":        "FOR_ME",
+			"user_id":     client.UserID.String(),
+			"message_ids": messageViewIDs(items),
+		}))
+	}
+}
+
+func messageViewIDs(items []services.MessageView) []string {
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		if strings.TrimSpace(item.ID) == "" {
+			continue
+		}
+		ids = append(ids, item.ID)
+	}
+	return ids
 }
 
 func (h *WSHandler) handleReaction(ctx context.Context, client *chatws.Client, frame httpdto.WebSocketInboundFrame) {

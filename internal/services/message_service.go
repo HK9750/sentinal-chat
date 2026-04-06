@@ -46,6 +46,10 @@ func (s *MessageService) Send(ctx context.Context, in SendMessageInput) (Message
 	if err := s.proxy.RequireParticipant(ctx, in.ConversationID, in.SenderID); err != nil {
 		return MessageView{}, err
 	}
+	conversation, err := s.conversations.GetByID(ctx, in.ConversationID)
+	if err != nil {
+		return MessageView{}, err
+	}
 	messageType := strings.ToUpper(strings.TrimSpace(in.Type))
 	hasAttachments := len(chatDedupeUUIDs(in.AttachmentIDs)) > 0
 	hasContent := strings.TrimSpace(in.Content) != ""
@@ -66,6 +70,10 @@ func (s *MessageService) Send(ctx context.Context, in SendMessageInput) (Message
 	}
 
 	now := time.Now().UTC()
+	expiresAt := in.ExpiresAt
+	if expiresAt == nil {
+		expiresAt = disappearingExpiryFromMode(conversation.DisappearingMode, now)
+	}
 	msg := msgdomain.Message{
 		ID:              uuid.New(),
 		ConversationID:  in.ConversationID,
@@ -74,7 +82,7 @@ func (s *MessageService) Send(ctx context.Context, in SendMessageInput) (Message
 		Type:            messageType,
 		Content:         chatNullableString(strings.TrimSpace(in.Content)),
 		CreatedAt:       now,
-		ExpiresAt:       chatNullableTimePtr(in.ExpiresAt),
+		ExpiresAt:       chatNullableTimePtr(expiresAt),
 	}
 	if in.ReplyToMsgID != nil {
 		msg.ReplyToMsgID = chatNullableUUID(*in.ReplyToMsgID)
@@ -237,6 +245,93 @@ func (s *MessageService) Delete(ctx context.Context, in DeleteMessageInput) (Mes
 		}
 	}
 	return view, nil
+}
+
+func (s *MessageService) DeleteBulk(ctx context.Context, in BulkDeleteMessagesInput) ([]MessageView, error) {
+	if err := s.proxy.RequireParticipant(ctx, in.ConversationID, in.ActorID); err != nil {
+		return nil, err
+	}
+
+	mode := strings.ToUpper(strings.TrimSpace(in.DeleteMode))
+	if mode != "FOR_ME" && mode != "FOR_EVERYONE" {
+		return nil, sentinal_errors.ErrInvalidInput
+	}
+
+	messageIDs := chatDedupeUUIDs(in.MessageIDs)
+	if len(messageIDs) == 0 {
+		return nil, sentinal_errors.ErrInvalidInput
+	}
+
+	if mode == "FOR_ME" {
+		if err := s.messages.DeleteMessagesForUser(ctx, in.ConversationID, in.ActorID, messageIDs); err != nil {
+			return nil, err
+		}
+
+		if s.outbox != nil {
+			envelope := chatws.NewConversationEvent(events.MessageDeleted, in.ConversationID, map[string]any{
+				"mode":        "FOR_ME",
+				"user_id":     in.ActorID.String(),
+				"message_ids": uuidSliceToStrings(messageIDs),
+			})
+			if err := s.enqueueOutboxEvent(ctx, events.MessageDeleted, outbox.AggregateConversation, in.ConversationID, envelope, true); err != nil {
+				return nil, err
+			}
+		}
+
+		views := make([]MessageView, 0, len(messageIDs))
+		for _, messageID := range messageIDs {
+			view := MessageView{ID: messageID.String(), ConversationID: in.ConversationID.String()}
+			views = append(views, view)
+		}
+		return views, nil
+	}
+
+	views := make([]MessageView, 0, len(messageIDs))
+	for _, messageID := range messageIDs {
+		msg, err := s.messages.GetByID(ctx, messageID)
+		if err != nil {
+			if errors.Is(err, sentinal_errors.ErrNotFound) {
+				continue
+			}
+			return nil, err
+		}
+		if msg.ConversationID != in.ConversationID {
+			return nil, sentinal_errors.ErrInvalidInput
+		}
+		if msg.SenderID != in.ActorID {
+			return nil, sentinal_errors.ErrForbidden
+		}
+		if msg.DeletedAt.Valid {
+			view, err := s.GetByID(ctx, messageID, in.ActorID)
+			if err == nil {
+				views = append(views, view)
+			}
+			continue
+		}
+		if err := s.messages.SoftDelete(ctx, messageID); err != nil {
+			return nil, err
+		}
+		view, err := s.GetByID(ctx, messageID, in.ActorID)
+		if err != nil {
+			return nil, err
+		}
+		views = append(views, view)
+	}
+
+	if s.outbox != nil {
+		for _, view := range views {
+			envelope := chatws.NewMessageEvent(events.MessageDeleted, in.ConversationID, map[string]any{"message": view})
+			messageID, err := uuid.Parse(view.ID)
+			if err != nil {
+				continue
+			}
+			if err := s.enqueueOutboxEvent(ctx, events.MessageDeleted, outbox.AggregateMessage, messageID, envelope, true); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	return views, nil
 }
 
 func (s *MessageService) AddReaction(ctx context.Context, in ReactionInput) ([]ReactionView, error) {
@@ -445,7 +540,7 @@ func (s *MessageService) History(ctx context.Context, conversationID, userID uui
 	if err := s.proxy.RequireParticipant(ctx, conversationID, userID); err != nil {
 		return nil, err
 	}
-	messages, err := s.messages.GetConversationMessages(ctx, conversationID, beforeSeq, chatNormalizeLimit(limit, 50))
+	messages, err := s.messages.GetConversationMessagesVisible(ctx, conversationID, userID, beforeSeq, chatNormalizeLimit(limit, 50))
 	if err != nil {
 		return nil, err
 	}
@@ -471,6 +566,29 @@ func (s *MessageService) GetByID(ctx context.Context, messageID, userID uuid.UUI
 		}
 	}
 	return s.buildMessageView(ctx, msg, fallbackMessageViewUser(msg, userID))
+}
+
+func (s *MessageService) DeleteExpired(ctx context.Context) (int64, error) {
+	if s == nil || s.messages == nil {
+		return 0, sentinal_errors.ErrServiceUnavailable
+	}
+	return s.messages.DeleteExpiredMessages(ctx)
+}
+
+func disappearingExpiryFromMode(mode string, now time.Time) *time.Time {
+	switch strings.ToUpper(strings.TrimSpace(mode)) {
+	case "24_HOURS":
+		expiresAt := now.Add(24 * time.Hour)
+		return &expiresAt
+	case "7_DAYS":
+		expiresAt := now.Add(7 * 24 * time.Hour)
+		return &expiresAt
+	case "90_DAYS":
+		expiresAt := now.Add(90 * 24 * time.Hour)
+		return &expiresAt
+	default:
+		return nil
+	}
 }
 
 func fallbackMessageViewUser(msg msgdomain.Message, userID uuid.UUID) uuid.UUID {
@@ -548,7 +666,7 @@ func (s *MessageService) filterReceiptMessageIDsBySeqRange(ctx context.Context, 
 }
 
 func (s *MessageService) getLatestView(ctx context.Context, conversationID, userID uuid.UUID) (MessageView, error) {
-	msg, err := s.messages.GetLatestMessage(ctx, conversationID)
+	msg, err := s.messages.GetLatestMessageVisible(ctx, conversationID, userID)
 	if err != nil {
 		return MessageView{}, err
 	}
@@ -566,20 +684,7 @@ func (s *MessageService) MarkAllAsDelivered(ctx context.Context, userID uuid.UUI
 }
 
 func (s *MessageService) unreadCountSince(ctx context.Context, conversationID, userID uuid.UUID, lastReadSeq int64) (int64, error) {
-	messages, err := s.messages.GetMessagesBySeqRange(ctx, conversationID, lastReadSeq+1, 1<<62-1)
-	if err != nil {
-		return 0, err
-	}
-
-	var unreadCount int64
-	for _, msg := range messages {
-		if msg.SenderID == userID || msg.DeletedAt.Valid {
-			continue
-		}
-		unreadCount++
-	}
-
-	return unreadCount, nil
+	return s.messages.CountUnreadVisibleSince(ctx, conversationID, userID, lastReadSeq)
 }
 
 func (s *MessageService) buildMessageView(ctx context.Context, msg msgdomain.Message, userID uuid.UUID) (MessageView, error) {

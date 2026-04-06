@@ -45,8 +45,9 @@ type RouteHandlers struct {
 }
 
 type RouteDependencies struct {
-	Handlers    RouteHandlers
-	AuthService *services.AuthService
+	Handlers       RouteHandlers
+	AuthService    *services.AuthService
+	MessageService *services.MessageService
 }
 
 // New creates a new Server instance and configures the gin engine mode
@@ -132,6 +133,34 @@ func (s *Server) InitRoutes(deps RouteDependencies) {
 	if deps.Handlers.Message != nil {
 		deps.Handlers.Message.RegisterRoutes(protected)
 	}
+
+	if deps.MessageService != nil {
+		startDisappearingMessageCleanup(s.logger, deps.MessageService)
+	}
+}
+
+func startDisappearingMessageCleanup(l *logger.Logger, messageService *services.MessageService) {
+	if messageService == nil {
+		return
+	}
+
+	go func() {
+		ticker := time.NewTicker(1 * time.Minute)
+		defer ticker.Stop()
+
+		for range ticker.C {
+			deleted, err := messageService.DeleteExpired(context.Background())
+			if err != nil {
+				if l != nil {
+					l.Warnf("disappearing.cleanup.failed: %v", err)
+				}
+				continue
+			}
+			if deleted > 0 && l != nil {
+				l.Infof("disappearing.cleanup.deleted=%d", deleted)
+			}
+		}
+	}()
 }
 
 // Start begins listening and blocks until a shutdown signal is received.

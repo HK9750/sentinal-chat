@@ -95,7 +95,7 @@ func main() {
 	uploadService := services.NewUploadService(messageRepo, conversationRepo, s3Client)
 	commandService := services.NewCommandService(commandRepo)
 	messageService := services.NewMessageService(messageRepo, conversationRepo, outboxRepo, commandService)
-	conversationService := services.NewConversationService(conversationRepo, userRepo, outboxRepo, commandService)
+	conversationService := services.NewConversationService(conversationRepo, userRepo, outboxRepo, commandService, callRepo)
 	conversationService.AttachMessageService(messageService)
 	callService := services.NewCallService(callRepo, conversationRepo, outboxRepo)
 
@@ -124,7 +124,8 @@ func main() {
 			Message:      messageHandler,
 			WS:           wsHandler,
 		},
-		AuthService: authService,
+		AuthService:    authService,
+		MessageService: messageService,
 	})
 
 	// defer the close of db

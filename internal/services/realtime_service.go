@@ -183,6 +183,56 @@ func (s *RealtimeService) DeleteMessage(ctx context.Context, userID uuid.UUID, i
 	return message, nil
 }
 
+func (s *RealtimeService) DeleteMessages(ctx context.Context, in BulkDeleteMessagesInput) ([]MessageView, error) {
+	items, err := s.messageService.DeleteBulk(ctx, in)
+	if err != nil {
+		return nil, err
+	}
+	if s.broadcaster == nil {
+		return items, nil
+	}
+
+	mode := strings.ToUpper(strings.TrimSpace(in.DeleteMode))
+	if mode == "FOR_ME" {
+		envelope := chatws.NewConversationEvent(events.MessageDeleted, in.ConversationID, map[string]any{
+			"mode":        "FOR_ME",
+			"user_id":     in.ActorID.String(),
+			"message_ids": messageIDsFromViews(items),
+		})
+		s.broadcaster.SendToUser(in.ActorID, envelope)
+		_ = s.broadcaster.PublishToUser(ctx, in.ActorID, envelope)
+		return items, nil
+	}
+
+	broadcasted := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		if strings.TrimSpace(item.ID) == "" {
+			continue
+		}
+		if _, seen := broadcasted[item.ID]; seen {
+			continue
+		}
+		broadcasted[item.ID] = struct{}{}
+
+		envelope := chatws.NewMessageEvent(events.MessageDeleted, in.ConversationID, map[string]any{"message": item})
+		_ = s.broadcaster.BroadcastConversation(ctx, in.ConversationID, envelope, nil)
+		_ = s.broadcaster.PublishConversation(ctx, in.ConversationID, envelope)
+	}
+
+	return items, nil
+}
+
+func messageIDsFromViews(items []MessageView) []string {
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		if strings.TrimSpace(item.ID) == "" {
+			continue
+		}
+		ids = append(ids, item.ID)
+	}
+	return ids
+}
+
 func (s *RealtimeService) UpdateReaction(ctx context.Context, in ReactionInput, add bool) ([]ReactionView, error) {
 	var (
 		reactions []ReactionView

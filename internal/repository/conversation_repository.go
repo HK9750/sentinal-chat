@@ -168,7 +168,7 @@ func (r *PostgresConversationRepository) GetUserConversations(ctx context.Contex
 
 	if err := r.db.QueryRowContext(ctx, `
         SELECT COUNT(*) FROM conversations c
-        WHERE c.id IN (SELECT conversation_id FROM participants WHERE user_id = $1)
+		WHERE c.id IN (SELECT conversation_id FROM participants WHERE user_id = $1 AND archived = false)
     `, userID).Scan(&total); err != nil {
 		return nil, 0, err
 	}
@@ -178,7 +178,7 @@ func (r *PostgresConversationRepository) GetUserConversations(ctx context.Contex
         SELECT `+convColumns+`,
                (SELECT MAX(m.created_at) FROM messages m WHERE m.conversation_id = c.id) AS last_message_at
         FROM conversations c
-        WHERE c.id IN (SELECT conversation_id FROM participants WHERE user_id = $1)
+        WHERE c.id IN (SELECT conversation_id FROM participants WHERE user_id = $1 AND archived = false)
         ORDER BY COALESCE((SELECT MAX(m.created_at) FROM messages m WHERE m.conversation_id = c.id), c.created_at) DESC
         OFFSET $2 LIMIT $3
     `, userID, offset, limit)
@@ -265,7 +265,7 @@ func (r *PostgresConversationRepository) SearchConversations(ctx context.Context
 	rows, err := r.db.QueryContext(ctx, `
         SELECT `+convColumns+`
         FROM conversations c
-        WHERE c.id IN (SELECT conversation_id FROM participants WHERE user_id = $1)
+		WHERE c.id IN (SELECT conversation_id FROM participants WHERE user_id = $1 AND archived = false)
           AND c.subject ILIKE $2
     `, userID, "%"+query+"%")
 	if err != nil {
@@ -295,7 +295,7 @@ func (r *PostgresConversationRepository) GetConversationsByType(ctx context.Cont
 	rows, err := r.db.QueryContext(ctx, `
         SELECT `+convColumns+`
         FROM conversations c
-        WHERE c.id IN (SELECT conversation_id FROM participants WHERE user_id = $1)
+		WHERE c.id IN (SELECT conversation_id FROM participants WHERE user_id = $1 AND archived = false)
           AND c.type = $2
     `, userID, convType)
 	if err != nil {

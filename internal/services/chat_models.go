@@ -167,6 +167,13 @@ type DeleteMessageInput struct {
 	ActorID        uuid.UUID
 }
 
+type BulkDeleteMessagesInput struct {
+	ConversationID uuid.UUID
+	ActorID        uuid.UUID
+	MessageIDs     []uuid.UUID
+	DeleteMode     string
+}
+
 type ReactionInput struct {
 	ConversationID uuid.UUID
 	MessageID      uuid.UUID
@@ -223,6 +230,17 @@ type ClearConversationInput struct {
 	ActorID        uuid.UUID
 }
 
+type UpdateDisappearingModeInput struct {
+	ConversationID   uuid.UUID
+	ActorID          uuid.UUID
+	DisappearingMode string
+}
+
+type DeleteConversationInput struct {
+	ConversationID uuid.UUID
+	ActorID        uuid.UUID
+}
+
 type CreatePollInput struct {
 	Question       string
 	AllowsMultiple bool
@@ -256,6 +274,18 @@ type CallEndInput struct {
 	CallID  uuid.UUID
 	ActorID uuid.UUID
 	Reason  string
+}
+
+type CallHistoryItemView struct {
+	ID              string     `json:"id"`
+	ConversationID  string     `json:"conversation_id"`
+	Type            string     `json:"type"`
+	InitiatedBy     string     `json:"initiated_by"`
+	StartedAt       time.Time  `json:"started_at"`
+	ConnectedAt     *time.Time `json:"connected_at,omitempty"`
+	EndedAt         *time.Time `json:"ended_at,omitempty"`
+	EndReason       *string    `json:"end_reason,omitempty"`
+	DurationSeconds *int32     `json:"duration_seconds,omitempty"`
 }
 
 type CommandResult struct {

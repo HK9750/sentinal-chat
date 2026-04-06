@@ -16,6 +16,19 @@ type AddParticipantRequest struct {
 	Role   string `json:"role,omitempty"`
 }
 
+type UpdateDisappearingModeRequest struct {
+	DisappearingMode string `json:"disappearing_mode" binding:"required"`
+}
+
+type DeleteConversationPayload struct {
+	Deleted bool `json:"deleted"`
+}
+
+type CallHistoryQuery struct {
+	Page  int `form:"page"`
+	Limit int `form:"limit"`
+}
+
 type ConversationQuery struct {
 	Page  int `form:"page"`
 	Limit int `form:"limit"`
