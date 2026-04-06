@@ -79,7 +79,7 @@ func New(cfg *config.Config, l *logger.Logger) *Server {
 func (s *Server) InitRoutes(deps RouteDependencies) {
 	// Global middleware
 	s.engine.Use(middleware.RequestIDMiddleware())
-	s.engine.Use(middleware.CORSMiddleware(s.config.FrontendURL))
+	s.engine.Use(middleware.CORSMiddleware())
 	s.engine.Use(middleware.LoggingMiddleware(s.logger))
 	s.engine.Use(middleware.ErrorHandler(s.logger))
 

@@ -2,13 +2,12 @@ package middleware
 
 import (
 	"net/http"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 )
 
-func CORSMiddleware(frontendURL string) gin.HandlerFunc {
-	allowedOrigin := strings.TrimSpace(frontendURL)
+func CORSMiddleware() gin.HandlerFunc {
+	allowedOrigin := ""
 	if allowedOrigin == "" {
 		allowedOrigin = "*"
 	}
