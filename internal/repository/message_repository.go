@@ -25,6 +25,10 @@ const msgColumns = `id, conversation_id, sender_id, client_message_id, seq_id, t
        is_forwarded, reply_to_msg_id, poll_id, mention_count,
        created_at, edited_at, deleted_at, expires_at`
 
+const msgColumnsWithAliasM = `m.id, m.conversation_id, m.sender_id, m.client_message_id, m.seq_id, m.type, m.content,
+       m.is_forwarded, m.reply_to_msg_id, m.poll_id, m.mention_count,
+       m.created_at, m.edited_at, m.deleted_at, m.expires_at`
+
 func scanMessage(scanner interface {
 	Scan(dest ...any) error
 }) (message.Message, error) {
@@ -201,7 +205,7 @@ func (r *PostgresMessageRepository) GetConversationMessagesVisible(ctx context.C
 	var messages []message.Message
 
 	query := `
-		SELECT ` + msgColumns + `
+		SELECT ` + msgColumnsWithAliasM + `
 		FROM messages m
 		LEFT JOIN conversation_clears cc
 			ON cc.conversation_id = m.conversation_id AND cc.user_id = $2
@@ -379,7 +383,7 @@ func (r *PostgresMessageRepository) GetLatestMessage(ctx context.Context, conver
 
 func (r *PostgresMessageRepository) GetLatestMessageVisible(ctx context.Context, conversationID, userID uuid.UUID) (message.Message, error) {
 	m, err := scanMessage(r.db.QueryRowContext(ctx, `
-		SELECT `+msgColumns+`
+		SELECT `+msgColumnsWithAliasM+`
 		FROM messages m
 		LEFT JOIN conversation_clears cc
 			ON cc.conversation_id = m.conversation_id AND cc.user_id = $2
