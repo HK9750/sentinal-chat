@@ -141,6 +141,8 @@ func showStatus() {
 
 	tables := []string{
 		"users",
+		"user_notification_settings",
+		"notifications",
 		"devices",
 		"user_sessions",
 		"conversations",

@@ -11,6 +11,7 @@ import (
 	"sentinal-chat/internal/domain/command"
 	"sentinal-chat/internal/domain/conversation"
 	"sentinal-chat/internal/domain/message"
+	"sentinal-chat/internal/domain/notification"
 	"sentinal-chat/internal/domain/outbox"
 	"sentinal-chat/internal/domain/user"
 )
@@ -82,6 +83,18 @@ type UserRepository interface {
 type OAuthIdentityRepository interface {
 	Create(ctx context.Context, identity *OAuthIdentity) error
 	GetByProviderSubject(ctx context.Context, provider, providerUserID string) (OAuthIdentity, error)
+}
+
+type NotificationRepository interface {
+	Create(ctx context.Context, n *notification.Notification) error
+	UpsertByDedupeKey(ctx context.Context, n *notification.Notification) (notification.Notification, error)
+	ListByUser(ctx context.Context, userID uuid.UUID, page, limit int, unreadOnly bool) ([]notification.Notification, int64, error)
+	MarkRead(ctx context.Context, userID, notificationID uuid.UUID) error
+	MarkAllRead(ctx context.Context, userID uuid.UUID) (int64, error)
+	CountUnread(ctx context.Context, userID uuid.UUID) (int64, error)
+
+	GetSettings(ctx context.Context, userID uuid.UUID) (notification.UserNotificationSettings, error)
+	UpsertSettings(ctx context.Context, settings *notification.UserNotificationSettings) error
 }
 
 // ConversationRepository manages conversations and participants.

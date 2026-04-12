@@ -356,6 +356,8 @@ func GetTableCount(tableName string) (int64, error) {
 // TruncateAllTables truncates all tables (USE WITH CAUTION — for testing only)
 func TruncateAllTables() error {
 	tables := []string{
+		"notifications",
+		"user_notification_settings",
 		"conversation_clears",
 		"call_participants",
 		"calls",

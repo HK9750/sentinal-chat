@@ -17,6 +17,7 @@ type RealtimeService struct {
 	broadcaster     chatws.Broadcaster
 	messageService  *MessageService
 	callService     *CallService
+	notifications   *NotificationService
 	conversationSvc *ConversationService
 	commandService  *CommandService
 	userService     *UserService
@@ -26,11 +27,12 @@ type presenceCounter interface {
 	UserConnectionCount(userID uuid.UUID) int
 }
 
-func NewRealtimeService(broadcaster chatws.Broadcaster, conversationSvc *ConversationService, messageSvc *MessageService, callSvc *CallService, commandSvc *CommandService, userSvc *UserService) *RealtimeService {
+func NewRealtimeService(broadcaster chatws.Broadcaster, conversationSvc *ConversationService, messageSvc *MessageService, callSvc *CallService, notificationSvc *NotificationService, commandSvc *CommandService, userSvc *UserService) *RealtimeService {
 	return &RealtimeService{
 		broadcaster:     broadcaster,
 		messageService:  messageSvc,
 		callService:     callSvc,
+		notifications:   notificationSvc,
 		conversationSvc: conversationSvc,
 		commandService:  commandSvc,
 		userService:     userSvc,
@@ -113,6 +115,9 @@ func (s *RealtimeService) SendMessage(ctx context.Context, userID uuid.UUID, in 
 		envelope := chatws.NewMessageEvent(events.MessageNew, in.ConversationID, map[string]any{"message": message})
 		_ = s.broadcaster.BroadcastConversation(ctx, in.ConversationID, envelope, nil)
 		_ = s.broadcaster.PublishConversation(ctx, in.ConversationID, envelope)
+	}
+	if s.notifications != nil {
+		go s.notifications.PublishMessageNotification(context.Background(), message)
 	}
 	s.deliverMessageToOnlineParticipants(ctx, in.ConversationID, in.SenderID, message.ID)
 	return message, nil
@@ -396,6 +401,9 @@ func (s *RealtimeService) EndCall(ctx context.Context, in CallEndInput) error {
 		})
 		_ = s.broadcaster.BroadcastConversation(ctx, call.ConversationID, envelope, nil)
 		_ = s.broadcaster.PublishConversation(ctx, call.ConversationID, envelope)
+	}
+	if s.notifications != nil {
+		s.notifications.PublishMissedCallNotification(ctx, call.ID, call.ConversationID, in.ActorID, in.Reason)
 	}
 	return nil
 }

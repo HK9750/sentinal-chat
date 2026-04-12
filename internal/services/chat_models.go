@@ -236,6 +236,12 @@ type UpdateDisappearingModeInput struct {
 	DisappearingMode string
 }
 
+type UpdateConversationMuteInput struct {
+	ConversationID uuid.UUID
+	ActorID        uuid.UUID
+	MutedUntil     *time.Time
+}
+
 type DeleteConversationInput struct {
 	ConversationID uuid.UUID
 	ActorID        uuid.UUID

@@ -448,9 +448,13 @@ func (r *PostgresConversationRepository) GetParticipants(ctx context.Context, co
 func (r *PostgresConversationRepository) GetParticipant(ctx context.Context, conversationID, userID uuid.UUID) (conversation.Participant, error) {
 	var p conversation.Participant
 	err := r.db.QueryRowContext(ctx, `
-        SELECT conversation_id, user_id, role, joined_at, added_by, muted_until, archived, last_read_sequence
-        FROM participants WHERE conversation_id = $1 AND user_id = $2
-    `, conversationID, userID).Scan(
+	        SELECT p.conversation_id, p.user_id, p.role, p.joined_at, p.added_by, p.muted_until,
+	               p.archived, p.last_read_sequence,
+	               COALESCE(u.display_name, ''), COALESCE(u.username, ''), COALESCE(u.avatar_url, ''), COALESCE(u.is_online, false)
+	        FROM participants p
+	        LEFT JOIN users u ON u.id = p.user_id
+	        WHERE p.conversation_id = $1 AND p.user_id = $2
+	    `, conversationID, userID).Scan(
 		&p.ConversationID,
 		&p.UserID,
 		&p.Role,
@@ -459,6 +463,10 @@ func (r *PostgresConversationRepository) GetParticipant(ctx context.Context, con
 		&p.MutedUntil,
 		&p.Archived,
 		&p.LastReadSequence,
+		&p.DisplayName,
+		&p.Username,
+		&p.AvatarURL,
+		&p.IsOnline,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

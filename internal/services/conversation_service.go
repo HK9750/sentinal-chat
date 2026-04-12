@@ -322,6 +322,35 @@ func (s *ConversationService) UpdateDisappearingMode(ctx context.Context, in Upd
 	return s.buildConversationView(ctx, updated, in.ActorID)
 }
 
+func (s *ConversationService) UpdateMute(ctx context.Context, in UpdateConversationMuteInput) (ConversationView, error) {
+	if err := s.proxy.RequireParticipant(ctx, in.ConversationID, in.ActorID); err != nil {
+		return ConversationView{}, err
+	}
+
+	if in.MutedUntil == nil {
+		if err := s.conversations.UnmuteConversation(ctx, in.ConversationID, in.ActorID); err != nil {
+			return ConversationView{}, err
+		}
+	} else {
+		until := in.MutedUntil.UTC()
+		if !until.After(time.Now().UTC()) {
+			if err := s.conversations.UnmuteConversation(ctx, in.ConversationID, in.ActorID); err != nil {
+				return ConversationView{}, err
+			}
+		} else {
+			if err := s.conversations.MuteConversation(ctx, in.ConversationID, in.ActorID, until); err != nil {
+				return ConversationView{}, err
+			}
+		}
+	}
+
+	updated, err := s.conversations.GetByID(ctx, in.ConversationID)
+	if err != nil {
+		return ConversationView{}, err
+	}
+	return s.buildConversationView(ctx, updated, in.ActorID)
+}
+
 func (s *ConversationService) DeleteForMe(ctx context.Context, in DeleteConversationInput) error {
 	if err := s.proxy.RequireParticipant(ctx, in.ConversationID, in.ActorID); err != nil {
 		return err

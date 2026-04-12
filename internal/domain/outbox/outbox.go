@@ -24,6 +24,7 @@ const (
 	AggregatePoll         AggregateType = "poll"
 	AggregateCall         AggregateType = "call"
 	AggregatePresence     AggregateType = "presence"
+	AggregateNotification AggregateType = "notification"
 )
 
 // OutboxEvent stores domain events waiting to be published to Redis

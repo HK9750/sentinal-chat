@@ -29,6 +29,7 @@ func (h *ConversationHandler) RegisterRoutes(router gin.IRouter) {
 	router.GET("/conversations", h.List)
 	router.GET("/conversations/:id", h.Get)
 	router.PATCH("/conversations/:id", h.Update)
+	router.PATCH("/conversations/:id/mute", h.UpdateMute)
 	router.DELETE("/conversations/:id", h.Delete)
 	router.POST("/conversations/:id/participants", h.AddParticipant)
 	router.DELETE("/conversations/:id/participants/:user_id", h.RemoveParticipant)
@@ -161,6 +162,38 @@ func (h *ConversationHandler) Update(c *gin.Context) {
 		ConversationID:   conversationID,
 		ActorID:          userID,
 		DisappearingMode: req.DisappearingMode,
+	})
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+
+	httpdto.WriteSuccess(c, http.StatusOK, conv)
+}
+
+func (h *ConversationHandler) UpdateMute(c *gin.Context) {
+	ctx := c.Request.Context()
+	userID, ok := mustUserID(c)
+	if !ok {
+		h.writeError(c, sentinal_errors.ErrUnauthorized)
+		return
+	}
+	conversationID, err := parseUUIDParam(c, "id")
+	if err != nil {
+		h.writeError(c, sentinal_errors.ErrInvalidInput)
+		return
+	}
+
+	var req httpdto.UpdateMuteConversationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.writeError(c, sentinal_errors.ErrInvalidInput)
+		return
+	}
+
+	conv, err := h.service.UpdateMute(ctx, services.UpdateConversationMuteInput{
+		ConversationID: conversationID,
+		ActorID:        userID,
+		MutedUntil:     req.MutedUntil,
 	})
 	if err != nil {
 		h.writeError(c, err)

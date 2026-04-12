@@ -20,6 +20,10 @@ type UpdateDisappearingModeRequest struct {
 	DisappearingMode string `json:"disappearing_mode" binding:"required"`
 }
 
+type UpdateMuteConversationRequest struct {
+	MutedUntil *time.Time `json:"muted_until,omitempty"`
+}
+
 type DeleteConversationPayload struct {
 	Deleted bool `json:"deleted"`
 }

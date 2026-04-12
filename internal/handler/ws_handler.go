@@ -91,10 +91,10 @@ func (h *WSHandler) Connect(c *gin.Context) {
 
 func (h *WSHandler) readPump(ctx context.Context, client *chatws.Client) {
 	defer func() {
+		client.Close()
 		if h.realtimeService != nil {
 			_ = h.realtimeService.UpdatePresence(context.Background(), client.UserID, false)
 		}
-		client.Close()
 		if h.logger != nil {
 			h.logger.InfofCtx(context.Background(), "ws.disconnect user_id=%s device_id=%s client_id=%s", client.UserID.String(), strings.TrimSpace(client.DeviceID), client.ID)
 		}

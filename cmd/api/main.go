@@ -49,6 +49,7 @@ func main() {
 	callRepo := repository.NewCallRepository(db)
 	outboxRepo := repository.NewOutboxRepository(db)
 	commandRepo := repository.NewCommandRepository(db)
+	notificationRepo := repository.NewNotificationRepository(db)
 
 	// Token service
 	tokenService, err := services.NewTokenService(
@@ -107,7 +108,9 @@ func main() {
 		logInstance.Errorf("Redis realtime disabled: %v", err)
 	}
 	realtimeHub := chatws.NewHub(redisClient, conversationRepo, logInstance)
-	realtimeService := services.NewRealtimeService(realtimeHub, conversationService, messageService, callService, commandService, userService)
+	notificationService := services.NewNotificationService(notificationRepo, conversationRepo, messageRepo, realtimeHub)
+	notificationHandler := handler.NewNotificationHandler(notificationService, logInstance)
+	realtimeService := services.NewRealtimeService(realtimeHub, conversationService, messageService, callService, notificationService, commandService, userService)
 	outboxWorker := chatws.NewOutboxWorker(outboxRepo, redisClient, logInstance)
 	wsHandler := handler.NewWSHandler(authService, realtimeHub, realtimeService, cfg.FrontendURL, logInstance)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -119,6 +122,7 @@ func main() {
 		Handlers: server.RouteHandlers{
 			Auth:         authHandler,
 			User:         userHandler,
+			Notification: notificationHandler,
 			Upload:       uploadHandler,
 			Conversation: conversationHandler,
 			Message:      messageHandler,
