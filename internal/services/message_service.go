@@ -81,6 +81,7 @@ func (s *MessageService) Send(ctx context.Context, in SendMessageInput) (Message
 		ClientMessageID: chatNullableString(in.ClientMessageID),
 		Type:            messageType,
 		Content:         chatNullableString(strings.TrimSpace(in.Content)),
+		IsForwarded:     in.IsForwarded,
 		CreatedAt:       now,
 		ExpiresAt:       chatNullableTimePtr(expiresAt),
 	}

@@ -62,6 +62,7 @@ type MessageSummaryView struct {
 	SenderID           string     `json:"sender_id"`
 	Kind               string     `json:"kind"`
 	Content            *string    `json:"content,omitempty"`
+	IsForwarded        bool       `json:"is_forwarded"`
 	CreatedAt          time.Time  `json:"created_at"`
 	SeqID              int64      `json:"seq_id"`
 	ReceiptStatus      *string    `json:"receipt_status,omitempty"`
@@ -146,6 +147,7 @@ type SendMessageInput struct {
 	ClientMessageID string
 	Type            string
 	Content         string
+	IsForwarded     bool
 	ReplyToMsgID    *uuid.UUID
 	ExpiresAt       *time.Time
 	AttachmentIDs   []uuid.UUID

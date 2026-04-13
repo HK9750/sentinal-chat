@@ -213,6 +213,7 @@ func (h *WSHandler) handleMessageSend(ctx context.Context, client *chatws.Client
 		ClientMessageID: stringValue(data["client_message_id"]),
 		Type:            stringValue(data["type"]),
 		Content:         stringValue(data["content"]),
+		IsForwarded:     boolValue(data["is_forwarded"]),
 		ReplyToMsgID:    replyTo,
 		ExpiresAt:       expiresAt,
 		AttachmentIDs:   attachmentIDs,
