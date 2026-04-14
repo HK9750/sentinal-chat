@@ -24,10 +24,56 @@ func NewUserHandler(service *services.UserService, l *logger.Logger) *UserHandle
 }
 
 func (h *UserHandler) RegisterRoutes(router gin.IRouter) {
+	router.GET("/users/me", h.GetProfile)
+	router.PATCH("/users/me", h.UpdateProfile)
 	router.GET("/users/search", h.Search)
 	router.GET("/users/contacts", h.ListContacts)
 	router.POST("/users/contacts", h.AddContact)
 	router.DELETE("/users/contacts/:contact_user_id", h.RemoveContact)
+}
+
+func (h *UserHandler) GetProfile(c *gin.Context) {
+	userID, ok := mustUserID(c)
+	if !ok {
+		h.writeError(c, sentinal_errors.ErrUnauthorized)
+		return
+	}
+
+	profile, err := h.service.GetProfile(c.Request.Context(), userID)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+
+	httpdto.WriteSuccess(c, http.StatusOK, toUserProfilePayload(profile))
+}
+
+func (h *UserHandler) UpdateProfile(c *gin.Context) {
+	userID, ok := mustUserID(c)
+	if !ok {
+		h.writeError(c, sentinal_errors.ErrUnauthorized)
+		return
+	}
+
+	var req httpdto.UpdateProfileRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.writeError(c, sentinal_errors.ErrInvalidInput)
+		return
+	}
+
+	profile, err := h.service.UpdateProfile(c.Request.Context(), services.UpdateProfileInput{
+		UserID:      userID,
+		DisplayName: req.DisplayName,
+		Email:       req.Email,
+		PhoneNumber: req.PhoneNumber,
+		AvatarURL:   req.AvatarURL,
+	})
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+
+	httpdto.WriteSuccess(c, http.StatusOK, toUserProfilePayload(profile))
 }
 
 func (h *UserHandler) Search(c *gin.Context) {
@@ -170,4 +216,16 @@ func parseUUIDParamFromValue(value string) (uuid.UUID, error) {
 		return uuid.Nil, sentinal_errors.ErrInvalidInput
 	}
 	return parsed, nil
+}
+
+func toUserProfilePayload(profile services.UserProfileView) httpdto.UserProfilePayload {
+	return httpdto.UserProfilePayload{
+		ID:          profile.ID,
+		DisplayName: profile.DisplayName,
+		Email:       profile.Email,
+		Username:    profile.Username,
+		PhoneNumber: profile.PhoneNumber,
+		AvatarURL:   profile.AvatarURL,
+		IsVerified:  profile.IsVerified,
+	}
 }
