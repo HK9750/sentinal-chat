@@ -251,4 +251,5 @@ type CommandRepository interface {
 	GetCommandsByUser(ctx context.Context, userID uuid.UUID, limit int) ([]command.CommandLog, error)
 	CanUndo(ctx context.Context, commandID uuid.UUID, userID uuid.UUID) (bool, error)
 	GetLatestUndoableByUser(ctx context.Context, userID uuid.UUID, conversationID *uuid.UUID) (command.CommandLog, error)
+	GetLatestRedoableByUser(ctx context.Context, userID uuid.UUID, conversationID *uuid.UUID) (command.CommandLog, error)
 }

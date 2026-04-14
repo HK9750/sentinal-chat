@@ -507,11 +507,36 @@ func (h *WSHandler) handleCommand(ctx context.Context, client *chatws.Client, fr
 	}
 
 	data, ok := frame.Data.(map[string]any)
+	if frame.Data == nil {
+		result, err := h.realtimeService.RedoLatest(ctx, client.UserID, conversationID)
+		if err != nil {
+			h.sendErrorWithRequestID(client, frame.RequestID, "COMMAND_REDO_FAILED", err.Error())
+			return
+		}
+		envelope := chatws.NewUserEvent(events.CommandRedone, client.UserID.String(), map[string]any{"command": result})
+		envelope.RequestID = strings.TrimSpace(frame.RequestID)
+		h.sendEnvelope(client, envelope)
+		return
+	}
 	if !ok {
 		h.sendErrorWithRequestID(client, frame.RequestID, "INVALID_DATA", "invalid payload")
 		return
 	}
-	commandID, err := uuid.Parse(stringValue(data["command_id"]))
+
+	commandIDStr := stringValue(data["command_id"])
+	if commandIDStr == "" {
+		result, err := h.realtimeService.RedoLatest(ctx, client.UserID, conversationID)
+		if err != nil {
+			h.sendErrorWithRequestID(client, frame.RequestID, "COMMAND_REDO_FAILED", err.Error())
+			return
+		}
+		envelope := chatws.NewUserEvent(events.CommandRedone, client.UserID.String(), map[string]any{"command": result})
+		envelope.RequestID = strings.TrimSpace(frame.RequestID)
+		h.sendEnvelope(client, envelope)
+		return
+	}
+
+	commandID, err := uuid.Parse(commandIDStr)
 	if err != nil {
 		h.sendErrorWithRequestID(client, frame.RequestID, "INVALID_COMMAND", "invalid command")
 		return

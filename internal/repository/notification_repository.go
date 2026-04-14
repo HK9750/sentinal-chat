@@ -130,7 +130,7 @@ func (r *notificationRepository) UpsertByDedupeKey(ctx context.Context, item *no
 			type, title, body, deep_link, metadata, dedupe_key,
 			is_read, read_at, created_at, updated_at
 		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,FALSE,NULL,$13,$14)
-		ON CONFLICT (user_id, dedupe_key)
+		ON CONFLICT (user_id, dedupe_key) WHERE dedupe_key IS NOT NULL
 		DO UPDATE SET
 			actor_id = COALESCE(EXCLUDED.actor_id, notifications.actor_id),
 			conversation_id = COALESCE(EXCLUDED.conversation_id, notifications.conversation_id),

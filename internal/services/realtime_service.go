@@ -423,6 +423,9 @@ func (s *RealtimeService) Redo(ctx context.Context, userID, commandID uuid.UUID)
 	if s == nil || s.commandService == nil {
 		return CommandResult{}, sentinal_errors.ErrServiceUnavailable
 	}
+	if commandID == uuid.Nil {
+		return s.RedoLatest(ctx, userID, nil)
+	}
 	log, err := s.commandService.GetByID(ctx, commandID)
 	if err != nil {
 		return CommandResult{}, err
@@ -432,6 +435,17 @@ func (s *RealtimeService) Redo(ctx context.Context, userID, commandID uuid.UUID)
 	}
 	if log.Status != command.StatusUndone || log.UndoneAt == nil {
 		return CommandResult{}, sentinal_errors.ErrConflict
+	}
+	return s.redoCommand(ctx, &log)
+}
+
+func (s *RealtimeService) RedoLatest(ctx context.Context, userID uuid.UUID, conversationID *uuid.UUID) (CommandResult, error) {
+	if s == nil || s.commandService == nil {
+		return CommandResult{}, sentinal_errors.ErrServiceUnavailable
+	}
+	log, err := s.commandService.GetLatestRedoable(ctx, userID, conversationID)
+	if err != nil {
+		return CommandResult{}, err
 	}
 	return s.redoCommand(ctx, &log)
 }

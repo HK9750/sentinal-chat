@@ -232,3 +232,43 @@ func (r *commandRepository) GetLatestUndoableByUser(ctx context.Context, userID 
 	}
 	return log, nil
 }
+
+func (r *commandRepository) GetLatestRedoableByUser(ctx context.Context, userID uuid.UUID, conversationID *uuid.UUID) (command.CommandLog, error) {
+	query := `
+        SELECT id, command_type, user_id, conversation_id, status, payload, undo_payload, error_message, execution_time_ms,
+               created_at, executed_at, undone_at
+        FROM command_logs
+        WHERE user_id = $1
+          AND status = $2
+          AND undone_at IS NOT NULL
+    `
+	args := []any{userID, command.StatusUndone}
+	if conversationID != nil {
+		query += " AND conversation_id = $3"
+		args = append(args, *conversationID)
+	}
+	query += " ORDER BY undone_at DESC, created_at DESC LIMIT 1"
+
+	var log command.CommandLog
+	err := r.db.QueryRowContext(ctx, query, args...).Scan(
+		&log.ID,
+		&log.CommandType,
+		&log.UserID,
+		&log.ConversationID,
+		&log.Status,
+		&log.Payload,
+		&log.UndoPayload,
+		&log.ErrorMessage,
+		&log.ExecutionTimeMs,
+		&log.CreatedAt,
+		&log.ExecutedAt,
+		&log.UndoneAt,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return command.CommandLog{}, sentinal_errors.ErrNotFound
+		}
+		return command.CommandLog{}, err
+	}
+	return log, nil
+}

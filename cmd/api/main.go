@@ -108,7 +108,7 @@ func main() {
 		logInstance.Errorf("Redis realtime disabled: %v", err)
 	}
 	realtimeHub := chatws.NewHub(redisClient, conversationRepo, logInstance)
-	notificationService := services.NewNotificationService(notificationRepo, conversationRepo, messageRepo, realtimeHub)
+	notificationService := services.NewNotificationService(notificationRepo, conversationRepo, messageRepo, realtimeHub, logInstance)
 	notificationHandler := handler.NewNotificationHandler(notificationService, logInstance)
 	realtimeService := services.NewRealtimeService(realtimeHub, conversationService, messageService, callService, notificationService, commandService, userService)
 	outboxWorker := chatws.NewOutboxWorker(outboxRepo, redisClient, logInstance)

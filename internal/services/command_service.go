@@ -67,6 +67,13 @@ func (s *CommandService) GetLatestUndoable(ctx context.Context, userID uuid.UUID
 	return s.repo.GetLatestUndoableByUser(ctx, userID, conversationID)
 }
 
+func (s *CommandService) GetLatestRedoable(ctx context.Context, userID uuid.UUID, conversationID *uuid.UUID) (command.CommandLog, error) {
+	if s == nil || s.repo == nil {
+		return command.CommandLog{}, sentinal_errors.ErrServiceUnavailable
+	}
+	return s.repo.GetLatestRedoableByUser(ctx, userID, conversationID)
+}
+
 func (s *CommandService) MarkUndone(ctx context.Context, log *command.CommandLog) error {
 	if s == nil || s.repo == nil {
 		return sentinal_errors.ErrServiceUnavailable

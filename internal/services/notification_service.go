@@ -16,6 +16,7 @@ import (
 	"sentinal-chat/internal/repository"
 	chatws "sentinal-chat/internal/websocket"
 	sentinal_errors "sentinal-chat/pkg/errors"
+	"sentinal-chat/pkg/logger"
 )
 
 type NotificationService struct {
@@ -23,6 +24,7 @@ type NotificationService struct {
 	conversations repository.ConversationRepository
 	messages      repository.MessageRepository
 	broadcaster   chatws.Broadcaster
+	logger        *logger.Logger
 }
 
 func NewNotificationService(
@@ -30,12 +32,18 @@ func NewNotificationService(
 	conversations repository.ConversationRepository,
 	messages repository.MessageRepository,
 	broadcaster chatws.Broadcaster,
+	l *logger.Logger,
 ) *NotificationService {
+	var componentLogger *logger.Logger
+	if l != nil {
+		componentLogger = l.WithComponent("notification_service")
+	}
 	return &NotificationService{
 		notifications: notifications,
 		conversations: conversations,
 		messages:      messages,
 		broadcaster:   broadcaster,
+		logger:        componentLogger,
 	}
 }
 
@@ -233,6 +241,7 @@ func (s *NotificationService) PublishMessageNotification(ctx context.Context, me
 			DedupeKey:      fmt.Sprintf("message:new:%s", message.ID),
 		})
 		if createErr != nil {
+			s.logCreateError(ctx, "message", recipientID, createErr)
 			continue
 		}
 		s.emitNotificationCreated(ctx, item, settings.SoundEnabled)
@@ -293,10 +302,23 @@ func (s *NotificationService) PublishMissedCallNotification(ctx context.Context,
 			DedupeKey:      fmt.Sprintf("call:missed:%s:%s", callID.String(), recipientID.String()),
 		})
 		if createErr != nil {
+			s.logCreateError(ctx, "missed_call", recipientID, createErr)
 			continue
 		}
 		s.emitNotificationCreated(ctx, item, settings.SoundEnabled)
 	}
+}
+
+func (s *NotificationService) logCreateError(ctx context.Context, source string, recipientID uuid.UUID, err error) {
+	if s == nil || s.logger == nil || err == nil {
+		return
+	}
+	s.logger.ErrorwCtx(ctx,
+		"notification.create.failed",
+		"source", strings.TrimSpace(source),
+		"recipient_id", recipientID.String(),
+		"error", err.Error(),
+	)
 }
 
 type notificationUpsertInput struct {
