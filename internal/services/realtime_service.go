@@ -326,9 +326,13 @@ func (s *RealtimeService) VotePoll(ctx context.Context, in VotePollInput) (PollV
 		return PollView{}, err
 	}
 	if s.broadcaster != nil {
-		envelope := chatws.NewConversationEvent(events.PollUpdate, in.ConversationID, map[string]any{"poll": poll})
-		_ = s.broadcaster.BroadcastConversation(ctx, in.ConversationID, envelope, nil)
-		_ = s.broadcaster.PublishConversation(ctx, in.ConversationID, envelope)
+		sharedEnvelope := chatws.NewConversationEvent(events.PollUpdate, in.ConversationID, map[string]any{"poll": pollViewForBroadcast(poll)})
+		_ = s.broadcaster.BroadcastConversation(ctx, in.ConversationID, sharedEnvelope, nil)
+		_ = s.broadcaster.PublishConversation(ctx, in.ConversationID, sharedEnvelope)
+
+		privateEnvelope := chatws.NewConversationEvent(events.PollUpdate, in.ConversationID, map[string]any{"poll": poll})
+		s.broadcaster.SendToUser(in.ActorID, privateEnvelope)
+		_ = s.broadcaster.PublishToUser(ctx, in.ActorID, privateEnvelope)
 	}
 	return poll, nil
 }
@@ -339,9 +343,13 @@ func (s *RealtimeService) ClosePoll(ctx context.Context, userID, conversationID,
 		return PollView{}, err
 	}
 	if s.broadcaster != nil {
-		envelope := chatws.NewConversationEvent(events.PollUpdate, conversationID, map[string]any{"poll": poll})
-		_ = s.broadcaster.BroadcastConversation(ctx, conversationID, envelope, nil)
-		_ = s.broadcaster.PublishConversation(ctx, conversationID, envelope)
+		sharedEnvelope := chatws.NewConversationEvent(events.PollUpdate, conversationID, map[string]any{"poll": pollViewForBroadcast(poll)})
+		_ = s.broadcaster.BroadcastConversation(ctx, conversationID, sharedEnvelope, nil)
+		_ = s.broadcaster.PublishConversation(ctx, conversationID, sharedEnvelope)
+
+		privateEnvelope := chatws.NewConversationEvent(events.PollUpdate, conversationID, map[string]any{"poll": poll})
+		s.broadcaster.SendToUser(userID, privateEnvelope)
+		_ = s.broadcaster.PublishToUser(ctx, userID, privateEnvelope)
 	}
 	return poll, nil
 }

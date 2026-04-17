@@ -91,14 +91,19 @@ type PollOptionView struct {
 	Text     string `json:"text"`
 	Position int    `json:"position"`
 	Votes    int    `json:"votes"`
+	Percent  int    `json:"percent"`
 }
 
 type PollView struct {
 	ID             string           `json:"id"`
+	MessageID      *string          `json:"message_id,omitempty"`
 	Question       string           `json:"question"`
 	AllowsMultiple bool             `json:"allows_multiple"`
 	ClosesAt       *time.Time       `json:"closes_at,omitempty"`
 	Closed         bool             `json:"closed"`
+	CanVote        bool             `json:"can_vote"`
+	TotalVotes     int              `json:"total_votes"`
+	TotalVoters    int              `json:"total_voters"`
 	Options        []PollOptionView `json:"options"`
 	MyVotes        []string         `json:"my_votes,omitempty"`
 }

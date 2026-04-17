@@ -1197,6 +1197,37 @@ func (r *PostgresMessageRepository) GetPollByID(ctx context.Context, id uuid.UUI
 	return p, nil
 }
 
+func (r *PostgresMessageRepository) GetPollByMessageID(ctx context.Context, messageID uuid.UUID) (message.Poll, error) {
+	var p message.Poll
+	err := r.db.QueryRowContext(ctx, `
+        SELECT id, message_id, question, allows_multiple, closes_at, created_at
+        FROM polls WHERE message_id = $1
+    `, messageID).Scan(&p.ID, &p.MessageID, &p.Question, &p.AllowsMultiple, &p.ClosesAt, &p.CreatedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return message.Poll{}, sentinal_errors.ErrNotFound
+		}
+		return message.Poll{}, err
+	}
+	return p, nil
+}
+
+func (r *PostgresMessageRepository) SetMessagePoll(ctx context.Context, messageID, pollID uuid.UUID) error {
+	res, err := r.db.ExecContext(ctx, `
+        UPDATE messages
+        SET poll_id = $1
+        WHERE id = $2
+    `, pollID, messageID)
+	if err != nil {
+		return err
+	}
+	rows, err := res.RowsAffected()
+	if err == nil && rows == 0 {
+		return sentinal_errors.ErrNotFound
+	}
+	return err
+}
+
 func (r *PostgresMessageRepository) ClosePoll(ctx context.Context, pollID uuid.UUID) error {
 	res, err := r.db.ExecContext(ctx, "UPDATE polls SET closes_at = $1 WHERE id = $2", time.Now(), pollID)
 	if err != nil {
@@ -1258,6 +1289,25 @@ func (r *PostgresMessageRepository) VotePoll(ctx context.Context, v *message.Pol
 	return nil
 }
 
+func (r *PostgresMessageRepository) VotePollOptions(ctx context.Context, pollID, userID uuid.UUID, optionIDs []uuid.UUID, votedAt time.Time) error {
+	return WithTx(ctx, r.db, func(tx DBTX) error {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM poll_votes WHERE poll_id = $1 AND user_id = $2", pollID, userID); err != nil {
+			return err
+		}
+
+		for _, optionID := range optionIDs {
+			if _, err := tx.ExecContext(ctx, `
+                INSERT INTO poll_votes (poll_id, option_id, user_id, voted_at)
+                VALUES ($1,$2,$3,$4)
+            `, pollID, optionID, userID, votedAt); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+}
+
 func (r *PostgresMessageRepository) RemoveVote(ctx context.Context, pollID, optionID, userID uuid.UUID) error {
 	res, err := r.db.ExecContext(ctx, "DELETE FROM poll_votes WHERE poll_id = $1 AND option_id = $2 AND user_id = $3", pollID, optionID, userID)
 	if err != nil {
@@ -1314,6 +1364,21 @@ func (r *PostgresMessageRepository) GetUserVotes(ctx context.Context, pollID, us
 		return nil, err
 	}
 	return votes, nil
+}
+
+func (r *PostgresMessageRepository) IsPollOptionInPoll(ctx context.Context, pollID, optionID uuid.UUID) (bool, error) {
+	var exists bool
+	err := r.db.QueryRowContext(ctx, `
+        SELECT EXISTS (
+            SELECT 1
+            FROM poll_options
+            WHERE id = $1 AND poll_id = $2
+        )
+    `, optionID, pollID).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
 }
 
 func (r *PostgresMessageRepository) DeleteExpiredMessages(ctx context.Context) (int64, error) {

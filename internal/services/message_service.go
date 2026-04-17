@@ -53,7 +53,16 @@ func (s *MessageService) Send(ctx context.Context, in SendMessageInput) (Message
 	messageType := strings.ToUpper(strings.TrimSpace(in.Type))
 	hasAttachments := len(chatDedupeUUIDs(in.AttachmentIDs)) > 0
 	hasContent := strings.TrimSpace(in.Content) != ""
+	if in.Poll != nil {
+		if hasAttachments {
+			return MessageView{}, sentinal_errors.ErrInvalidInput
+		}
+		messageType = string(MessageKindPoll)
+	}
 	if messageType == "" {
+		return MessageView{}, sentinal_errors.ErrInvalidInput
+	}
+	if messageType == string(MessageKindPoll) && in.Poll == nil {
 		return MessageView{}, sentinal_errors.ErrInvalidInput
 	}
 	if !hasContent && !hasAttachments && in.Poll == nil {
@@ -109,6 +118,7 @@ func (s *MessageService) Send(ctx context.Context, in SendMessageInput) (Message
 	if in.Poll != nil {
 		poll, err := s.createPoll(ctx, stored.ID, in.SenderID, *in.Poll)
 		if err != nil {
+			_ = s.messages.HardDelete(ctx, stored.ID)
 			return MessageView{}, err
 		}
 		pollView = &poll
@@ -714,8 +724,14 @@ func (s *MessageService) buildMessageView(ctx context.Context, msg msgdomain.Mes
 	}
 	starred, _ := s.messages.IsMessageStarred(ctx, userID, msg.ID)
 	var pollView *PollView
+	pollID := uuid.Nil
 	if msg.PollID.Valid {
-		view, pollErr := s.loadPollView(ctx, msg.PollID.UUID, userID)
+		pollID = msg.PollID.UUID
+	} else if poll, pollErr := s.messages.GetPollByMessageID(ctx, msg.ID); pollErr == nil {
+		pollID = poll.ID
+	}
+	if pollID != uuid.Nil {
+		view, pollErr := s.loadPollView(ctx, pollID, userID)
 		if pollErr == nil {
 			pollView = &view
 		}
@@ -724,75 +740,98 @@ func (s *MessageService) buildMessageView(ctx context.Context, msg msgdomain.Mes
 }
 
 func (s *MessageService) createPoll(ctx context.Context, messageID, userID uuid.UUID, input CreatePollInput) (PollView, error) {
-	_ = userID
-	if strings.TrimSpace(input.Question) == "" || len(input.Options) < 2 {
+	question := strings.TrimSpace(input.Question)
+	if question == "" || len(question) > 500 {
 		return PollView{}, sentinal_errors.ErrInvalidInput
 	}
+	options, err := sanitizePollOptions(input.Options)
+	if err != nil {
+		return PollView{}, err
+	}
+	closesAt, err := normalizePollCloseAt(input.ClosesAt)
+	if err != nil {
+		return PollView{}, err
+	}
+
+	msg, err := s.messages.GetByID(ctx, messageID)
+	if err != nil {
+		return PollView{}, err
+	}
+	if msg.SenderID != userID {
+		return PollView{}, sentinal_errors.ErrForbidden
+	}
+	if msg.PollID.Valid {
+		return PollView{}, sentinal_errors.ErrConflict
+	}
+	if _, existingErr := s.messages.GetPollByMessageID(ctx, messageID); existingErr == nil {
+		return PollView{}, sentinal_errors.ErrConflict
+	} else if !errors.Is(existingErr, sentinal_errors.ErrNotFound) {
+		return PollView{}, existingErr
+	}
+
 	poll := &msgdomain.Poll{
 		ID:             uuid.New(),
 		MessageID:      chatNullableUUID(messageID),
-		Question:       strings.TrimSpace(input.Question),
+		Question:       question,
 		AllowsMultiple: input.AllowsMultiple,
 		CreatedAt:      time.Now().UTC(),
 	}
-	if input.ClosesAt != nil {
-		poll.ClosesAt = chatNullableTimePtr(input.ClosesAt)
+	if closesAt != nil {
+		poll.ClosesAt = chatNullableTimePtr(closesAt)
 	}
 	if err := s.messages.CreatePoll(ctx, poll); err != nil {
 		return PollView{}, err
 	}
-	options := make([]PollOptionView, 0, len(input.Options))
-	for idx, optionText := range input.Options {
-		option := &msgdomain.PollOption{ID: uuid.New(), PollID: poll.ID, OptionText: strings.TrimSpace(optionText), Position: idx + 1}
-		if option.OptionText == "" {
-			return PollView{}, sentinal_errors.ErrInvalidInput
-		}
+	for idx, optionText := range options {
+		option := &msgdomain.PollOption{ID: uuid.New(), PollID: poll.ID, OptionText: optionText, Position: idx + 1}
 		if err := s.messages.AddPollOption(ctx, option); err != nil {
 			return PollView{}, err
 		}
-		options = append(options, PollOptionView{ID: option.ID.String(), Text: option.OptionText, Position: option.Position, Votes: 0})
 	}
-	return PollView{
-		ID:             poll.ID.String(),
-		Question:       poll.Question,
-		AllowsMultiple: poll.AllowsMultiple,
-		ClosesAt:       input.ClosesAt,
-		Closed:         false,
-		Options:        options,
-	}, nil
+	if err := s.messages.SetMessagePoll(ctx, messageID, poll.ID); err != nil {
+		return PollView{}, err
+	}
+
+	return s.loadPollView(ctx, poll.ID, userID)
 }
 
 func (s *MessageService) VotePoll(ctx context.Context, in VotePollInput) (PollView, error) {
 	if err := s.proxy.RequireParticipant(ctx, in.ConversationID, in.ActorID); err != nil {
 		return PollView{}, err
 	}
-	poll, err := s.messages.GetPollByID(ctx, in.PollID)
+	poll, _, err := s.pollMessageForConversation(ctx, in.ConversationID, in.PollID)
 	if err != nil {
 		return PollView{}, err
 	}
-	if poll.ClosesAt.Valid && poll.ClosesAt.Time.Before(time.Now()) {
+	now := time.Now().UTC()
+	if poll.ClosesAt.Valid && !poll.ClosesAt.Time.After(now) {
 		return PollView{}, sentinal_errors.ErrConflict
 	}
-	if !poll.AllowsMultiple && len(in.OptionIDs) > 1 {
+
+	optionIDs := chatDedupeUUIDs(in.OptionIDs)
+	if !poll.AllowsMultiple && len(optionIDs) > 1 {
 		return PollView{}, sentinal_errors.ErrInvalidInput
 	}
-	existingVotes, err := s.messages.GetUserVotes(ctx, in.PollID, in.ActorID)
-	if err == nil {
-		for _, vote := range existingVotes {
-			_ = s.messages.RemoveVote(ctx, in.PollID, vote.OptionID, in.ActorID)
+	for _, optionID := range optionIDs {
+		ok, optionErr := s.messages.IsPollOptionInPoll(ctx, in.PollID, optionID)
+		if optionErr != nil {
+			return PollView{}, optionErr
+		}
+		if !ok {
+			return PollView{}, sentinal_errors.ErrInvalidInput
 		}
 	}
-	for _, optionID := range chatDedupeUUIDs(in.OptionIDs) {
-		if err := s.messages.VotePoll(ctx, &msgdomain.PollVote{PollID: in.PollID, OptionID: optionID, UserID: in.ActorID, VotedAt: time.Now().UTC()}); err != nil {
-			return PollView{}, err
-		}
+
+	if err := s.messages.VotePollOptions(ctx, in.PollID, in.ActorID, optionIDs, now); err != nil {
+		return PollView{}, err
 	}
+
 	view, err := s.loadPollView(ctx, in.PollID, in.ActorID)
 	if err != nil {
 		return PollView{}, err
 	}
 	if s.outbox != nil {
-		envelope := chatws.NewConversationEvent(events.PollUpdate, in.ConversationID, map[string]any{"poll": view})
+		envelope := chatws.NewConversationEvent(events.PollUpdate, in.ConversationID, map[string]any{"poll": pollViewForBroadcast(view)})
 		if err := s.enqueueOutboxEvent(ctx, events.PollUpdate, outbox.AggregatePoll, in.PollID, envelope, true); err != nil {
 			return PollView{}, err
 		}
@@ -804,6 +843,17 @@ func (s *MessageService) ClosePoll(ctx context.Context, conversationID, pollID, 
 	if err := s.proxy.RequireParticipant(ctx, conversationID, actorID); err != nil {
 		return PollView{}, err
 	}
+	poll, msg, err := s.pollMessageForConversation(ctx, conversationID, pollID)
+	if err != nil {
+		return PollView{}, err
+	}
+	if msg.SenderID != actorID {
+		return PollView{}, sentinal_errors.ErrForbidden
+	}
+	now := time.Now().UTC()
+	if poll.ClosesAt.Valid && !poll.ClosesAt.Time.After(now) {
+		return s.loadPollView(ctx, pollID, actorID)
+	}
 	if err := s.messages.ClosePoll(ctx, pollID); err != nil {
 		return PollView{}, err
 	}
@@ -812,7 +862,7 @@ func (s *MessageService) ClosePoll(ctx context.Context, conversationID, pollID, 
 		return PollView{}, err
 	}
 	if s.outbox != nil {
-		envelope := chatws.NewConversationEvent(events.PollUpdate, conversationID, map[string]any{"poll": view})
+		envelope := chatws.NewConversationEvent(events.PollUpdate, conversationID, map[string]any{"poll": pollViewForBroadcast(view)})
 		if err := s.enqueueOutboxEvent(ctx, events.PollUpdate, outbox.AggregatePoll, pollID, envelope, true); err != nil {
 			return PollView{}, err
 		}
@@ -834,26 +884,95 @@ func (s *MessageService) loadPollView(ctx context.Context, pollID, actorID uuid.
 		return PollView{}, err
 	}
 	voteCount := make(map[uuid.UUID]int)
-	myVotes := make([]string, 0)
+	myVoteSet := make(map[uuid.UUID]struct{})
 	for _, vote := range votes {
 		voteCount[vote.OptionID]++
 		if vote.UserID == actorID {
-			myVotes = append(myVotes, vote.OptionID.String())
+			myVoteSet[vote.OptionID] = struct{}{}
 		}
 	}
 	optionViews := make([]PollOptionView, 0, len(options))
+	myVotes := make([]string, 0, len(myVoteSet))
 	for _, option := range options {
 		optionViews = append(optionViews, PollOptionView{ID: option.ID.String(), Text: option.OptionText, Position: option.Position, Votes: voteCount[option.ID]})
+		if _, ok := myVoteSet[option.ID]; ok {
+			myVotes = append(myVotes, option.ID.String())
+		}
 	}
+	now := time.Now().UTC()
 	return PollView{
 		ID:             poll.ID.String(),
 		Question:       poll.Question,
 		AllowsMultiple: poll.AllowsMultiple,
 		ClosesAt:       chatNullTime(poll.ClosesAt),
-		Closed:         poll.ClosesAt.Valid && poll.ClosesAt.Time.Before(time.Now()),
+		Closed:         poll.ClosesAt.Valid && !poll.ClosesAt.Time.After(now),
 		Options:        optionViews,
 		MyVotes:        myVotes,
 	}, nil
+}
+
+func (s *MessageService) pollMessageForConversation(ctx context.Context, conversationID, pollID uuid.UUID) (msgdomain.Poll, msgdomain.Message, error) {
+	poll, err := s.messages.GetPollByID(ctx, pollID)
+	if err != nil {
+		return msgdomain.Poll{}, msgdomain.Message{}, err
+	}
+	if !poll.MessageID.Valid {
+		return msgdomain.Poll{}, msgdomain.Message{}, sentinal_errors.ErrInvalidInput
+	}
+	msg, err := s.messages.GetByID(ctx, poll.MessageID.UUID)
+	if err != nil {
+		return msgdomain.Poll{}, msgdomain.Message{}, err
+	}
+	if msg.DeletedAt.Valid {
+		return msgdomain.Poll{}, msgdomain.Message{}, sentinal_errors.ErrConflict
+	}
+	if msg.ConversationID != conversationID {
+		return msgdomain.Poll{}, msgdomain.Message{}, sentinal_errors.ErrInvalidInput
+	}
+	if msg.PollID.Valid && msg.PollID.UUID != pollID {
+		return msgdomain.Poll{}, msgdomain.Message{}, sentinal_errors.ErrInvalidInput
+	}
+	return poll, msg, nil
+}
+
+func sanitizePollOptions(raw []string) ([]string, error) {
+	if len(raw) < 2 || len(raw) > 12 {
+		return nil, sentinal_errors.ErrInvalidInput
+	}
+	options := make([]string, 0, len(raw))
+	seen := make(map[string]struct{}, len(raw))
+	for _, item := range raw {
+		option := strings.TrimSpace(item)
+		if option == "" || len(option) > 200 {
+			return nil, sentinal_errors.ErrInvalidInput
+		}
+		key := strings.ToLower(option)
+		if _, exists := seen[key]; exists {
+			return nil, sentinal_errors.ErrInvalidInput
+		}
+		seen[key] = struct{}{}
+		options = append(options, option)
+	}
+	if len(options) < 2 {
+		return nil, sentinal_errors.ErrInvalidInput
+	}
+	return options, nil
+}
+
+func normalizePollCloseAt(closesAt *time.Time) (*time.Time, error) {
+	if closesAt == nil {
+		return nil, nil
+	}
+	normalized := closesAt.UTC()
+	if !normalized.After(time.Now().UTC()) {
+		return nil, sentinal_errors.ErrInvalidInput
+	}
+	return &normalized, nil
+}
+
+func pollViewForBroadcast(view PollView) PollView {
+	view.MyVotes = nil
+	return view
 }
 
 func (s *MessageService) listReactions(ctx context.Context, messageID uuid.UUID) ([]ReactionView, error) {

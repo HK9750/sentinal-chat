@@ -392,10 +392,14 @@ func (h *WSHandler) handlePoll(ctx context.Context, client *chatws.Client, frame
 		_ = poll
 		return
 	}
-	optionIDs, err := services.AnyToUUIDSlice(data["option_ids"])
-	if err != nil {
-		h.sendError(client, "INVALID_OPTIONS", "invalid poll options")
-		return
+	optionIDs := []uuid.UUID{}
+	if rawOptionIDs, ok := data["option_ids"]; ok && rawOptionIDs != nil {
+		parsedOptions, parseErr := services.AnyToUUIDSlice(rawOptionIDs)
+		if parseErr != nil {
+			h.sendError(client, "INVALID_OPTIONS", "invalid poll options")
+			return
+		}
+		optionIDs = parsedOptions
 	}
 	poll, err := h.realtimeService.VotePoll(ctx, services.VotePollInput{ConversationID: conversationID, PollID: pollID, ActorID: client.UserID, OptionIDs: optionIDs})
 	if err != nil {

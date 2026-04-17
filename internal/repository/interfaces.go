@@ -199,13 +199,17 @@ type MessageRepository interface {
 
 	CreatePoll(ctx context.Context, p *message.Poll) error
 	GetPollByID(ctx context.Context, id uuid.UUID) (message.Poll, error)
+	GetPollByMessageID(ctx context.Context, messageID uuid.UUID) (message.Poll, error)
+	SetMessagePoll(ctx context.Context, messageID, pollID uuid.UUID) error
 	ClosePoll(ctx context.Context, pollID uuid.UUID) error
 	AddPollOption(ctx context.Context, o *message.PollOption) error
 	GetPollOptions(ctx context.Context, pollID uuid.UUID) ([]message.PollOption, error)
 	VotePoll(ctx context.Context, v *message.PollVote) error
+	VotePollOptions(ctx context.Context, pollID, userID uuid.UUID, optionIDs []uuid.UUID, votedAt time.Time) error
 	RemoveVote(ctx context.Context, pollID, optionID, userID uuid.UUID) error
 	GetPollVotes(ctx context.Context, pollID uuid.UUID) ([]message.PollVote, error)
 	GetUserVotes(ctx context.Context, pollID, userID uuid.UUID) ([]message.PollVote, error)
+	IsPollOptionInPoll(ctx context.Context, pollID, optionID uuid.UUID) (bool, error)
 
 	DeleteExpiredMessages(ctx context.Context) (int64, error)
 	DeleteMessagesForUser(ctx context.Context, conversationID, userID uuid.UUID, messageIDs []uuid.UUID) error
